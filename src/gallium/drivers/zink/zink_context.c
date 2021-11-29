@@ -104,16 +104,23 @@ zink_context_destroy(struct pipe_context *pctx)
       zink_descriptors_deinit_bindless(ctx);
 
    simple_mtx_destroy(&ctx->batch_mtx);
-   if (ctx->batch.state) {
-      zink_clear_batch_state(ctx, ctx->batch.state);
-      zink_batch_state_destroy(screen, ctx->batch.state);
-   }
+
+   /*
    struct zink_batch_state *bs = ctx->batch_states;
    while (bs) {
       struct zink_batch_state *bs_next = bs->next;
       zink_clear_batch_state(ctx, bs);
       zink_batch_state_destroy(screen, bs);
+      if (bs == ctx->batch.state)
+      {
+         ctx->batch.state = NULL;
+      }
       bs = bs_next;
+   }
+   */
+   if (ctx->batch.state) {
+      zink_clear_batch_state(ctx, ctx->batch.state);
+      zink_batch_state_destroy(screen, ctx->batch.state);
    }
    util_dynarray_foreach(&ctx->free_batch_states, struct zink_batch_state*, bs) {
       zink_clear_batch_state(ctx, *bs);

@@ -37,9 +37,9 @@ struct zink_render_pass;
 struct zink_framebuffer_state {
    uint32_t width;
    uint16_t height;
-   uint32_t layers:6;
-   uint32_t samples:6;
-   uint32_t num_attachments:4;
+   uint8_t layers;
+   uint8_t samples;
+   uint16_t num_attachments;
    union {
       VkImageView attachments[PIPE_MAX_COLOR_BUFS + 1];
       struct zink_surface_info infos[PIPE_MAX_COLOR_BUFS + 1];

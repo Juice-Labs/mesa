@@ -2,3 +2,5 @@
 *.pyo
 *.out
 build
+debug/
+debug-vs/

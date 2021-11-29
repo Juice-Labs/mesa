@@ -687,7 +687,7 @@ zink_bind_rasterizer_state(struct pipe_context *pctx, void *cso)
           !screen->info.pv_props.provokingVertexModePerPipeline)
          zink_batch_no_rp(ctx);
       uint32_t rast_bits = 0;
-      memcpy(&rast_bits, &ctx->rast_state->hw_state, sizeof(struct zink_rasterizer_hw_state));
+      memcpy(&rast_bits, &ctx->rast_state->hw_state, sizeof(rast_bits));
       ctx->gfx_pipeline_state.rast_state = rast_bits & BITFIELD_MASK(ZINK_RAST_HW_STATE_SIZE);
 
       ctx->gfx_pipeline_state.dirty = true;

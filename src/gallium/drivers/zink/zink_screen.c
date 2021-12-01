@@ -1446,21 +1446,25 @@ check_have_device_time(struct zink_screen *screen)
 static void
 zink_error(const char *msg)
 {
+   printf("%s\n", msg);
 }
 
 static void
 zink_warn(const char *msg)
 {
+   printf("%s\n", msg);
 }
 
 static void
 zink_info(const char *msg)
 {
+   printf("%s\n", msg);
 }
 
 static void
 zink_msg(const char *msg)
 {
+   printf("%s\n", msg);
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL

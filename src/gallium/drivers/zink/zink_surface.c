@@ -298,8 +298,8 @@ zink_destroy_surface(struct zink_screen *screen, struct pipe_surface *psurface)
    util_dynarray_fini(&surface->framebuffer_refs);
    pipe_resource_reference(&psurface->texture, NULL);
    if (surface->simage_view)
-      VKSCR(DestroyImageView)(screen->dev, surface->simage_view, NULL);
-   VKSCR(DestroyImageView)(screen->dev, surface->image_view, NULL);
+   //    VKSCR(DestroyImageView)(screen->dev, surface->simage_view, NULL);
+   // VKSCR(DestroyImageView)(screen->dev, surface->image_view, NULL);
    FREE(surface);
 }
 

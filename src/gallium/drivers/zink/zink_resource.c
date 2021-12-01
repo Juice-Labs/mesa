@@ -90,7 +90,7 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
          VKSCR(DestroyBuffer)(screen->dev, *buffer, NULL);
       VKSCR(DestroyBuffer)(screen->dev, obj->buffer, NULL);
    } else {
-      VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
+      // VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
    }
 
    util_dynarray_fini(&obj->tmp);

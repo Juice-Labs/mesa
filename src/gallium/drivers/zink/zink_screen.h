@@ -179,6 +179,8 @@ struct zink_screen {
    } null_descriptor_hashes;
 
    VkExtent2D maxSampleLocationGridSize[5];
+   int surface_formats_count;
+   VkSurfaceFormatKHR* surface_formats;
 };
 
 

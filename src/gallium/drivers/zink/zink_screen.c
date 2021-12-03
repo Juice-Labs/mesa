@@ -1190,6 +1190,10 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    if (screen->drm_fd != -1)
       close(screen->drm_fd);
 
+   free(screen->surface_formats);
+   screen->surface_formats = NULL;
+   screen->surface_formats_count = 0;
+
    slab_destroy_parent(&screen->transfer_pool);
    ralloc_free(screen);
    glsl_type_singleton_decref();
@@ -1231,6 +1235,23 @@ choose_pdev(struct zink_screen *screen)
       if (props->deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) {
          screen->pdev = pdevs[i];
          screen->info.device_version = props->apiVersion;
+
+         // TODO: Surface formats might be better used to choose physical
+         // device rather than queried only after the device has been
+         // selected.
+         uint32_t surface_formats_count = 0;
+         VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(pdevs[i], screen->surface, &surface_formats_count, NULL);
+         screen->surface_formats = malloc( sizeof(VkSurfaceFormatKHR*) * surface_formats_count );
+         VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(pdevs[i], screen->surface, &surface_formats_count, screen->surface_formats);
+         screen->surface_formats_count = surface_formats_count;
+
+         // TODO: Present modes might be better used to choose physical
+         // device rather than queried only after the device has been
+         // selected.
+         uint32_t present_mode_count = 0;
+         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], screen->surface, &present_mode_count, NULL);
+         assert(present_mode_count > 0);
+
          break;
       }
    }
@@ -1272,21 +1293,11 @@ update_queue_props(struct zink_screen *screen)
 
    screen->present_queue_family = -1;
    for (uint32_t i = 0; i < num_queues; i++) {
-      // TODO: Format count might be better as part of physical device
-      // selection.  A bit hard to tell at this point.
-      uint32_t formatCount = 0;
-      VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(screen->pdev, screen->surface, &formatCount, NULL);
-
-      // TODO: Format count might be better as part of physical device
-      // selection.  A bit hard to tell at this point.
-      uint32_t presentModeCount = 0;
-      VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(screen->pdev, screen->surface, &presentModeCount, NULL);
-
       VkBool32 present_supported = VK_FALSE;
       VkResult result = VKSCR(GetPhysicalDeviceSurfaceSupportKHR)(screen->pdev, i, screen->surface, &present_supported);
       assert(result == VK_SUCCESS);
 
-      if (formatCount > 0 && presentModeCount > 0 && present_supported)
+      if (present_supported)
       {
          screen->present_queue_family = i;
          break;

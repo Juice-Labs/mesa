@@ -176,7 +176,7 @@ EXTENSIONS = [
         alias="scalar_block_layout",
         features=True,
         conditions=["$feats.scalarBlockLayout"]),
-    Extension("VK_KHR_swapchain"),
+    Extension("VK_KHR_swapchain", alias="swapchain"),
     Extension("VK_KHR_shader_float16_int8",
               alias="shader_float16_int8",
               features=True),

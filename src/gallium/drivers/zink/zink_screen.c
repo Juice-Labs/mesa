@@ -1272,10 +1272,21 @@ update_queue_props(struct zink_screen *screen)
 
    screen->present_queue_family = -1;
    for (uint32_t i = 0; i < num_queues; i++) {
+      // TODO: Format count might be better as part of physical device
+      // selection.  A bit hard to tell at this point.
+      uint32_t formatCount = 0;
+      VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(screen->pdev, screen->surface, &formatCount, NULL);
+
+      // TODO: Format count might be better as part of physical device
+      // selection.  A bit hard to tell at this point.
+      uint32_t presentModeCount = 0;
+      VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(screen->pdev, screen->surface, &presentModeCount, NULL);
+
       VkBool32 present_supported = VK_FALSE;
       VkResult result = VKSCR(GetPhysicalDeviceSurfaceSupportKHR)(screen->pdev, i, screen->surface, &present_supported);
       assert(result == VK_SUCCESS);
-      if (present_supported)
+
+      if (formatCount > 0 && presentModeCount > 0 && present_supported)
       {
          screen->present_queue_family = i;
          break;

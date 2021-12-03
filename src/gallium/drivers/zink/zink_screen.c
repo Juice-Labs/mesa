@@ -1271,7 +1271,7 @@ update_queue_props(struct zink_screen *screen)
 }
 
 static void
-init_queue(struct zink_screen *screen)
+init_queues(struct zink_screen *screen)
 {
    simple_mtx_init(&screen->queue_lock, mtx_plain);
    vkGetDeviceQueue(screen->dev, screen->gfx_queue, 0, &screen->queue);
@@ -1994,7 +1994,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config, intptr_t hd
    if (!screen->dev)
       goto fail;
 
-   init_queue(screen);
+   init_queues(screen);
    if (screen->info.driver_props.driverID == VK_DRIVER_ID_MESA_RADV ||
        screen->info.driver_props.driverID == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
        screen->info.driver_props.driverID == VK_DRIVER_ID_AMD_PROPRIETARY)

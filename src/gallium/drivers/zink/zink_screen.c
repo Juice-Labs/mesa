@@ -1183,6 +1183,7 @@ zink_destroy_screen(struct pipe_screen *pscreen)
 
    simple_mtx_destroy(&screen->queue_lock);
    VKSCR(DestroyDevice)(screen->dev, NULL);
+   VKSCR(DestroySurfaceKHR)(screen->instance, screen->surface, NULL);
    vkDestroyInstance(screen->instance, NULL);
    util_idalloc_mt_fini(&screen->buffer_ids);
 
@@ -1914,8 +1915,24 @@ zink_get_sample_pixel_grid(struct pipe_screen *pscreen, unsigned sample_count,
    *height = screen->maxSampleLocationGridSize[idx].height;
 }
 
+static VkSurfaceKHR
+zink_create_surface(const struct zink_screen *screen, intptr_t hdc_or_fd)
+{
+   VkSurfaceKHR surface = VK_NULL_HANDLE;
+#ifdef _WIN32
+   HDC hdc = (HDC) hdc_or_fd;
+   VkWin32SurfaceCreateInfoKHR info = {0};
+   info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+   info.hwnd = WindowFromDC(hdc);
+   info.hinstance = GetModuleHandle(NULL);
+   VkResult result = VKSCR(CreateWin32SurfaceKHR)(screen->instance, &info, NULL, &surface);
+   assert(result == VK_SUCCESS);
+#endif
+   return surface;
+}
+
 static struct zink_screen *
-zink_internal_create_screen(const struct pipe_screen_config *config)
+zink_internal_create_screen(const struct pipe_screen_config *config, intptr_t hdc_or_fd)
 {
    struct zink_screen *screen = rzalloc(NULL, struct zink_screen);
    if (!screen)
@@ -1947,6 +1964,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    if (screen->instance_info.have_EXT_debug_utils &&
       (zink_debug & ZINK_DEBUG_VALIDATION) && !create_debug(screen))
       debug_printf("ZINK: failed to setup debug utils\n");
+
+   screen->surface = zink_create_surface(screen, hdc_or_fd);
 
    screen->is_cpu = choose_pdev(screen);
    if (screen->pdev == VK_NULL_HANDLE)
@@ -2126,7 +2145,7 @@ fail:
 struct pipe_screen *
 zink_create_screen(struct sw_winsys *winsys, intptr_t hdc_or_fd)
 {
-   struct zink_screen *ret = zink_internal_create_screen(NULL);
+   struct zink_screen *ret = zink_internal_create_screen(NULL, hdc_or_fd);
    if (ret) {
       ret->winsys = winsys;
       ret->drm_fd = -1;

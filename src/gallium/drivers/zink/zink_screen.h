@@ -118,6 +118,8 @@ struct zink_screen {
    VkInstance instance;
    struct zink_instance_info instance_info;
 
+   VkSurfaceKHR surface;
+
    VkPhysicalDevice pdev;
    uint32_t vk_version, spirv_version;
    struct util_idalloc_mt buffer_ids;

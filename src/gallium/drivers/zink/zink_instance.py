@@ -40,6 +40,7 @@ EXTENSIONS = [
     Extension("VK_MVK_moltenvk",
         nonstandard=True),
     Extension("VK_KHR_surface"),
+    Extension("VK_KHR_win32_surface"),
 ]
 
 # constructor: Layer(name, conditions=[])

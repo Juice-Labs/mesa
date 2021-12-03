@@ -1267,7 +1267,20 @@ update_queue_props(struct zink_screen *screen)
          break;
       }
    }
+
    free(props);
+
+   screen->present_queue_family = -1;
+   for (uint32_t i = 0; i < num_queues; i++) {
+      VkBool32 present_supported = VK_FALSE;
+      VkResult result = VKSCR(GetPhysicalDeviceSurfaceSupportKHR)(screen->pdev, i, screen->surface, &present_supported);
+      assert(result == VK_SUCCESS);
+      if (present_supported)
+      {
+         screen->present_queue_family = i;
+         break;
+      }
+   }
 }
 
 static void
@@ -1279,6 +1292,7 @@ init_queues(struct zink_screen *screen)
       vkGetDeviceQueue(screen->dev, screen->graphics_queue_family, 1, &screen->thread_queue);
    else
       screen->thread_queue = screen->queue;
+   vkGetDeviceQueue(screen->dev, screen->present_queue_family, 0, &screen->present_queue);
 }
 
 static void
@@ -1835,17 +1849,28 @@ zink_create_logical_device(struct zink_screen *screen)
 {
    VkDevice dev = VK_NULL_HANDLE;
 
-   VkDeviceQueueCreateInfo qci = {0};
+   int i = 0;
+   VkDeviceQueueCreateInfo qcis [2] = {0};
    float dummy = 0.0f;
-   qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-   qci.queueFamilyIndex = screen->graphics_queue_family;
-   qci.queueCount = screen->threaded && screen->max_graphics_queues > 1 ? 2 : 1;
-   qci.pQueuePriorities = &dummy;
+   qcis[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+   qcis[i].queueFamilyIndex = screen->graphics_queue_family;
+   qcis[i].queueCount = screen->threaded && screen->max_graphics_queues > 1 ? 2 : 1;
+   qcis[i].pQueuePriorities = &dummy;
+   ++i;
+
+   if (screen->present_queue_family >= 0 && screen->present_queue_family != screen->graphics_queue_family)
+   {
+      ++i;
+      qcis[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+      qcis[i].queueFamilyIndex = screen->present_queue_family;
+      qcis[i].queueCount = 1;
+      qcis[i].pQueuePriorities = &dummy;
+   }
 
    VkDeviceCreateInfo dci = {0};
    dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-   dci.queueCreateInfoCount = 1;
-   dci.pQueueCreateInfos = &qci;
+   dci.queueCreateInfoCount = i;
+   dci.pQueueCreateInfos = qcis;
    /* extensions don't have bool members in pEnabledFeatures.
     * this requires us to pass the whole VkPhysicalDeviceFeatures2 struct
     */

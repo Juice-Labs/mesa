@@ -52,7 +52,9 @@
 #include "util/debug.h"
 #endif /* NDEBUG */
 
-#include "nir_opcodes.h"
+// TOOD: Work out how to build libzinkwgl with include directories that allow
+// the following header to be found.
+#include "D:/source/mesa/debug-vs/src/compiler/nir/nir_opcodes.h"
 
 #if defined(_WIN32) && !defined(snprintf)
 #define snprintf _snprintf
@@ -1746,7 +1748,9 @@ typedef struct {
    nir_src params[];
 } nir_call_instr;
 
-#include "nir_intrinsics.h"
+// TOOD: Work out how to build libzinkwgl with include directories that allow
+// the following header to be found.
+#include "D:/source/mesa/debug-vs/src/compiler/nir/nir_intrinsics.h"
 
 #define NIR_INTRINSIC_MAX_CONST_INDEX 5
 
@@ -1970,7 +1974,7 @@ nir_intrinsic_copy_const_indices(nir_intrinsic_instr *dst, nir_intrinsic_instr *
    }
 }
 
-#include "nir_intrinsics_indices.h"
+#include "D:/source/mesa/debug-vs/src/compiler/nir/nir_intrinsics_indices.h"
 
 static inline void
 nir_intrinsic_set_align(nir_intrinsic_instr *intrin,

@@ -24,9 +24,11 @@
 #ifndef ZINK_SCREEN_H
 #define ZINK_SCREEN_H
 
-#include "zink_device_info.h"
-#include "zink_instance.h"
-#include "vk_dispatch_table.h"
+// TODO: Work out how to build libzinkwgl with include directories so that
+// the following generated headers can be found.
+#include "D:/source/mesa/debug-vs/src/gallium/drivers/zink/zink_device_info.h"
+#include "D:/source/mesa/debug-vs/src/gallium/drivers/zink/zink_instance.h"
+#include "D:/source/mesa/debug-vs/src/vulkan/util/vk_dispatch_table.h"
 
 #include "util/u_idalloc.h"
 #include "pipe/p_screen.h"

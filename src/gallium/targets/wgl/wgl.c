@@ -65,6 +65,7 @@
 
 #ifdef GALLIUM_ZINK
 #include "zink/zink_public.h"
+#include "zink/wgl/zink_wgl_public.h"
 #endif
 
 #ifdef GALLIUM_LLVMPIPE
@@ -260,6 +261,12 @@ wgl_create_framebuffer(struct pipe_screen *screen,
    if (use_d3d12)
       return d3d12_wgl_create_framebuffer(screen, hWnd, iPixelFormat);
 #endif
+
+#ifdef GALLIUM_ZINK
+   if (use_zink)
+      return zink_wgl_create_framebuffer(screen, hWnd, iPixelFormat);
+#endif   
+
    return NULL;
 }
 

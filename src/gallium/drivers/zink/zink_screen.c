@@ -1199,7 +1199,6 @@ zink_destroy_screen(struct pipe_screen *pscreen)
 
    simple_mtx_destroy(&screen->queue_lock);
    VKSCR(DestroyDevice)(screen->dev, NULL);
-   VKSCR(DestroySurfaceKHR)(screen->instance, screen->surface, NULL);
    vkDestroyInstance(screen->instance, NULL);
    util_idalloc_mt_fini(&screen->buffer_ids);
 
@@ -1219,8 +1218,58 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    glsl_type_singleton_decref();
 }
 
+static VkSurfaceKHR
+zink_create_surface(const struct zink_screen *screen, intptr_t hdc_or_fd)
+{
+   VkSurfaceKHR surface = VK_NULL_HANDLE;
+#ifdef _WIN32
+   HDC hdc = (HDC) hdc_or_fd;
+   VkWin32SurfaceCreateInfoKHR info = {0};
+   info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+   info.hwnd = WindowFromDC(hdc);
+   info.hinstance = GetModuleHandle(NULL);
+   VkResult result = VKSCR(CreateWin32SurfaceKHR)(screen->instance, &info, NULL, &surface);
+   assert(result == VK_SUCCESS);
+#endif
+   return surface;
+}
+
+static void
+update_queue_props(struct zink_screen* screen, VkSurfaceKHR surface)
+{
+   uint32_t num_queues;
+   vkGetPhysicalDeviceQueueFamilyProperties(screen->pdev, &num_queues, NULL);
+   assert(num_queues > 0);
+
+   VkQueueFamilyProperties* props = malloc(sizeof(*props) * num_queues);
+   vkGetPhysicalDeviceQueueFamilyProperties(screen->pdev, &num_queues, props);
+
+   for (uint32_t i = 0; i < num_queues; i++) {
+      if (props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+         screen->graphics_queue_family = i;
+         screen->max_graphics_queues = props[i].queueCount;
+         screen->timestamp_valid_bits = props[i].timestampValidBits;
+         break;
+      }
+   }
+
+   free(props);
+
+   screen->present_queue_family = -1;
+   for (uint32_t i = 0; i < num_queues; i++) {
+      VkBool32 present_supported = VK_FALSE;
+      VkResult result = VKSCR(GetPhysicalDeviceSurfaceSupportKHR)(screen->pdev, i, surface, &present_supported);
+      assert(result == VK_SUCCESS);
+      if (present_supported)
+      {
+         screen->present_queue_family = i;
+         break;
+      }
+   }
+}
+
 static bool
-choose_pdev(struct zink_screen *screen)
+choose_pdev(struct zink_screen *screen, intptr_t hdc_or_fd)
 {
    uint32_t i, pdev_count;
    VkPhysicalDevice *pdevs;
@@ -1252,27 +1301,38 @@ choose_pdev(struct zink_screen *screen)
          continue;
       }
 #endif
+
       if (props->deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) {
          screen->pdev = pdevs[i];
          screen->info.device_version = props->apiVersion;
+
+         // TODO: Create a temporary surface for the purpose of querying surface
+         // formats and present modes.  These formats and modes aren't
+         // necessarily supported by surfaces created from different windows
+         // later on.
+         VkSurfaceKHR surface = zink_create_surface(screen, hdc_or_fd);
 
          // TODO: Surface formats might be better used to choose physical
          // device rather than queried only after the device has been
          // selected.
          uint32_t surface_formats_count = 0;
-         VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(pdevs[i], screen->surface, &surface_formats_count, NULL);
+         VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(pdevs[i], surface, &surface_formats_count, NULL);
          screen->surface_formats = malloc( sizeof(VkSurfaceFormatKHR*) * surface_formats_count );
-         VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(pdevs[i], screen->surface, &surface_formats_count, screen->surface_formats);
+         VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(pdevs[i], surface, &surface_formats_count, screen->surface_formats);
          screen->surface_formats_count = surface_formats_count;
 
          // TODO: Present modes might be better used to choose physical
          // device rather than queried only after the device has been
          // selected.
          uint32_t present_modes_count = 0;
-         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], screen->surface, &present_modes_count, NULL);
+         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], surface, &present_modes_count, NULL);
          screen->present_modes = malloc( sizeof(VkPresentModeKHR*) * present_modes_count );
-         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], screen->surface, &present_modes_count, screen->present_modes);
+         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], surface, &present_modes_count, screen->present_modes);
          screen->present_modes_count = present_modes_count;
+
+         update_queue_props(screen, surface);
+         VKSCR(DestroySurfaceKHR)(screen->instance, surface, NULL);
+         surface = VK_NULL_HANDLE;
 
          break;
       }
@@ -1290,41 +1350,6 @@ choose_pdev(struct zink_screen *screen)
    else
       screen->spirv_version = SPIRV_VERSION(1, 0);
    return is_cpu;
-}
-
-static void
-update_queue_props(struct zink_screen *screen)
-{
-   uint32_t num_queues;
-   vkGetPhysicalDeviceQueueFamilyProperties(screen->pdev, &num_queues, NULL);
-   assert(num_queues > 0);
-
-   VkQueueFamilyProperties *props = malloc(sizeof(*props) * num_queues);
-   vkGetPhysicalDeviceQueueFamilyProperties(screen->pdev, &num_queues, props);
-
-   for (uint32_t i = 0; i < num_queues; i++) {
-      if (props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-         screen->graphics_queue_family = i;
-         screen->max_graphics_queues = props[i].queueCount;
-         screen->timestamp_valid_bits = props[i].timestampValidBits;
-         break;
-      }
-   }
-
-   free(props);
-
-   screen->present_queue_family = -1;
-   for (uint32_t i = 0; i < num_queues; i++) {
-      VkBool32 present_supported = VK_FALSE;
-      VkResult result = VKSCR(GetPhysicalDeviceSurfaceSupportKHR)(screen->pdev, i, screen->surface, &present_supported);
-      assert(result == VK_SUCCESS);
-
-      if (present_supported)
-      {
-         screen->present_queue_family = i;
-         break;
-      }
-   }
 }
 
 static void
@@ -1984,22 +2009,6 @@ zink_get_sample_pixel_grid(struct pipe_screen *pscreen, unsigned sample_count,
    *height = screen->maxSampleLocationGridSize[idx].height;
 }
 
-static VkSurfaceKHR
-zink_create_surface(const struct zink_screen *screen, intptr_t hdc_or_fd)
-{
-   VkSurfaceKHR surface = VK_NULL_HANDLE;
-#ifdef _WIN32
-   HDC hdc = (HDC) hdc_or_fd;
-   VkWin32SurfaceCreateInfoKHR info = {0};
-   info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-   info.hwnd = WindowFromDC(hdc);
-   info.hinstance = GetModuleHandle(NULL);
-   VkResult result = VKSCR(CreateWin32SurfaceKHR)(screen->instance, &info, NULL, &surface);
-   assert(result == VK_SUCCESS);
-#endif
-   return surface;
-}
-
 static struct zink_screen *
 zink_internal_create_screen(const struct pipe_screen_config *config, intptr_t hdc_or_fd)
 {
@@ -2034,13 +2043,9 @@ zink_internal_create_screen(const struct pipe_screen_config *config, intptr_t hd
       (zink_debug & ZINK_DEBUG_VALIDATION) && !create_debug(screen))
       debug_printf("ZINK: failed to setup debug utils\n");
 
-   screen->surface = zink_create_surface(screen, hdc_or_fd);
-
-   screen->is_cpu = choose_pdev(screen);
+   screen->is_cpu = choose_pdev(screen, hdc_or_fd);
    if (screen->pdev == VK_NULL_HANDLE)
       goto fail;
-
-   update_queue_props(screen);
 
    screen->have_X8_D24_UNORM_PACK32 = zink_is_depth_format_supported(screen,
                                               VK_FORMAT_X8_D24_UNORM_PACK32);

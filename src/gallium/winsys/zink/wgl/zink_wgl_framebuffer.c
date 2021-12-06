@@ -122,12 +122,16 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
       screen->present_queue_family
    };
 
+   VkSurfaceCapabilitiesKHR capabilities = {0};
+   VkResult result = VKSCR(GetPhysicalDeviceSurfaceCapabilitiesKHR)(screen->pdev, screen->surface, &capabilities);
+   assert(result == VK_SUCCESS);
+
    VkSwapchainCreateInfoKHR info = { 0 };
    info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
    info.pNext = NULL;
    info.flags = 0;
    info.surface = screen->surface;
-   info.minImageCount = 0;
+   info.minImageCount = 2;
    info.imageFormat = format;
    info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
    info.imageExtent.width = width;
@@ -137,7 +141,7 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
    info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
    info.queueFamilyIndexCount = screen->graphics_queue_family == screen->present_queue_family ? 1 : 2;
    info.pQueueFamilyIndices = queue_family_indices;
-   info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+   info.preTransform = capabilities.currentTransform;
    info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
    info.presentMode =  VK_PRESENT_MODE_FIFO_KHR;
    info.clipped = VK_TRUE;
@@ -145,7 +149,7 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
 
    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
    VkDevice device = screen->dev;
-   VkResult result = VKSCR(CreateSwapchainKHR)(device, &info, NULL, &swapchain);
+   result = VKSCR(CreateSwapchainKHR)(device, &info, NULL, &swapchain);
    assert(result == VK_SUCCESS);
    assert(swapchain != VK_NULL_HANDLE);   
    if (framebuffer->swapchain != VK_NULL_HANDLE)

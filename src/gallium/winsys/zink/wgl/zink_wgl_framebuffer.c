@@ -42,6 +42,7 @@ struct zink_wgl_framebuffer {
    struct zink_screen* screen;
    enum pipe_format pformat;
    HWND window;
+   VkSurfaceKHR surface;
    VkSwapchainKHR swapchain;
    struct pipe_resource *buffers[num_buffers];
 };
@@ -76,8 +77,11 @@ zink_wgl_framebuffer_destroy(struct stw_winsys_framebuffer *fb,
       }
    }
 
-   VKSCR(DestroySwapchainKHR)(framebuffer->screen->dev, framebuffer->swapchain, NULL);
-   framebuffer->swapchain = VK_NULL_HANDLE;   
+   VKSCR(DestroySwapchainKHR)(screen->dev, framebuffer->swapchain, NULL);
+   framebuffer->swapchain = VK_NULL_HANDLE;
+
+   VKSCR(DestroySurfaceKHR)(screen->instance, framebuffer->surface, NULL);
+   framebuffer->surface = VK_NULL_HANDLE;
 
    free(framebuffer);
 }
@@ -117,20 +121,33 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
       }
    }
 
+   if (framebuffer->surface == VK_NULL_HANDLE) {
+      VkSurfaceKHR surface = VK_NULL_HANDLE;
+#ifdef _WIN32
+      VkWin32SurfaceCreateInfoKHR info = {0};
+      info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+      info.hwnd = framebuffer->window;
+      info.hinstance = GetModuleHandle(NULL);
+      VkResult result = VKSCR(CreateWin32SurfaceKHR)(screen->instance, &info, NULL, &surface);
+      assert(result == VK_SUCCESS);
+#endif
+      framebuffer->surface = surface;
+   }
+
    uint32_t queue_family_indices[2] = {
       screen->graphics_queue_family,
       screen->present_queue_family
    };
 
    VkSurfaceCapabilitiesKHR capabilities = {0};
-   VkResult result = VKSCR(GetPhysicalDeviceSurfaceCapabilitiesKHR)(screen->pdev, screen->surface, &capabilities);
+   VkResult result = VKSCR(GetPhysicalDeviceSurfaceCapabilitiesKHR)(screen->pdev, framebuffer->surface, &capabilities);
    assert(result == VK_SUCCESS);
 
    VkSwapchainCreateInfoKHR info = { 0 };
    info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
    info.pNext = NULL;
    info.flags = 0;
-   info.surface = screen->surface;
+   info.surface = framebuffer->surface;
    info.minImageCount = 2;
    info.imageFormat = format;
    info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;

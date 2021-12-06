@@ -1206,6 +1206,10 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    if (screen->drm_fd != -1)
       close(screen->drm_fd);
 
+   free(screen->present_modes);
+   screen->present_modes = NULL;
+   screen->present_modes = 0;
+
    free(screen->surface_formats);
    screen->surface_formats = NULL;
    screen->surface_formats_count = 0;
@@ -1264,9 +1268,11 @@ choose_pdev(struct zink_screen *screen)
          // TODO: Present modes might be better used to choose physical
          // device rather than queried only after the device has been
          // selected.
-         uint32_t present_mode_count = 0;
-         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], screen->surface, &present_mode_count, NULL);
-         assert(present_mode_count > 0);
+         uint32_t present_modes_count = 0;
+         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], screen->surface, &present_modes_count, NULL);
+         screen->present_modes = malloc( sizeof(VkPresentModeKHR*) * present_modes_count );
+         VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(pdevs[i], screen->surface, &present_modes_count, screen->present_modes);
+         screen->present_modes_count = present_modes_count;
 
          break;
       }

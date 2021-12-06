@@ -183,6 +183,8 @@ struct zink_screen {
    VkExtent2D maxSampleLocationGridSize[5];
    int surface_formats_count;
    VkSurfaceFormatKHR* surface_formats;
+   int present_modes_count;
+   VkPresentModeKHR* present_modes;
 };
 
 

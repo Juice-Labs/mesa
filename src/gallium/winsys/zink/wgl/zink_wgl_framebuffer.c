@@ -34,23 +34,46 @@
 
 enum Limits
 {
-   num_buffers = 2
+   maximum_buffers = 8
 };
 
 struct zink_wgl_framebuffer {
    struct stw_winsys_framebuffer base;
    struct zink_screen* screen;
    enum pipe_format pformat;
+   int width;
+   int height;
    HWND window;
    VkSurfaceKHR surface;
    VkSwapchainKHR swapchain;
-   struct pipe_resource *buffers[num_buffers];
+   VkSemaphore image_available;
+   VkSemaphore draw_finished;
+   int acquired_image;
+   struct pipe_resource *buffers[maximum_buffers];
 };
 
 static struct zink_wgl_framebuffer *
 zink_wgl_framebuffer(struct stw_winsys_framebuffer *fb)
 {
    return (struct zink_wgl_framebuffer *)fb;
+}
+
+static void
+zink_framebuffer_acquire_next_image(struct zink_wgl_framebuffer *framebuffer)
+{
+   assert(framebuffer);
+   assert(framebuffer->screen->dev != VK_NULL_HANDLE);
+   assert(framebuffer->swapchain != VK_NULL_HANDLE);
+   assert(framebuffer->image_available != VK_NULL_HANDLE);
+
+   struct zink_screen *screen = framebuffer->screen;
+   VkDevice device = screen->dev;
+   VkSwapchainKHR swapchain = framebuffer->swapchain;
+   VkSemaphore image_available = framebuffer->image_available;
+   uint32_t index = ~0;
+   VkResult result = VKSCR(AcquireNextImageKHR)(device, swapchain, UINT64_MAX, image_available, VK_NULL_HANDLE, &index);
+   assert(result == VK_SUCCESS);
+   framebuffer->acquired_image = index;
 }
 
 static void
@@ -70,12 +93,18 @@ zink_wgl_framebuffer_destroy(struct stw_winsys_framebuffer *fb,
       }
    }
 
-   for (int i = 0; i < num_buffers; ++i) {
+   for (int i = 0; i < maximum_buffers; ++i) {
       if (framebuffer->buffers[i]) {
          // zink_resource_release(zink_resource(framebuffer->buffers[i]));
          pipe_resource_reference(&framebuffer->buffers[i], NULL);
       }
    }
+
+   VKSCR(DestroySemaphore)(screen->dev, framebuffer->draw_finished, NULL);
+   framebuffer->draw_finished = VK_NULL_HANDLE;
+
+   VKSCR(DestroySemaphore)(screen->dev, framebuffer->image_available, NULL);
+   framebuffer->image_available = VK_NULL_HANDLE;
 
    VKSCR(DestroySwapchainKHR)(screen->dev, framebuffer->swapchain, NULL);
    framebuffer->swapchain = VK_NULL_HANDLE;
@@ -113,7 +142,7 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
          ctx->screen->fence_reference(ctx->screen, &fence, NULL);
       }
 
-      for (int i = 0; i < num_buffers; ++i) {
+      for (int i = 0; i < maximum_buffers; ++i) {
          if (framebuffer->buffers[i]) {
             // zink_resource_release(zink_resource(framebuffer->buffers[i]));
             pipe_resource_reference(&framebuffer->buffers[i], NULL);
@@ -121,17 +150,33 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
       }
    }
 
-   if (framebuffer->surface == VK_NULL_HANDLE) {
+   if (framebuffer->swapchain == VK_NULL_HANDLE) {
+      assert(framebuffer->pformat == PIPE_FORMAT_NONE);
+      framebuffer->pformat = template->format;
+
+      assert(framebuffer->surface == VK_NULL_HANDLE);
       VkSurfaceKHR surface = VK_NULL_HANDLE;
 #ifdef _WIN32
-      VkWin32SurfaceCreateInfoKHR info = {0};
-      info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-      info.hwnd = framebuffer->window;
-      info.hinstance = GetModuleHandle(NULL);
-      VkResult result = VKSCR(CreateWin32SurfaceKHR)(screen->instance, &info, NULL, &surface);
+      VkWin32SurfaceCreateInfoKHR surface_create = {0};
+      surface_create.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+      surface_create.hwnd = framebuffer->window;
+      surface_create.hinstance = GetModuleHandle(NULL);
+      VkResult result = VKSCR(CreateWin32SurfaceKHR)(screen->instance, &surface_create, NULL, &surface);
       assert(result == VK_SUCCESS);
 #endif
       framebuffer->surface = surface;
+
+      assert(framebuffer->image_available == VK_NULL_HANDLE);
+      assert(framebuffer->draw_finished == VK_NULL_HANDLE);
+      VkDevice device = screen->dev;
+      VkSemaphoreCreateInfo semaphore_create = {0};
+      semaphore_create.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+      semaphore_create.pNext = NULL;
+      semaphore_create.flags = 0;
+      result = VKSCR(CreateSemaphore)(device, &semaphore_create, NULL, &framebuffer->image_available);
+      assert(result == VK_SUCCESS);
+      result = VKSCR(CreateSemaphore)(device, &semaphore_create, NULL, &framebuffer->draw_finished);
+      assert(result == VK_SUCCESS);
    }
 
    uint32_t queue_family_indices[2] = {
@@ -169,28 +214,86 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
    result = VKSCR(CreateSwapchainKHR)(device, &info, NULL, &swapchain);
    assert(result == VK_SUCCESS);
    assert(swapchain != VK_NULL_HANDLE);   
+
+   uint32_t images_count = maximum_buffers;
+   VkImage images [maximum_buffers] = {0};
+   VKSCR(GetSwapchainImagesKHR)(device, swapchain, &images_count, images);
+
+   for (uint32_t i = 0; i < images_count; ++i) {
+      assert(images[i] != VK_NULL_HANDLE);
+
+      struct winsys_handle handle = {0};
+      handle.type = WINSYS_HANDLE_TYPE_VK_RES;
+      handle.format = template->format;
+      handle.vulkan_handle = (intptr_t) images[i];
+
+      struct pipe_resource templ;
+      memset(&templ, 0, sizeof(templ));
+      templ.target = PIPE_TEXTURE_2D;
+      templ.format = framebuffer->pformat;
+      templ.width0 = width;
+      templ.height0 = height;
+      templ.depth0 = 1;
+      templ.array_size = 1;
+      templ.nr_samples = 1;
+      templ.last_level = 0;
+      templ.bind = PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_RENDER_TARGET;
+      templ.usage = PIPE_USAGE_DEFAULT;
+      templ.flags = 0;
+
+      struct pipe_screen* pscreen = &framebuffer->screen->base;
+      pipe_resource_reference(
+         &framebuffer->buffers[i],
+         pscreen->resource_from_handle(pscreen, &templ, &handle, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE)
+      );
+   }
+
    if (framebuffer->swapchain != VK_NULL_HANDLE)
    {
       VKSCR(DestroySwapchainKHR)(device, framebuffer->swapchain, NULL);
       framebuffer->swapchain = VK_NULL_HANDLE;
    }
+
    framebuffer->swapchain = swapchain;
+   framebuffer->width = width;
+   framebuffer->height = height;
+
+   zink_framebuffer_acquire_next_image(framebuffer);
 }
 
 static boolean
-zink_wgl_framebuffer_present(struct stw_winsys_framebuffer *fb)
+zink_wgl_framebuffer_present(struct stw_winsys_framebuffer* fb)
 {
-   struct zink_wgl_framebuffer *framebuffer = zink_wgl_framebuffer(fb);
+   struct zink_wgl_framebuffer* framebuffer = zink_wgl_framebuffer(fb);
    if (!framebuffer->swapchain) {
       debug_printf("zink: Cannot present; no swapchain");
       return false;
    }
 
+   struct zink_screen* screen = framebuffer->screen;
    // if (stw_dev->swap_interval < 1)
    //    return S_OK == framebuffer->swapchain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
    // else
    //     return S_OK == framebuffer->swapchain->Present(stw_dev->swap_interval, 0);
-   return false;
+
+   VkResult results[1] = {VK_SUCCESS};
+   VkPresentInfoKHR info = {0};
+   info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+   info.pNext = NULL;
+   info.waitSemaphoreCount = 1;
+   info.pWaitSemaphores = &framebuffer->image_available;
+   info.swapchainCount = 1;
+   info.pSwapchains = &framebuffer->swapchain;
+   info.pImageIndices = &framebuffer->acquired_image;
+   info.pResults = results;
+
+   VkQueue queue = framebuffer->screen->present_queue;
+   assert(framebuffer->screen->present_queue == framebuffer->screen->queue);
+   VkResult result = VKSCR(QueuePresentKHR)(queue, &info);
+   assert(result == VK_SUCCESS);
+   assert(results[0] == VK_SUCCESS);
+   zink_framebuffer_acquire_next_image(framebuffer);
+   return true;
 }
 
 static struct pipe_resource *
@@ -198,11 +301,26 @@ zink_wgl_framebuffer_get_resource(struct stw_winsys_framebuffer *pframebuffer,
                                    enum st_attachment_type statt)
 {
    struct zink_wgl_framebuffer *framebuffer = zink_wgl_framebuffer(pframebuffer);
+   struct zink_screen *screen = framebuffer->screen;
    struct pipe_screen *pscreen = &framebuffer->screen->base;
 
-   if (!framebuffer->swapchain)
+   if (framebuffer->swapchain == VK_NULL_HANDLE)
       return NULL;
 
+   // TODO: What does the following do wrt. D3D12?  I guess that's returning
+   // the front buffer instead of (one) of the back buffer(s).  Not sure if
+   // that's valid for Vulkan but I'll see what I can do.
+   // if (statt == ST_ATTACHMENT_FRONT_LEFT)
+   //    index = !index;
+
+   int index = framebuffer->acquired_image;
+   if (index >= 0)
+   {
+      struct pipe_resource *resource = framebuffer->buffers[index];
+      assert(resource);
+      pipe_reference(NULL, &resource->reference);
+      return resource;
+   }
    return NULL;
 }
 

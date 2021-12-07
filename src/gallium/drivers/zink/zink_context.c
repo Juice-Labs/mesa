@@ -4066,7 +4066,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    struct zink_context *ctx = rzalloc(NULL, struct zink_context);
    if (!ctx)
       goto fail;
-   ctx->have_timelines = screen->info.have_KHR_timeline_semaphore;
+   // ctx->have_timelines = screen->info.have_KHR_timeline_semaphore;
+   ctx->have_timelines = false;
 
    ctx->pipeline_changed[0] = ctx->pipeline_changed[1] = true;
    ctx->gfx_pipeline_state.dirty = true;
@@ -4240,7 +4241,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
       util_dynarray_init(&ctx->di.bindless[i].resident, NULL);
    }
 
-   ctx->have_timelines = screen->info.have_KHR_timeline_semaphore;
+   // ctx->have_timelines = screen->info.have_KHR_timeline_semaphore;
+   ctx->have_timelines = false;
    simple_mtx_init(&ctx->batch_mtx, mtx_plain);
    zink_start_batch(ctx, &ctx->batch);
    if (!ctx->batch.state)

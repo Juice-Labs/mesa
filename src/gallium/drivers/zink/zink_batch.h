@@ -71,6 +71,8 @@ struct zink_batch_state {
 
    VkQueue queue; //duplicated from batch for threading
    VkSemaphore sem;
+   VkSemaphore wait_semaphore; // Semaphore to wait on before this batch executes.
+   VkSemaphore signal_semaphore; // Semaphore to signal after this batch executes.
 
    struct util_queue_fence flush_completed;
 

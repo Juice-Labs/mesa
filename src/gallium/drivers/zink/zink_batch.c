@@ -34,6 +34,7 @@ zink_reset_batch_state(struct zink_context *ctx, struct zink_batch_state *bs)
       debug_printf("vkResetCommandPool failed\n");
 
    bs->wait_semaphore = VK_NULL_HANDLE;
+   bs->wait_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
    bs->signal_semaphore = VK_NULL_HANDLE;
 
    /* unref all used resources */
@@ -387,6 +388,7 @@ submit_queue(void *data, void *gdata, int thread_index)
    if (bs->wait_semaphore != VK_NULL_HANDLE) {
       si.waitSemaphoreCount = 1;
       si.pWaitSemaphores = &bs->wait_semaphore;
+      si.pWaitDstStageMask = &bs->wait_stage;
    }
 
    int signal_semaphore_count = 0;

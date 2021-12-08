@@ -229,6 +229,18 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
    assert(result == VK_SUCCESS);
    assert(supports_present == VK_TRUE);
 
+   // HACK: Hard-code usage here to match that returned by
+   // get_image_usage_for_feats() in zink_resource.c.  The latter usage is
+   // what is stored in the Zink object that tracks usage for later
+   // operations but must match when the swapchain images are created.
+   VkImageUsageFlags usage =
+      VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+      VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+      VK_IMAGE_USAGE_SAMPLED_BIT |
+      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+      VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT
+   ;
+
    VkSwapchainCreateInfoKHR info = {0};
    info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
    info.pNext = NULL;
@@ -240,7 +252,7 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
    info.imageExtent.width = width;
    info.imageExtent.height = height;
    info.imageArrayLayers = 1;
-   info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+   info.imageUsage = usage;
    info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
    info.queueFamilyIndexCount = screen->graphics_queue_family == screen->present_queue_family ? 1 : 2;
    info.pQueueFamilyIndices = queue_family_indices;

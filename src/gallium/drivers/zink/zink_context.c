@@ -2473,6 +2473,9 @@ flush_batch(struct zink_context *ctx, bool sync, unsigned flags)
       zink_begin_render_pass(ctx);
    zink_end_render_pass(ctx);
 
+   // Signal the draw finished semaphore when the end of frame flushed batch
+   // completes.  This semaphore is waited on before the current image is
+   // presented.
    if (flags & PIPE_FLUSH_END_OF_FRAME) {
       struct stw_context* ctx = stw_current_context();
       assert(ctx);
@@ -2492,6 +2495,19 @@ flush_batch(struct zink_context *ctx, bool sync, unsigned flags)
       check_device_lost(ctx);
    } else {
       zink_start_batch(ctx, batch);
+
+      // Wait on the present finished semaphore before drawing to the current
+      // image.  This semaphore is signalled by the swapchain when the image
+      // has been presented and is available to be reused.
+      if (flags & PIPE_FLUSH_END_OF_FRAME) {
+         struct stw_context* ctx = stw_current_context();
+         assert(ctx);
+         assert(ctx->current_framebuffer);
+         struct zink_wgl_framebuffer* framebuffer = (struct zink_wgl_framebuffer*) ctx->current_framebuffer->winsys_framebuffer;
+         assert(framebuffer);
+         batch->state->wait_semaphore = zink_framebuffer_present_finished(framebuffer);
+      }
+
       if (zink_screen(ctx->base.screen)->info.have_EXT_transform_feedback && ctx->num_so_targets)
          ctx->dirty_so_targets = true;
       ctx->pipeline_changed[0] = ctx->pipeline_changed[1] = true;

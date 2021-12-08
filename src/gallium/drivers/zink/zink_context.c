@@ -56,6 +56,15 @@
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
 
+// HACK: This is to get access to the current framebuffer so that I can
+// retrieve a `zink_wgl_framebuffer` and its present finished and draw
+// finished semaphores.  I think that particular context is only valid
+// on Windows too.
+#include <gallium/frontends/wgl/gldrv.h>
+#include <gallium/frontends/wgl/stw_context.h>
+#include <gallium/frontends/wgl/stw_framebuffer.h>
+#include <gallium/winsys/zink/wgl/zink_wgl_public.h>
+
 static void
 calc_descriptor_hash_sampler_state(struct zink_sampler_state *sampler_state)
 {
@@ -2456,13 +2465,23 @@ stall(struct zink_context *ctx)
 }
 
 static void
-flush_batch(struct zink_context *ctx, bool sync)
+flush_batch(struct zink_context *ctx, bool sync, unsigned flags)
 {
    struct zink_batch *batch = &ctx->batch;
    if (ctx->clears_enabled)
       /* start rp to do all the clears */
       zink_begin_render_pass(ctx);
    zink_end_render_pass(ctx);
+
+   if (flags & PIPE_FLUSH_END_OF_FRAME) {
+      struct stw_context* ctx = stw_current_context();
+      assert(ctx);
+      assert(ctx->current_framebuffer);
+      struct zink_wgl_framebuffer* framebuffer = (struct zink_wgl_framebuffer*) ctx->current_framebuffer->winsys_framebuffer;
+      assert(framebuffer);
+      batch->state->signal_semaphore = zink_framebuffer_draw_finished(framebuffer);
+   }
+
    zink_end_batch(ctx, batch);
    ctx->deferred_fence = NULL;
 
@@ -2491,7 +2510,7 @@ flush_batch(struct zink_context *ctx, bool sync)
 void
 zink_flush_queue(struct zink_context *ctx)
 {
-   flush_batch(ctx, true);
+   flush_batch(ctx, true, 0);
 }
 
 static bool
@@ -2612,7 +2631,7 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
    zink_batch_no_rp(ctx);
    /* this is an ideal time to oom flush since it won't split a renderpass */
    if (ctx->oom_flush)
-      flush_batch(ctx, false);
+      flush_batch(ctx, false, 0);
 }
 
 static void
@@ -3079,7 +3098,7 @@ zink_flush(struct pipe_context *pctx,
       if (deferred && !(flags & PIPE_FLUSH_FENCE_FD) && pfence)
          deferred_fence = true;
       else
-         flush_batch(ctx, true);
+         flush_batch(ctx, true, flags);
    }
 
    if (pfence) {
@@ -3145,7 +3164,7 @@ zink_wait_on_batch(struct zink_context *ctx, uint32_t batch_id)
    assert(bs);
    if (!batch_id || bs->fence.batch_id == batch_id)
       /* not submitted yet */
-      flush_batch(ctx, true);
+      flush_batch(ctx, true, 0);
    if (ctx->have_timelines) {
       if (!zink_screen_timeline_wait(zink_screen(ctx->base.screen), batch_id, UINT64_MAX))
          check_device_lost(ctx);

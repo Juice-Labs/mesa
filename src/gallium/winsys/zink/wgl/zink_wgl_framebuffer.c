@@ -237,7 +237,7 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
       templ.array_size = 1;
       templ.nr_samples = 1;
       templ.last_level = 0;
-      templ.bind = PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_RENDER_TARGET;
+      templ.bind = PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_RENDER_TARGET | PIPE_BIND_SCANOUT;
       templ.usage = PIPE_USAGE_DEFAULT;
       templ.flags = 0;
 

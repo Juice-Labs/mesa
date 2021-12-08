@@ -350,3 +350,13 @@ zink_wgl_create_framebuffer(struct pipe_screen *screen,
 
    return &fb->base;
 }
+
+VkSemaphore zink_framebuffer_present_finished(struct zink_wgl_framebuffer* framebuffer)
+{
+   return framebuffer->image_available;
+}
+
+VkSemaphore zink_framebuffer_draw_finished(struct zink_wgl_framebuffer* framebuffer)
+{
+   return framebuffer->draw_finished;   
+}

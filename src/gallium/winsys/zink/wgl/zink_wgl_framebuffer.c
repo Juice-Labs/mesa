@@ -50,6 +50,10 @@ struct zink_wgl_framebuffer {
    VkSemaphore draw_finished;
    int acquired_image;
    struct pipe_resource *buffers[maximum_buffers];
+   int surface_formats_count;
+   VkSurfaceFormatKHR* surface_formats;
+   int present_modes_count;
+   VkPresentModeKHR* present_modes;
 };
 
 static struct zink_wgl_framebuffer *
@@ -99,6 +103,14 @@ zink_wgl_framebuffer_destroy(struct stw_winsys_framebuffer *fb,
          pipe_resource_reference(&framebuffer->buffers[i], NULL);
       }
    }
+
+   free(framebuffer->present_modes);
+   framebuffer->present_modes = NULL;
+   framebuffer->present_modes = 0;
+
+   free(framebuffer->surface_formats);
+   framebuffer->surface_formats = NULL;
+   framebuffer->surface_formats_count = 0;
 
    VKSCR(DestroySemaphore)(screen->dev, framebuffer->draw_finished, NULL);
    framebuffer->draw_finished = VK_NULL_HANDLE;
@@ -166,6 +178,30 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
 #endif
       framebuffer->surface = surface;
 
+      // TODO: The effective surface formats are those queried from the
+      // temporary surface created when the physical device is choosen
+      // in choose_pdev() (see zink_screen.c).  That's not correct though
+      // because the surface used here might be different and support
+      // different formats.  Hence the query here.  These aren't used yet
+      // but calling this function silences validation layer warnings.
+      uint32_t surface_formats_count = 0;
+      VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(screen->pdev, surface, &surface_formats_count, NULL);
+      framebuffer->surface_formats = malloc( sizeof(VkSurfaceFormatKHR*) * surface_formats_count );
+      VKSCR(GetPhysicalDeviceSurfaceFormatsKHR)(screen->pdev, surface, &surface_formats_count, framebuffer->surface_formats);
+      framebuffer->surface_formats_count = surface_formats_count;
+
+      // TODO: The effective present modes are those queried from the
+      // temporary surface created when the physical device is choosen
+      // in choose_pdev() (see zink_screen.c).  That's not correct though
+      // because the surface used here might be different and support
+      // different modes.  Hence the query here.  These aren't used yet
+      // but calling this function silences validation layer warnings.
+      uint32_t present_modes_count = 0;
+      VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(screen->pdev, surface, &present_modes_count, NULL);
+      framebuffer->present_modes = malloc( sizeof(VkPresentModeKHR*) * present_modes_count );
+      VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(screen->pdev, surface, &present_modes_count, framebuffer->present_modes);
+      framebuffer->present_modes_count = present_modes_count;
+
       assert(framebuffer->image_available == VK_NULL_HANDLE);
       assert(framebuffer->draw_finished == VK_NULL_HANDLE);
       VkDevice device = screen->dev;
@@ -188,7 +224,12 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
    VkResult result = VKSCR(GetPhysicalDeviceSurfaceCapabilitiesKHR)(screen->pdev, framebuffer->surface, &capabilities);
    assert(result == VK_SUCCESS);
 
-   VkSwapchainCreateInfoKHR info = { 0 };
+   VkBool32 supports_present = VK_FALSE;
+   result = VKSCR(GetPhysicalDeviceSurfaceSupportKHR)(screen->pdev, screen->present_queue_family, framebuffer->surface, &supports_present);
+   assert(result == VK_SUCCESS);
+   assert(supports_present == VK_TRUE);
+
+   VkSwapchainCreateInfoKHR info = {0};
    info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
    info.pNext = NULL;
    info.flags = 0;

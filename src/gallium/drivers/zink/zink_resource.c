@@ -473,6 +473,10 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       VkImage image = (VkImage) whandle->vulkan_handle;
       VKSCR(GetImageMemoryRequirements)(screen->dev, image, &reqs);
 
+      VkFormatProperties properties = screen->format_props[templ->format];
+      VkFormatFeatureFlags features = properties.optimalTilingFeatures;
+      obj->vkusage = get_image_usage_for_feats(screen, features, templ, templ->bind);
+
       // TODO: Work out which of the following zink_resource_object attributes
       // need to be set in addition to what is already set below.
       // VkPipelineStageFlagBits access_stage;

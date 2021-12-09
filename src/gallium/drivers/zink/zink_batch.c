@@ -33,6 +33,10 @@ zink_reset_batch_state(struct zink_context *ctx, struct zink_batch_state *bs)
    if (VKSCR(ResetCommandPool)(screen->dev, bs->cmdpool, 0) != VK_SUCCESS)
       debug_printf("vkResetCommandPool failed\n");
 
+   bs->wait_semaphore = VK_NULL_HANDLE;
+   bs->wait_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+   bs->signal_semaphore = VK_NULL_HANDLE;
+
    /* unref all used resources */
    set_foreach_remove(bs->resources, entry) {
       struct zink_resource_object *obj = (struct zink_resource_object *)entry->key;
@@ -381,15 +385,38 @@ submit_queue(void *data, void *gdata, int thread_index)
    };
    si.pCommandBuffers = bs->has_barriers ? cmdbufs : &cmdbufs[1];
 
+   if (bs->wait_semaphore != VK_NULL_HANDLE) {
+      si.waitSemaphoreCount = 1;
+      si.pWaitSemaphores = &bs->wait_semaphore;
+      si.pWaitDstStageMask = &bs->wait_stage;
+   }
+
+   int signal_semaphore_count = 0;
+   VkSemaphore signal_semaphores [2] = {0};
+   uint64_t signal_values [2] = {0};
+   uint64_t wait_values [1] = {0};
+
+   if (bs->signal_semaphore != VK_NULL_HANDLE) {
+      signal_semaphores[signal_semaphore_count] = bs->signal_semaphore;
+      signal_values[signal_semaphore_count] = 0;
+      ++signal_semaphore_count;
+   }
+
    VkTimelineSemaphoreSubmitInfo tsi = {0};
    if (bs->have_timelines) {
+      signal_semaphores[signal_semaphore_count] = screen->sem;
+      signal_values[signal_semaphore_count] = batch_id;
+      ++signal_semaphore_count;
       tsi.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+      tsi.waitSemaphoreValueCount = si.waitSemaphoreCount;
+      tsi.pWaitSemaphoreValues = wait_values;
+      tsi.signalSemaphoreValueCount = signal_semaphore_count;
+      tsi.pSignalSemaphoreValues = signal_values;
       si.pNext = &tsi;
-      tsi.signalSemaphoreValueCount = 1;
-      tsi.pSignalSemaphoreValues = &batch_id;
-      si.signalSemaphoreCount = 1;
-      si.pSignalSemaphores = &screen->sem;
    }
+
+   si.signalSemaphoreCount = signal_semaphore_count;
+   si.pSignalSemaphores = signal_semaphores;
 
    struct wsi_memory_signal_submit_info mem_signal = {
       .sType = VK_STRUCTURE_TYPE_WSI_MEMORY_SIGNAL_SUBMIT_INFO_MESA,

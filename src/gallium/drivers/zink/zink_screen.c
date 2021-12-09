@@ -1951,27 +1951,6 @@ zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_
    return success;
 }
 
-static uint32_t
-zink_get_loader_version(struct zink_screen *screen)
-{
-
-   uint32_t loader_version = VK_API_VERSION_1_0;
-
-   // Get the Loader version
-   GET_PROC_ADDR_INSTANCE_LOCAL(screen, NULL, EnumerateInstanceVersion);
-   if (vk_EnumerateInstanceVersion) {
-      uint32_t loader_version_temp = VK_API_VERSION_1_0;
-      VkResult result = (*vk_EnumerateInstanceVersion)(&loader_version_temp);
-      if (VK_SUCCESS == result) {
-         loader_version = loader_version_temp;
-      } else {
-         mesa_loge("ZINK: vkEnumerateInstanceVersion failed (%s)", vk_Result_to_str(result));
-      }
-   }
-
-   return loader_version;
-}
-
 static void
 zink_query_memory_info(struct pipe_screen *pscreen, struct pipe_memory_info *info)
 {
@@ -2355,7 +2334,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
        !screen->vk_GetDeviceProcAddr)
       goto fail;
 
-   screen->instance_info.loader_version = zink_get_loader_version(screen);
+   screen->instance_info.loader_version = VK_API_VERSION_1_1;
 #if WITH_XMLCONFIG
    if (config) {
       driParseConfigFiles(config->options, config->options_info, 0, "zink",

@@ -235,6 +235,11 @@ if with_platform_windows
   else
     winsys_d3d12_wgl = declare_dependency()
   endif
+  if with_gallium_zink
+    subdir('winsys/zink/wgl')
+  else
+    winsys_zink_wgl = declare_dependency()
+  endif
   subdir('targets/wgl')
   subdir('targets/libgl-gdi')
 endif

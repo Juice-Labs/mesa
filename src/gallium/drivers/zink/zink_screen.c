@@ -1196,6 +1196,22 @@ zink_is_format_supported(struct pipe_screen *pscreen,
          return false;
    }
 
+   // TODO: Might need to take into account the color space (e.g. sRGB or
+   // not) here as well.  That's at least the other information that's
+   // available.
+   if (bind & PIPE_BIND_DISPLAY_TARGET)
+   {
+      int i = 0;
+      while (i < screen->surface_formats_count && screen->surface_formats[i].format != vkformat)
+      {
+         ++i;
+      }
+      if (i >= screen->surface_formats_count)
+      {
+         return false;
+      }
+   }
+
    return true;
 }
 

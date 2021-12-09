@@ -54,8 +54,8 @@ create_render_pass(struct zink_screen *screen, struct zink_render_pass_state *st
       attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
       /* if layout changes are ever handled here, need VkAttachmentSampleLocationsEXT */
       VkImageLayout layout = rt->fbfetch ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-      attachments[i].initialLayout = layout;
-      attachments[i].finalLayout = layout;
+      attachments[i].initialLayout = rt->swapchain ? VK_IMAGE_LAYOUT_UNDEFINED : layout;
+      attachments[i].finalLayout = rt->swapchain ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : layout;
       color_refs[i].attachment = i;
       color_refs[i].layout = layout;
       dep_pipeline |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -162,8 +162,8 @@ create_render_pass2(struct zink_screen *screen, struct zink_render_pass_state *s
       attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
       /* if layout changes are ever handled here, need VkAttachmentSampleLocationsEXT */
       VkImageLayout layout = rt->fbfetch ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-      attachments[i].initialLayout = layout;
-      attachments[i].finalLayout = layout;
+      attachments[i].initialLayout = rt->swapchain ? VK_IMAGE_LAYOUT_UNDEFINED : layout;
+      attachments[i].finalLayout = rt->swapchain ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : layout;
       color_refs[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
       color_refs[i].pNext = NULL;
       color_refs[i].attachment = i;

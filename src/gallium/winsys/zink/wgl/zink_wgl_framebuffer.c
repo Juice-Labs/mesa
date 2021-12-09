@@ -46,8 +46,10 @@ struct zink_wgl_framebuffer {
    HWND window;
    VkSurfaceKHR surface;
    VkSwapchainKHR swapchain;
-   VkSemaphore image_available;
-   VkSemaphore draw_finished;
+   VkSemaphore image_available [maximum_buffers];
+   VkSemaphore draw_finished [maximum_buffers];
+   VkFence present_done_fence [maximum_buffers];
+   int frame;
    int acquired_image;
    struct pipe_resource *buffers[maximum_buffers];
    int surface_formats_count;
@@ -73,11 +75,22 @@ zink_framebuffer_acquire_next_image(struct zink_wgl_framebuffer *framebuffer)
    struct zink_screen *screen = framebuffer->screen;
    VkDevice device = screen->dev;
    VkSwapchainKHR swapchain = framebuffer->swapchain;
-   VkSemaphore image_available = framebuffer->image_available;
+   int frame = framebuffer->frame % maximum_buffers;
+   VkSemaphore semaphore = framebuffer->image_available[frame];
+   VkFence fence = framebuffer->present_done_fence[frame];
+
+   VkResult result = VKSCR(WaitForFences)(device, 1, &fence, VK_TRUE, UINT64_MAX);
+   assert(result == VK_SUCCESS);
+
+   result = VKSCR(ResetFences)(device, 1, &fence);
+   assert(result == VK_SUCCESS);
+
    uint32_t index = ~0;
-   VkResult result = VKSCR(AcquireNextImageKHR)(device, swapchain, UINT64_MAX, image_available, VK_NULL_HANDLE, &index);
+   result = VKSCR(AcquireNextImageKHR)(device, swapchain, UINT64_MAX, semaphore, fence, &index);
    assert(result == VK_SUCCESS);
    framebuffer->acquired_image = index;
+
+   ++framebuffer->frame;
 }
 
 static void
@@ -112,11 +125,14 @@ zink_wgl_framebuffer_destroy(struct stw_winsys_framebuffer *fb,
    framebuffer->surface_formats = NULL;
    framebuffer->surface_formats_count = 0;
 
-   VKSCR(DestroySemaphore)(screen->dev, framebuffer->draw_finished, NULL);
-   framebuffer->draw_finished = VK_NULL_HANDLE;
-
-   VKSCR(DestroySemaphore)(screen->dev, framebuffer->image_available, NULL);
-   framebuffer->image_available = VK_NULL_HANDLE;
+   for (int i = 0; i < maximum_buffers; ++i) {
+      VKSCR(DestroySemaphore)(screen->dev, framebuffer->draw_finished[i], NULL);
+      framebuffer->draw_finished[i] = VK_NULL_HANDLE;
+      VKSCR(DestroySemaphore)(screen->dev, framebuffer->image_available[i], NULL);
+      framebuffer->image_available[i] = VK_NULL_HANDLE;
+      VKSCR(DestroyFence)(screen->dev, framebuffer->present_done_fence[i], NULL);
+      framebuffer->present_done_fence[i] = VK_NULL_HANDLE;
+   }
 
    VKSCR(DestroySwapchainKHR)(screen->dev, framebuffer->swapchain, NULL);
    framebuffer->swapchain = VK_NULL_HANDLE;
@@ -202,17 +218,20 @@ zink_wgl_framebuffer_resize(struct stw_winsys_framebuffer* fb,
       VKSCR(GetPhysicalDeviceSurfacePresentModesKHR)(screen->pdev, surface, &present_modes_count, framebuffer->present_modes);
       framebuffer->present_modes_count = present_modes_count;
 
-      assert(framebuffer->image_available == VK_NULL_HANDLE);
-      assert(framebuffer->draw_finished == VK_NULL_HANDLE);
       VkDevice device = screen->dev;
-      VkSemaphoreCreateInfo semaphore_create = {0};
-      semaphore_create.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-      semaphore_create.pNext = NULL;
-      semaphore_create.flags = 0;
-      result = VKSCR(CreateSemaphore)(device, &semaphore_create, NULL, &framebuffer->image_available);
-      assert(result == VK_SUCCESS);
-      result = VKSCR(CreateSemaphore)(device, &semaphore_create, NULL, &framebuffer->draw_finished);
-      assert(result == VK_SUCCESS);
+      VkSemaphoreCreateInfo semaphore_create = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, NULL, 0};
+      VkFenceCreateInfo fence_create = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, NULL, VK_FENCE_CREATE_SIGNALED_BIT};
+      for (int i = 0; i < maximum_buffers; ++i) {
+         assert(framebuffer->image_available[i] == VK_NULL_HANDLE);
+         result = VKSCR(CreateSemaphore)(device, &semaphore_create, NULL, &framebuffer->image_available[i]);
+         assert(result == VK_SUCCESS);
+         assert(framebuffer->draw_finished[i] == VK_NULL_HANDLE);
+         result = VKSCR(CreateSemaphore)(device, &semaphore_create, NULL, &framebuffer->draw_finished[i]);
+         assert(result == VK_SUCCESS);
+         assert(framebuffer->present_done_fence[i] == VK_NULL_HANDLE);
+         result = VKSCR(CreateFence)(device, &fence_create, NULL, &framebuffer->present_done_fence[i]);
+         assert(result == VK_SUCCESS);
+      }
    }
 
    uint32_t queue_family_indices[2] = {
@@ -329,12 +348,14 @@ zink_wgl_framebuffer_present(struct stw_winsys_framebuffer* fb)
    // else
    //     return S_OK == framebuffer->swapchain->Present(stw_dev->swap_interval, 0);
 
+   VkSemaphore draw_finished = zink_framebuffer_draw_finished(framebuffer);
+
    VkResult results[1] = {VK_SUCCESS};
    VkPresentInfoKHR info = {0};
    info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
    info.pNext = NULL;
    info.waitSemaphoreCount = 1;
-   info.pWaitSemaphores = &framebuffer->image_available;
+   info.pWaitSemaphores = &draw_finished;
    info.swapchainCount = 1;
    info.pSwapchains = &framebuffer->swapchain;
    info.pImageIndices = &framebuffer->acquired_image;
@@ -409,10 +430,12 @@ zink_wgl_create_framebuffer(struct pipe_screen *screen,
 
 VkSemaphore zink_framebuffer_present_finished(struct zink_wgl_framebuffer* framebuffer)
 {
-   return framebuffer->image_available;
+   int frame = framebuffer->frame % maximum_buffers;
+   return framebuffer->image_available[frame];
 }
 
 VkSemaphore zink_framebuffer_draw_finished(struct zink_wgl_framebuffer* framebuffer)
 {
-   return framebuffer->draw_finished;   
+   int frame = framebuffer->frame % maximum_buffers;
+   return framebuffer->draw_finished[frame];
 }

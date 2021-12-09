@@ -131,8 +131,8 @@ struct zink_screen {
    bool have_triangle_fans;
    bool need_2D_zs;
 
-   uint32_t gfx_queue;
-   uint32_t max_queues;
+   uint32_t graphics_queue_family;
+   uint32_t max_graphics_queues;
    uint32_t timestamp_valid_bits;
    unsigned max_fences;
    VkDevice dev;

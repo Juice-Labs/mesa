@@ -2369,6 +2369,17 @@ zink_end_render_pass(struct zink_context *ctx)
          struct zink_ctx_surface *csurf = (struct zink_ctx_surface*)ctx->fb_state.cbufs[i];
          if (csurf)
             csurf->transient_init = true;
+
+         // TODO: Is there a nicer way to determine what layout a render pass 
+         // transitions its images to?  Set render pass images as being in the
+         // VK_IMAGE_LAYOUT_UNDEFINED layout as this is valid to transition to
+         // any other layout.
+         struct pipe_resource *resource = ctx->fb_state.cbufs[i]->texture;
+         if (resource && (resource->bind & PIPE_BIND_SCANOUT))
+         {
+            struct zink_resource *zink_resource = (struct zink_resource*)resource;
+            zink_resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+         }
       }
    }
    ctx->batch.in_rp = false;

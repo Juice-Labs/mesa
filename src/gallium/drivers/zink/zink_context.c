@@ -2963,7 +2963,7 @@ zink_resource_image_barrier(struct zink_context *ctx, struct zink_resource *res,
    res->obj->needs_zs_evaluate = false;
    if (res->dmabuf_acquire) {
       imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
-      imb.dstQueueFamilyIndex = zink_screen(ctx->base.screen)->gfx_queue;
+      imb.dstQueueFamilyIndex = zink_screen(ctx->base.screen)->graphics_queue_family;
       res->dmabuf_acquire = false;
    }
    VKCTX(CmdPipelineBarrier)(

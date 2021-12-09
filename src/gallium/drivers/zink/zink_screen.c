@@ -1319,8 +1319,8 @@ update_queue_props(struct zink_screen *screen)
 
    for (uint32_t i = 0; i < num_queues; i++) {
       if (props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-         screen->gfx_queue = i;
-         screen->max_queues = props[i].queueCount;
+         screen->graphics_queue_family = i;
+         screen->max_graphics_queues = props[i].queueCount;
          screen->timestamp_valid_bits = props[i].timestampValidBits;
          break;
       }
@@ -1332,9 +1332,9 @@ static void
 init_queues(struct zink_screen *screen)
 {
    simple_mtx_init(&screen->queue_lock, mtx_plain);
-   vkGetDeviceQueue(screen->dev, screen->gfx_queue, 0, &screen->queue);
-   if (screen->threaded && screen->max_queues > 1)
-      vkGetDeviceQueue(screen->dev, screen->gfx_queue, 1, &screen->thread_queue);
+   vkGetDeviceQueue(screen->dev, screen->graphics_queue_family, 0, &screen->queue);
+   if (screen->threaded && screen->max_graphics_queues > 1)
+      vkGetDeviceQueue(screen->dev, screen->graphics_queue_family, 1, &screen->thread_queue);
    else
       screen->thread_queue = screen->queue;
 }
@@ -2001,8 +2001,8 @@ zink_create_logical_device(struct zink_screen *screen)
    VkDeviceQueueCreateInfo qci = {0};
    float dummy = 0.0f;
    qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-   qci.queueFamilyIndex = screen->gfx_queue;
-   qci.queueCount = screen->threaded && screen->max_queues > 1 ? 2 : 1;
+   qci.queueFamilyIndex = screen->graphics_queue_family;
+   qci.queueCount = screen->threaded && screen->max_graphics_queues > 1 ? 2 : 1;
    qci.pQueuePriorities = &dummy;
 
    VkDeviceCreateInfo dci = {0};

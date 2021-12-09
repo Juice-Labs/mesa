@@ -3056,7 +3056,9 @@ zink_flush(struct pipe_context *pctx,
       /* start rp to do all the clears */
       zink_begin_render_pass(ctx);
 
-   if (!batch->has_work) {
+   // Always submit when flushing, even without any work, so that semaphores
+   // signaled when presenting an image finishes are waited on.
+   if (!batch->has_work && !(flags & PIPE_FLUSH_END_OF_FRAME)) {
        if (pfence) {
           /* reuse last fence */
           fence = ctx->last_fence;

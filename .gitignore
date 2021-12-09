@@ -7,3 +7,6 @@
 /build
 .venv/
 *.mda.tar
+debug/
+debugoptimized/
+release/

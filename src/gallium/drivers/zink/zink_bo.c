@@ -645,6 +645,27 @@ no_slab:
    return &bo->base;
 }
 
+struct pb_buffer *
+zink_bo_wrap_res(struct zink_screen *screen, uint64_t size, unsigned alignment)
+{
+   struct zink_bo *bo = CALLOC(1, sizeof(struct zink_bo) + sizeof(struct pb_cache_entry));
+   if (!bo) {
+      return NULL;
+   }
+
+   bo->u.real.use_reusable_pool = true;
+   pb_cache_init_entry(&screen->pb.bo_cache, bo->cache_entry, &bo->base, ZINK_HEAP_DEVICE_LOCAL);
+   simple_mtx_init(&bo->lock, mtx_plain);
+   pipe_reference_init(&bo->base.reference, 1);
+   bo->base.alignment_log2 = util_logbase2(alignment);
+   bo->base.size = size;
+   bo->base.vtbl = &bo_vtbl;
+   bo->base.placement = vk_domain_from_heap(ZINK_HEAP_DEVICE_LOCAL);
+   bo->base.usage = 0;
+   bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
+   return &bo->base;
+}
+
 void *
 zink_bo_map(struct zink_screen *screen, struct zink_bo *bo)
 {

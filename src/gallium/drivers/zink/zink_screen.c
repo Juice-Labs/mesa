@@ -2311,7 +2311,7 @@ fail:
 }
 
 struct pipe_screen *
-zink_create_screen(struct sw_winsys *winsys)
+zink_create_screen(struct sw_winsys *winsys, intptr_t hdc_or_fd)
 {
    struct zink_screen *ret = zink_internal_create_screen(NULL);
    if (ret) {
@@ -2325,7 +2325,7 @@ zink_create_screen(struct sw_winsys *winsys)
 struct pipe_screen *
 zink_drm_create_screen(int fd, const struct pipe_screen_config *config)
 {
-   struct zink_screen *ret = zink_internal_create_screen(config);
+   struct zink_screen *ret = zink_internal_create_screen(config, (intptr_t) fd);
 
    if (ret)
       ret->drm_fd = os_dupfd_cloexec(fd);

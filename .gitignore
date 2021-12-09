@@ -2,3 +2,7 @@
 *.pyo
 *.out
 build
+debug/
+debug-vs/
+release/
+release-vs/

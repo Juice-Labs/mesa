@@ -984,12 +984,23 @@ get_bo_array_type(struct ntv_context *ctx, struct nir_variable *var)
    unsigned bitsize = glsl_get_bit_size(glsl_get_array_element(glsl_get_struct_field(glsl_without_array(var->type), 0)));
    assert(bitsize);
    SpvId array_type;
+// <<<<<<< HEAD
    const struct glsl_type *type = glsl_without_array(var->type);
    const struct glsl_type *first_type = glsl_get_struct_field(type, 0);
    if (!glsl_type_is_unsized_array(first_type)) {
       uint32_t array_size = glsl_get_length(first_type);
       assert(array_size);
       return get_sized_uint_array_type(ctx, array_size, bitsize);
+// =======
+//    const struct glsl_type *type = var->type;
+//    if (!glsl_type_is_unsized_array(type)) {
+//       type = glsl_get_struct_field(var->interface_type, 0);
+//       if (!glsl_type_is_unsized_array(type)) {
+//          uint32_t array_size = glsl_get_length(type) * (bitsize / 8) / sizeof(uint32_t);
+//          assert(array_size);
+//          return get_sized_uint_array_type(ctx, array_size, bitsize);
+//       }
+// >>>>>>> 5d8fe759df9 (zink: Correct SPIR-V uniform buffer array length calculation)
    }
    SpvId uint_type = spirv_builder_type_uint(&ctx->builder, bitsize);
    array_type = spirv_builder_type_runtime_array(&ctx->builder, uint_type);

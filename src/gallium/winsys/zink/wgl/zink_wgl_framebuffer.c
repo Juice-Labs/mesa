@@ -89,6 +89,7 @@ zink_framebuffer_acquire_next_image(struct zink_wgl_framebuffer *framebuffer)
    result = VKSCR(AcquireNextImageKHR)(device, swapchain, UINT64_MAX, semaphore, fence, &index);
    assert(result == VK_SUCCESS);
    framebuffer->acquired_image = index;
+   printf("!!! acquire, signal present finished=%p\n", semaphore);
 
    ++framebuffer->frame;
 }
@@ -366,6 +367,7 @@ zink_wgl_framebuffer_present(struct stw_winsys_framebuffer* fb)
    VkResult result = VKSCR(QueuePresentKHR)(queue, &info);
    assert(result == VK_SUCCESS);
    assert(results[0] == VK_SUCCESS);
+   printf("!!! present, wait draw finished=%p\n", draw_finished);
    zink_framebuffer_acquire_next_image(framebuffer);
    return true;
 }

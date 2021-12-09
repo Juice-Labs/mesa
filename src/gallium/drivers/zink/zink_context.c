@@ -2483,6 +2483,7 @@ flush_batch(struct zink_context *ctx, bool sync, unsigned flags)
       struct zink_wgl_framebuffer* framebuffer = (struct zink_wgl_framebuffer*) ctx->current_framebuffer->winsys_framebuffer;
       assert(framebuffer);
       batch->state->signal_semaphore = zink_framebuffer_draw_finished(framebuffer);
+      printf("!!! flush, signal draw finished=%p\n", batch->state->signal_semaphore);
    }
 
    zink_end_batch(ctx, batch);
@@ -2507,6 +2508,7 @@ flush_batch(struct zink_context *ctx, bool sync, unsigned flags)
          assert(framebuffer);
          batch->state->wait_semaphore = zink_framebuffer_present_finished(framebuffer);
          batch->state->wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+         printf("!!! post-flush, wait present finished=%p\n", batch->state->wait_semaphore);
       }
 
       if (zink_screen(ctx->base.screen)->info.have_EXT_transform_feedback && ctx->num_so_targets)

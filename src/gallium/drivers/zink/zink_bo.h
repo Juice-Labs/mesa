@@ -175,6 +175,9 @@ zink_bo_deinit(struct zink_screen *screen);
 struct pb_buffer *
 zink_bo_create(struct zink_screen *screen, uint64_t size, unsigned alignment, enum zink_heap heap, enum zink_alloc_flag flags, const void *pNext);
 
+struct pb_buffer *
+zink_bo_wrap_res(struct zink_screen *screen, uint64_t size, unsigned alignment);
+
 static inline uint64_t
 zink_bo_get_offset(const struct zink_bo *bo)
 {

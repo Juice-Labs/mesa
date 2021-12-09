@@ -108,6 +108,7 @@ struct zink_compute_pipeline_state {
 
 VkPipeline
 zink_create_gfx_pipeline(struct zink_screen *screen,
+                         struct zink_context *ctx,
                          struct zink_gfx_program *prog,
                          struct zink_gfx_pipeline_state *state,
                          VkPrimitiveTopology primitive_topology);

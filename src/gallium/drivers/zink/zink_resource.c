@@ -491,7 +491,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
    if (whandle) {
       if (whandle->type == WINSYS_HANDLE_TYPE_FD || whandle->type == ZINK_EXTERNAL_MEMORY_HANDLE)
          needs_export |= true;
-      else
+      else if (whandle->type != WINSYS_HANDLE_TYPE_VK_RES)
          unreachable("unknown handle type");
    }
    if (needs_export) {
@@ -512,7 +512,45 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
 
    pipe_reference_init(&obj->reference, 1);
    util_dynarray_init(&obj->desc_set_refs.refs, NULL);
-   if (templ->target == PIPE_BUFFER) {
+   if (whandle && whandle->type == WINSYS_HANDLE_TYPE_VK_RES) {
+      VkImage image = (VkImage) whandle->vulkan_handle;
+      VKSCR(GetImageMemoryRequirements)(screen->dev, image, &reqs);
+
+      VkFormatProperties properties = screen->format_props[templ->format];
+      VkFormatFeatureFlags features = properties.optimalTilingFeatures;
+      obj->vkusage = get_image_usage_for_feats(screen, features, templ, templ->bind);
+
+      if (optimal_tiling)
+         *optimal_tiling = true;
+
+      // TODO: Work out which of the following zink_resource_object attributes
+      // need to be set in addition to what is already set below.
+      // VkPipelineStageFlagBits access_stage;
+      // VkAccessFlags access;
+      // bool unordered_barrier;
+      // unsigned persistent_maps;
+      // struct zink_descriptor_refs desc_set_refs;
+      // struct util_dynarray tmp;
+      obj->image = (VkImage) whandle->vulkan_handle;
+      // VkSampleLocationsInfoEXT zs_evaluate;
+      // bool needs_zs_evaluate;
+      // bool storage_init; //layout was set for image
+      // bool transfer_dst;
+      // bool is_buffer;
+      // struct zink_bo *bo;
+      // VkDeviceSize offset;
+      obj->size = reqs.size;
+      obj->alignment = reqs.alignment;
+      // VkImageCreateFlags vkflags;
+      // VkImageUsageFlags vkusage;
+      // uint64_t modifier;
+      // VkImageAspectFlags modifier_aspect;
+      obj->host_visible = false;
+      obj->coherent = false;
+      obj->bo = zink_bo(zink_bo_wrap_res(screen, (unsigned) reqs.size, (unsigned) reqs.alignment));
+      return obj;
+   }
+   else if (templ->target == PIPE_BUFFER) {
       VkBufferCreateInfo bci = create_bci(screen, templ, templ->bind);
 
       if (VKSCR(CreateBuffer)(screen->dev, &bci, NULL, &obj->buffer) != VK_SUCCESS) {
@@ -1175,6 +1213,16 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
       return false;
 #endif
    }
+   else if (whandle->type == WINSYS_HANDLE_TYPE_VK_RES) {
+      struct zink_resource *resource = zink_resource(tex);
+      struct zink_resource_object *object = resource->obj;
+      // TODO: How do I know that this should be the image member and not
+      // the buffer member?  I don't but they're a union anyway so they
+      // should be the same bits regardless.  Also I've only used this
+      // path to support plumbing through the VkImage handles from the
+      // swapchain.
+      whandle->vulkan_handle = (intptr_t) object->image;
+   }
    return true;
 }
 
@@ -1184,6 +1232,14 @@ zink_resource_from_handle(struct pipe_screen *pscreen,
                  struct winsys_handle *whandle,
                  unsigned usage)
 {
+   // TODO: Make sure my additions to create resources from the VkImages
+   // created in the swapchain works with the ZINK_USE_DMABUF case below.
+   if (whandle->type == WINSYS_HANDLE_TYPE_VK_RES) {
+      uint64_t modifier = whandle->modifier;
+      int modifier_count = 1;
+      return resource_create(pscreen, templ, whandle, usage, &modifier, modifier_count);
+   }
+
 #ifdef ZINK_USE_DMABUF
    if (whandle->modifier != DRM_FORMAT_MOD_INVALID &&
        !zink_screen(pscreen)->info.have_EXT_image_drm_format_modifier)
@@ -1943,15 +1999,19 @@ zink_screen_resource_init(struct pipe_screen *pscreen)
    pscreen->resource_destroy = zink_resource_destroy;
    pscreen->transfer_helper = u_transfer_helper_create(&transfer_vtbl, true, true, false, false, !screen->have_D24_UNORM_S8_UINT);
 
-   if (screen->info.have_KHR_external_memory_fd) {
-      pscreen->resource_get_handle = zink_resource_get_handle;
-      pscreen->resource_from_handle = zink_resource_from_handle;
-   }
-   if (screen->instance_info.have_KHR_external_memory_capabilities) {
-      pscreen->memobj_create_from_handle = zink_memobj_create_from_handle;
-      pscreen->memobj_destroy = zink_memobj_destroy;
-      pscreen->resource_from_memobj = zink_resource_from_memobj;
-   }
+   // TODO: Verify that my changes to support creating a resource from
+   // the swapchain resources.
+   // if (screen->info.have_KHR_external_memory_fd) {
+   //    pscreen->resource_get_handle = zink_resource_get_handle;
+   //    pscreen->resource_from_handle = zink_resource_from_handle;
+   // }
+   // if (screen->instance_info.have_KHR_external_memory_capabilities) {
+   //    pscreen->memobj_create_from_handle = zink_memobj_create_from_handle;
+   //    pscreen->memobj_destroy = zink_memobj_destroy;
+   //    pscreen->resource_from_memobj = zink_resource_from_memobj;
+   // }
+   pscreen->resource_get_handle = zink_resource_get_handle;
+   pscreen->resource_from_handle = zink_resource_from_handle;
    pscreen->resource_get_param = zink_resource_get_param;
    return true;
 }

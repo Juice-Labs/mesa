@@ -389,7 +389,6 @@ submit_queue(void *data, void *gdata, int thread_index)
       si.waitSemaphoreCount = 1;
       si.pWaitSemaphores = &bs->wait_semaphore;
       si.pWaitDstStageMask = &bs->wait_stage;
-      printf("!!! submit, wait on %p\n", bs->wait_semaphore);
    }
 
    int signal_semaphore_count = 0;
@@ -401,7 +400,6 @@ submit_queue(void *data, void *gdata, int thread_index)
       signal_semaphores[signal_semaphore_count] = bs->signal_semaphore;
       signal_values[signal_semaphore_count] = 0;
       ++signal_semaphore_count;
-      printf("!!! submit, signal %p\n", bs->signal_semaphore);
    }
 
    VkTimelineSemaphoreSubmitInfo tsi = {0};

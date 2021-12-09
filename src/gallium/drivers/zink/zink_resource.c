@@ -753,7 +753,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       /* not valid based on reqs; demote to more compatible type */
       switch (heap) {
       case ZINK_HEAP_DEVICE_LOCAL_VISIBLE:
-         heap = ZINK_HEAP_DEVICE_LOCAL;
+         heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;
          break;
       case ZINK_HEAP_HOST_VISIBLE_CACHED:
          heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;

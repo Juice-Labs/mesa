@@ -3537,17 +3537,24 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
    for (enum zink_heap i = 0; i < ZINK_HEAP_MAX; i++) {
       /* not found: use compatible heap */
       if (screen->heap_map[i][0] == UINT8_MAX) {
-         /* only cached mem has a failure case for now */
-         assert(i == ZINK_HEAP_HOST_VISIBLE_COHERENT_CACHED || i == ZINK_HEAP_DEVICE_LOCAL_LAZY ||
-                i == ZINK_HEAP_DEVICE_LOCAL_VISIBLE);
-         if (i == ZINK_HEAP_HOST_VISIBLE_COHERENT_CACHED) {
-            memcpy(screen->heap_map[i], screen->heap_map[ZINK_HEAP_HOST_VISIBLE_COHERENT], screen->heap_count[ZINK_HEAP_HOST_VISIBLE_COHERENT]);
-            screen->heap_count[i] = screen->heap_count[ZINK_HEAP_HOST_VISIBLE_COHERENT];
-         } else {
-            memcpy(screen->heap_map[i], screen->heap_map[ZINK_HEAP_DEVICE_LOCAL], screen->heap_count[ZINK_HEAP_DEVICE_LOCAL]);
-            screen->heap_count[i] = screen->heap_count[ZINK_HEAP_DEVICE_LOCAL];
-            if (i == ZINK_HEAP_DEVICE_LOCAL_VISIBLE)
-               maybe_has_rebar = false;
+         switch (i) {
+            case ZINK_HEAP_DEVICE_LOCAL_LAZY:
+               memcpy(screen->heap_map[i], screen->heap_map[ZINK_HEAP_DEVICE_LOCAL], screen->heap_count[ZINK_HEAP_DEVICE_LOCAL]);
+               screen->heap_count[i] = screen->heap_count[ZINK_HEAP_DEVICE_LOCAL];
+               break;
+            case ZINK_HEAP_DEVICE_LOCAL_VISIBLE:
+            case ZINK_HEAP_HOST_VISIBLE_COHERENT_CACHED:
+               if (i == ZINK_HEAP_DEVICE_LOCAL_VISIBLE)
+                  maybe_has_rebar = false;
+               memcpy(screen->heap_map[i], screen->heap_map[ZINK_HEAP_HOST_VISIBLE_COHERENT], screen->heap_count[ZINK_HEAP_HOST_VISIBLE_COHERENT]);
+               screen->heap_count[i] = screen->heap_count[ZINK_HEAP_HOST_VISIBLE_COHERENT];
+               break;
+            default:
+               assert(0);
+               memcpy(screen->heap_map[i], screen->heap_map[ZINK_HEAP_DEVICE_LOCAL], screen->heap_count[ZINK_HEAP_DEVICE_LOCAL]);
+               screen->heap_count[i] = screen->heap_count[ZINK_HEAP_DEVICE_LOCAL];
+               break;
+
          }
       }
    }

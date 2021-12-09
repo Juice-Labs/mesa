@@ -1156,7 +1156,7 @@ allocate_bo(struct zink_screen *screen, const struct pipe_resource *templ,
       /* not valid based on reqs; demote to more compatible type */
       switch (heap) {
       case ZINK_HEAP_DEVICE_LOCAL_VISIBLE:
-         heap = ZINK_HEAP_DEVICE_LOCAL;
+         heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;
          break;
       case ZINK_HEAP_HOST_VISIBLE_COHERENT_CACHED:
          heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;

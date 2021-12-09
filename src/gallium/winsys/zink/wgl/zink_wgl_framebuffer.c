@@ -406,11 +406,14 @@ zink_wgl_create_framebuffer(struct pipe_screen *screen,
                              HWND hWnd,
                              int iPixelFormat)
 {
-   const struct stw_pixelformat_info *pfi =
-      stw_pixelformat_get_info(iPixelFormat);
-   if (!(pfi->pfd.dwFlags & PFD_DOUBLEBUFFER) ||
-       (pfi->pfd.dwFlags & PFD_SUPPORT_GDI))
-      return NULL;
+   // HACK: Comment out this check that, for reasons I don't understand,
+   // skips (swapchain) framebuffer creation if PFD_SUPPORT_GDI is set.
+   // This check was copied from the d3d12_wgl_framebuffer support.
+   // const struct stw_pixelformat_info *pfi =
+   //    stw_pixelformat_get_info(iPixelFormat);
+   // if (!(pfi->pfd.dwFlags & PFD_DOUBLEBUFFER) ||
+   //     (pfi->pfd.dwFlags & PFD_SUPPORT_GDI))
+   //    return NULL;
 
    struct zink_wgl_framebuffer *fb = CALLOC_STRUCT(zink_wgl_framebuffer);
    if (!fb)

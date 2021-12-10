@@ -46,7 +46,9 @@ static const char *stw_extension_string =
    "WGL_EXT_create_context_es_profile "
    "WGL_EXT_create_context_es2_profile "
    "WGL_EXT_extensions_string "
-   "WGL_EXT_swap_control";
+   "WGL_EXT_swap_control "
+// HACK: Add WGL_EXT_swap_control_tear to get Doom+Zink running:
+   "WGL_EXT_swap_control_tear";
 
 
 WINGDIAPI const char * APIENTRY

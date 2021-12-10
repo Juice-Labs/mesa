@@ -397,8 +397,6 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
    struct stw_pixelformat_score *scores;
    uint i;
 
-   MessageBoxA(NULL, "Attach Debugger", "Waiting for debugger...", MB_OK);
-
    *nNumFormats = 0;
 
    /* Allocate and initialize pixelformat score table -- better matches

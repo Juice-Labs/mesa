@@ -149,6 +149,9 @@ wgl_screen_create(HDC hDC)
 #if defined(GALLIUM_SOFTPIPE)
       "softpipe",
 #endif
+#if defined(GALLIUM_ZINK)
+      "zink",
+#endif
    };
    
    /* If the default driver screen creation fails, fall back to the next option in the

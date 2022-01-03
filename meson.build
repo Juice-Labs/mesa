@@ -1860,9 +1860,9 @@ if build_machine.system() == 'windows'
     # windows compatibility (uses <io.h> instead of <unistd.h> and _isatty,
     # _fileno functions)
     prog_flex = [prog_flex, '--wincompat']
-    if get_option('c_std') == 'c99'
+    #if get_option('c_std') == 'c99'
       prog_flex += '-D__STDC_VERSION__=199901'
-    endif
+    #endif
   else
     prog_flex = [find_program('flex', 'lex', required : with_any_opengl)]
   endif
@@ -1872,10 +1872,10 @@ if build_machine.system() == 'windows'
   prog_flex += '-DYY_USE_CONST='
 
   prog_flex_cpp = prog_flex
-  if get_option('c_std') != 'c99'
-    # Convince win_flex to use <inttypes.h> for C++ files
-    prog_flex_cpp += '-D__STDC_VERSION__=199901'
-  endif
+  #if get_option('c_std') != 'c99'
+  #  # Convince win_flex to use <inttypes.h> for C++ files
+  #  prog_flex_cpp += '-D__STDC_VERSION__=199901'
+  #endif
 
   prog_bison = find_program('win_bison', required : false)
   if not prog_bison.found()

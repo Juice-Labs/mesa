@@ -173,7 +173,8 @@ with_shared_glapi = with_shared_glapi and with_any_opengl
 
 system_has_kms_drm = ['openbsd', 'netbsd', 'freebsd', 'gnu/kfreebsd', 'dragonfly', 'linux', 'sunos'].contains(host_machine.system())
 
-dri_drivers = get_option('dri-drivers')
+# dri_drivers = get_option('dri-drivers')
+dri_drivers = []
 if dri_drivers.length() != 0
   error('Mesa\'s main branch no longer has any "classic" drivers, use the "amber" branch instead.')
 endif

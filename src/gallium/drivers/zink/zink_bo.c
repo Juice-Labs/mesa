@@ -34,6 +34,13 @@
 #include "zink_screen.h"
 #include "util/u_hash_table.h"
 
+// HACK: Include windows.h for hack in bo_can_reclaim_slab() to work around
+// Superposition crashing the GPU when running with Juice.
+#if defined _WIN32
+#include <psapi.h>
+#include <windows.h>
+#endif
+
 struct zink_bo;
 
 struct zink_sparse_backing_chunk {
@@ -147,8 +154,25 @@ bo_can_reclaim(struct zink_screen *screen, struct pb_buffer *pbuf)
 static bool
 bo_can_reclaim_slab(void *priv, struct pb_slab_entry *entry)
 {
-   struct zink_bo *bo = container_of(entry, struct zink_bo, u.slab.entry);
+   // HACK: Never reclaim slabs when running Superposition to work around
+   // GPU crash at end of loading screen.
+#if defined _WIN32
+   static bool running_superposition = false;
+   static bool checked_running_superposition = false;
+   if (!checked_running_superposition) {
+      HMODULE module = GetModuleHandleA(NULL);
+      char filename [1024] = {0};
+      DWORD length = GetModuleFileNameExA(GetCurrentProcess(), NULL, filename, sizeof(filename));
+      running_superposition = length > 0 && strstr(filename, "superposition.exe");
+      checked_running_superposition = true;
+   }
+   if (running_superposition)
+   {
+      return false;
+   }
+#endif
 
+   struct zink_bo *bo = container_of(entry, struct zink_bo, u.slab.entry);
    return bo_can_reclaim(priv, &bo->base);
 }
 

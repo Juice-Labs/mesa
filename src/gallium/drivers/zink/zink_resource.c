@@ -1005,13 +1005,6 @@ resource_create(struct pipe_screen *pscreen,
       res->layout = res->dmabuf_acquire ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
       res->optimal_tiling = optimal_tiling;
       res->aspect = aspect_from_format(templ->format);
-      if (scanout_flags && optimal_tiling) {
-         // TODO: remove for wsi
-         templ2 = res->base.b;
-         templ2.bind = scanout_flags | PIPE_BIND_LINEAR;
-         res->scanout_obj = resource_object_create(screen, &templ2, whandle, &optimal_tiling, res->modifiers, res->modifiers_count);
-         assert(!optimal_tiling);
-      }
    }
 
    if (screen->winsys && (templ->bind & PIPE_BIND_DISPLAY_TARGET)) {

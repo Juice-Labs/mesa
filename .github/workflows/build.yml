@@ -1,0 +1,30 @@
+name: Build
+
+on:
+  push:
+    branches: [ main-juice ]
+  pull_request:
+    branches: [ main-juice ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v1
+    - name: Build
+      run: |
+        pip install meson mako
+        choco install winflexbison pkconfiglite /Y
+        meson build --backend=vs --buildtype=Release -Dprefix=./build/output -Dgallium-drivers=zink
+        msbuild build/mesa.sln /t:Build -m "`"/p:Configuration=Release;Platform=x64`""
+      shell: bash
+    - name: Test
+      run: |
+        release/bin/forge_test
+      shell: bash
+    - name: Upload
+      uses: actions/upload-artifact@v2
+      with:
+        name: mesa-${{ runner.os }}
+        path: build/output/**

@@ -16,6 +16,7 @@ jobs:
       run: |
         pip install meson mako
         choco install winflexbison pkgconfiglite vulkan-sdk --yes
+        refreshenv
         meson build --backend=vs --buildtype=release -Dprefix=${GITHUB_WORKSPACE}/build/output -Dgallium-drivers=zink
         msbuild build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
       shell: bash

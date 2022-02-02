@@ -12,14 +12,14 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v1
-    - name: Setup
+    - name: Build
       run: |
         pip install meson mako
         choco install winflexbison pkgconfiglite vulkan-sdk --yes
-    - name: Build
-      run: |
+        export VULKAN_SDK="C:/VulkanSDK/1.2.182.0"
+        export PATH=$PATH:"C:/VulkanSDK/1.2.182.0/Bin"
         echo VULKAN_SDK=${VULKAN_SDK}
-        echo VK_SDK_PATH=${VK_SDK_PATH}
+        echo PATH=${PATH}
         meson build --backend=vs --buildtype=release -Dprefix=${GITHUB_WORKSPACE}/build/output -Dgallium-drivers=zink
         msbuild build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
       shell: bash

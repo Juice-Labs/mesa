@@ -29,7 +29,7 @@ jobs:
         echo VULKAN_SDK=${VULKAN_SDK}
         echo PATH=${PATH}
         meson.exe build --backend=vs --buildtype=release -Dprefix=%GITHUB_WORKSPACE%/build/output -Dgallium-drivers=zink
-        msbuild build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
+        msbuild.exe build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
       shell: cmd
     - name: Upload
       uses: actions/upload-artifact@v2

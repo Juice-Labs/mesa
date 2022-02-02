@@ -16,20 +16,17 @@ jobs:
       uses: microsoft/setup-msbuild@v1.1
       with:
         msbuild-architecture: x64
-    - name: Setup
-      run: |
-        pip install meson mako
-        choco install winflexbison pkgconfiglite vulkan-sdk --yes
-      shell: bash
     - name: Build
       run: |
         call "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build/vcvars64.bat"
+        pip install meson mako
+        choco install winflexbison pkgconfiglite vulkan-sdk --yes
         set VULKAN_SDK="C:\\VulkanSDK\\1.2.182.0"
         set PATH=$PATH:"C:\\VulkanSDK\\1.2.182.0\\Bin"
         echo VULKAN_SDK=${VULKAN_SDK}
         echo PATH=${PATH}
         meson.exe build --backend=vs --buildtype=release -Dprefix=%GITHUB_WORKSPACE%/build/output -Dgallium-drivers=zink
-        msbuild.exe build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
+        msbuild build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
       shell: cmd
     - name: Upload
       uses: actions/upload-artifact@v2

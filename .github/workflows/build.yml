@@ -28,7 +28,7 @@ jobs:
     - name: Build
       run: |
         call "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build/vcvars64.bat"
-        meson.exe build --backend=vs --buildtype=release -Dprefix=${GITHUB_WORKSPACE}/build/output -Dgallium-drivers=zink
+        meson.exe build --backend=vs --buildtype=release -Dprefix=%GITHUB_WORKSPACE%/build/output -Dgallium-drivers=zink
         msbuild build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
       shell: cmd
     - name: Upload

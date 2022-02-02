@@ -20,14 +20,14 @@ jobs:
       run: |
         pip install meson mako
         choco install winflexbison pkgconfiglite vulkan-sdk --yes
-        set VULKAN_SDK="C:\\VulkanSDK\\1.2.182.0"
-        set PATH=$PATH:"C:\\VulkanSDK\\1.2.182.0\\Bin"
-        echo VULKAN_SDK=${VULKAN_SDK}
-        echo PATH=${PATH}
       shell: bash
     - name: Build
       run: |
         call "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build/vcvars64.bat"
+        set VULKAN_SDK="C:\\VulkanSDK\\1.2.182.0"
+        set PATH=$PATH:"C:\\VulkanSDK\\1.2.182.0\\Bin"
+        echo VULKAN_SDK=${VULKAN_SDK}
+        echo PATH=${PATH}
         meson.exe build --backend=vs --buildtype=release -Dprefix=%GITHUB_WORKSPACE%/build/output -Dgallium-drivers=zink
         msbuild build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
       shell: cmd

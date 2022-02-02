@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+    branches: [ main-juice ]
+  pull_request:
+    branches: [ main-juice ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v1
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.1
+      with:
+        msbuild-architecture: x64
+    - name: Build
+      run: |
+        call "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build/vcvars64.bat"
+        pip install meson mako
+        choco install winflexbison pkgconfiglite vulkan-sdk --yes
+        set VULKAN_SDK="C:\\VulkanSDK\\1.2.182.0"
+        set PATH=$PATH:"C:\\VulkanSDK\\1.2.182.0\\Bin"
+        echo VULKAN_SDK=${VULKAN_SDK}
+        echo PATH=${PATH}
+        meson.exe build --backend=vs --buildtype=release -Dprefix=%GITHUB_WORKSPACE%/build/output -Dgallium-drivers=zink
+        msbuild build/mesa.sln /t:Build -m /p:Configuration=Release;Platform=x64
+      shell: cmd
+    - name: Upload
+      uses: actions/upload-artifact@v2
+      with:
+        name: mesa-${{ runner.os }}
+        path: build/output/**

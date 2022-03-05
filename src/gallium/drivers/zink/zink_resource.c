@@ -288,6 +288,18 @@ aspect_from_format(enum pipe_format fmt)
      return VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
+static void
+add_juice_buffer_create_info(VkBufferCreateInfo* createInfo, VkMesaBufferCreateInfoJUICE* juiceCreateInfo, const struct pipe_resource *templ)
+{
+   assert(createInfo);
+   assert(juiceCreateInfo);
+   assert(templ);
+   juiceCreateInfo->sType = VK_STRUCTURE_TYPE_MESA_BUFFER_CREATE_INFO_JUICE;
+   juiceCreateInfo->pNext = createInfo->pNext;
+   juiceCreateInfo->usage = templ->usage == PIPE_USAGE_STAGING ? VK_MESA_USAGE_STAGING_BIT_JUICE : VK_MESA_USAGE_NONE_JUICE;
+   createInfo->pNext = juiceCreateInfo;
+}
+
 static VkBufferCreateInfo
 create_bci(struct zink_screen *screen, const struct pipe_resource *templ, unsigned bind)
 {
@@ -1281,8 +1293,11 @@ create_buffer(struct zink_screen *screen, struct zink_resource_object *obj,
               int modifiers_count, struct mem_alloc_info *alloc_info)
 {
    VkBufferCreateInfo bci = create_bci(screen, templ, templ->bind);
+   VkMesaBufferCreateInfoJUICE juiceBufferCreateInfo;
    VkExternalMemoryBufferCreateInfo embci;
    VkMemoryRequirements reqs = {0};
+
+   add_juice_buffer_create_info(&bci, &juiceBufferCreateInfo, templ);
 
    embci.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
    if (alloc_info->external) {

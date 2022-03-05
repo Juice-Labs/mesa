@@ -1000,6 +1000,21 @@ typedef enum VkStructureType {
     VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT = 1000396007,
     VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT = 1000396008,
     VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT = 1000396009,
+    VK_STRUCTURE_TYPE_JUDA_KERNEL_INVOCATION_JUICE = 1000398000,
+    VK_STRUCTURE_TYPE_JUDA_BUFFER_CREATE_INFO_JUICE = 1000398001,
+    VK_STRUCTURE_TYPE_JUDA_DEVICE_MEMORY_CREATE_INFO_JUICE = 1000398002,
+    VK_STRUCTURE_TYPE_JUDA_BARRIER_JUICE = 1000398003,
+    VK_STRUCTURE_TYPE_JUDA_DEVICE_PTR_REGISTRATION_JUICE = 1000398004,
+    VK_STRUCTURE_TYPE_JUDA_QUERY_VALUE_JUICE = 1000398005,
+    VK_STRUCTURE_TYPE_JUDA_MEMCPY_JUICE = 1000398006,
+    VK_STRUCTURE_TYPE_JUDA_CMD_COPY_BUFFER_3D_JUICE = 1000398007,
+    VK_STRUCTURE_TYPE_D3D12_RESOURCE_CREATE_INFO_JUICE = 1000399000,
+    VK_STRUCTURE_TYPE_D3D11_BUFFER_CREATE_INFO_JUICE = 1000399001,
+    VK_STRUCTURE_TYPE_DXVK_BUFFER_CREATE_INFO_JUICE = 1000399002,
+    VK_STRUCTURE_TYPE_MESA_BUFFER_CREATE_INFO_JUICE = 1000399003,
+    VK_STRUCTURE_TYPE_D3D11_IMAGE_CREATE_INFO_JUICE = 1000399004,
+    VK_STRUCTURE_TYPE_DXVK_IMAGE_CREATE_INFO_JUICE = 1000399005,
+    VK_STRUCTURE_TYPE_DXVK_COPY_INFO_JUICE = 1000399006,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT = 1000411000,
     VK_STRUCTURE_TYPE_SAMPLER_BORDER_COLOR_COMPONENT_MAPPING_CREATE_INFO_EXT = 1000411001,
     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT = 1000412000,
@@ -14459,6 +14474,377 @@ typedef struct VkPhysicalDeviceImage2DViewOf3DFeaturesEXT {
     VkBool32           sampler2DViewOf3D;
 } VkPhysicalDeviceImage2DViewOf3DFeaturesEXT;
 
+
+#define VK_JUICE_juda 1
+#define VK_JUICE_JUDA_SPEC_VERSION        1
+#define VK_JUICE_JUDA_EXTENSION_NAME      "VK_JUICE_juda"
+#define VK_MAX_JUDA_KERNEL_INVOCATION_ARGS_JUICE 32U
+#define VK_MAX_JUDA_QUERY_METADATA_JUICE  30U
+#define VK_MAX_JUDA_BARRIER_REFERENCES_JUICE 2U
+
+typedef enum VkJudaKernelArgTypeJUICE {
+    VK_JUDA_KERNEL_ARG_TYPE_UNKNOWN_JUICE = 0,
+    VK_JUDA_KERNEL_ARG_TYPE_DEVICEPTR_JUICE = 1,
+    VK_JUDA_KERNEL_ARG_TYPE_LITERAL_JUICE = 2,
+    VK_JUDA_KERNEL_ARG_TYPE_HOSTPTR_JUICE = 3,
+    VK_JUDA_KERNEL_ARG_TYPE_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkJudaKernelArgTypeJUICE;
+
+typedef enum VkJudaQueryTypeJUICE {
+    VK_JUDA_QUERY_TYPE_FUNCTION_ATTRIBUTE_JUICE = 0,
+    VK_JUDA_QUERY_TYPE_MODULE_GLOBAL_JUICE = 1,
+    VK_JUDA_QUERY_TYPE_SET_FUNCTION_ATTRIBUTE_JUICE = 2,
+    VK_JUDA_QUERY_TYPE_POINTER_ATTRIBUTE_JUICE = 3,
+    VK_JUDA_QUERY_TYPE_MODULE_GET_TEX_REF_JUICE = 4,
+    VK_JUDA_QUERY_TYPE_MEMSET_D32_JUICE = 5,
+    VK_JUDA_QUERY_TYPE_MEMSET_D8_JUICE = 6,
+    VK_JUDA_QUERY_TYPE_CU_INIT_JUICE = 7,
+    VK_JUDA_QUERY_TYPE_CU_6B_F2_JUICE = 8,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_COMPUTE_CAPABILITY_JUICE = 9,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_GET_ATTRIBUTE_JUICE = 10,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_GET_P2P_ATTRIBUTE_JUICE = 11,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_GET_DEFAULT_MEM_POOL_JUICE = 12,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_GET_MEM_POOL_JUICE = 13,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_SET_MEM_POOL_JUICE = 14,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_GET_TEXTURE_1D_LINEAR_MAX_WIDTH_JUICE = 15,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_GET_JUICE = 16,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_GET_BY_PCI_BUS_ID_JUICE = 17,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_TOTAL_MEM_JUICE = 18,
+    VK_JUDA_QUERY_TYPE_CU_CTX_GET_CURRENT_JUICE = 19,
+    VK_JUDA_QUERY_TYPE_CU_CTX_SET_CURRENT_JUICE = 20,
+    VK_JUDA_QUERY_TYPE_CU_CTX_GET_LIMIT_JUICE = 21,
+    VK_JUDA_QUERY_TYPE_CU_CTX_SET_LIMIT_JUICE = 22,
+    VK_JUDA_QUERY_TYPE_CU_CTX_SET_CACHE_CONFIG_JUICE = 23,
+    VK_JUDA_QUERY_TYPE_CU_DEVICE_PRIMARY_CTX_RETAIN_JUICE = 24,
+    VK_JUDA_QUERY_TYPE_CU_MEM_HOST_GET_DEVICE_POINTER_JUICE = 25,
+    VK_JUDA_QUERY_TYPE_MEM_DEVICE_ARRAY_3D_CREATE_JUICE = 26,
+    VK_JUDA_QUERY_TYPE_MEM_DEVICE_ARRAY_3D_GET_DESCRIPTOR_JUICE = 27,
+    VK_JUDA_QUERY_TYPE_CU_LAUNCH_KERNEL_JUICE = 28,
+    VK_JUDA_QUERY_TYPE_CU_STREAM_CREATE_JUICE = 29,
+    VK_JUDA_QUERY_TYPE_CU_STREAM_DESTROY_JUICE = 30,
+    VK_JUDA_QUERY_TYPE_CU_STREAM_SYNCHRONIZE_JUICE = 31,
+    VK_JUDA_QUERY_TYPE_CU_EVENT_CREATE_JUICE = 32,
+    VK_JUDA_QUERY_TYPE_CU_EVENT_DESTROY_JUICE = 33,
+    VK_JUDA_QUERY_TYPE_CU_EVENT_QUERY_JUICE = 34,
+    VK_JUDA_QUERY_TYPE_CU_EVENT_SYNCHRONIZE_JUICE = 35,
+    VK_JUDA_QUERY_TYPE_CU_EVENT_RECORD_JUICE = 36,
+    VK_JUDA_QUERY_TYPE_CU_STREAM_WAIT_EVENT_JUICE = 37,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_ADDRESS_JUICE = 38,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_FORMAT_JUICE = 39,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_FLAGS_JUICE = 40,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_FILTER_MODE_JUICE = 41,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_MIPMAP_FILTER_MODE_JUICE = 42,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_MIPMAP_LEVEL_BIAS_JUICE = 43,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_MIPMAP_LEVEL_CLAMP_JUICE = 44,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_MAX_ANISOTROPY_JUICE = 45,
+    VK_JUDA_QUERY_TYPE_CU_TEX_REF_SET_ADDRESS_MODE_JUICE = 46,
+    VK_JUDA_QUERY_TYPE_CU_OCCUPANCY_AVAILABLE_DYNAMIC_SMEM_PER_BLOCK_JUICE = 47,
+    VK_JUDA_QUERY_TYPE_CU_MEM_ADVISE_JUICE = 48,
+    VK_JUDA_QUERY_TYPE_CU_MEM_PREFETCH_ASYNC_JUICE = 49,
+    VK_JUDA_QUERY_TYPE_CU_MEM_RANGE_GET_ATTRIBUTE_JUICE = 50,
+    VK_JUDA_QUERY_TYPE_CU_MODULE_UNLOAD_JUICE = 51,
+    VK_JUDA_QUERY_TYPE_GET_DEVICE_STRINGS_JUICE = 52,
+    VK_JUDA_QUERY_TYPE_GET_ERROR_STRINGS_JUICE = 53,
+    VK_JUDA_QUERY_TYPE_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkJudaQueryTypeJUICE;
+
+typedef enum VkJudaBufferTypeJUICE {
+    VK_JUDA_BUFFER_TYPE_NATIVE_JUICE = 0,
+    VK_JUDA_BUFFER_TYPE_MEMCPY_JUICE = 1,
+    VK_JUDA_BUFFER_TYPE_MEMCPY_3D_JUICE = 2,
+    VK_JUDA_BUFFER_TYPE_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkJudaBufferTypeJUICE;
+typedef struct VkJudaKernelInvocationJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    VkCommandBuffer    commandBuffer;
+    uint64_t           funcNum;
+    uint64_t           gridX;
+    uint64_t           gridY;
+    uint64_t           gridZ;
+    uint64_t           threadX;
+    uint64_t           threadY;
+    uint64_t           threadZ;
+    uint64_t           streamNum;
+    uint64_t           sharedMemBytes;
+    uint64_t           argCount;
+    uint64_t           args[VK_MAX_JUDA_KERNEL_INVOCATION_ARGS_JUICE];
+    uint32_t           argType[VK_MAX_JUDA_KERNEL_INVOCATION_ARGS_JUICE];
+    uint64_t           argDataPtr[VK_MAX_JUDA_KERNEL_INVOCATION_ARGS_JUICE];
+    uint64_t           argDataSize[VK_MAX_JUDA_KERNEL_INVOCATION_ARGS_JUICE];
+} VkJudaKernelInvocationJUICE;
+
+typedef struct VkJudaBufferCreateInfoJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    uint64_t           memoryType;
+    uint64_t           memoryFlags;
+} VkJudaBufferCreateInfoJUICE;
+
+typedef struct VkJudaDeviceMemoryCreateInfoJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    uint64_t           memoryType;
+    uint64_t           memoryFlags;
+    uint64_t           preallocatedPtr;
+    uint64_t           literalSize;
+} VkJudaDeviceMemoryCreateInfoJUICE;
+
+typedef struct VkJudaBarrierJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    VkDeviceMemory     referencedMemory[VK_MAX_JUDA_BARRIER_REFERENCES_JUICE];
+    uint64_t           referencedcuDevicePtr[VK_MAX_JUDA_BARRIER_REFERENCES_JUICE];
+} VkJudaBarrierJUICE;
+
+typedef struct VkJudaDevicePtrRegistrationJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    uint64_t           devicePtr;
+    VkBuffer           buffer;
+    VkImage            image;
+    VkDeviceMemory     memory;
+    uint64_t           offset;
+    uint64_t           size;
+} VkJudaDevicePtrRegistrationJUICE;
+
+typedef struct VkJudaQueryValueJUICE {
+    VkStructureType         sType;
+    const void*             pNext;
+    VkJudaQueryTypeJUICE    queryType;
+    uint64_t                queryMetadata[VK_MAX_JUDA_QUERY_METADATA_JUICE];
+    uint64_t                queryValue;
+    uint64_t                queryResult;
+    uint32_t                metadataFieldsCount;
+} VkJudaQueryValueJUICE;
+
+typedef struct VkJudaMemcpyJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    VkDeviceMemory     src;
+    VkDeviceMemory     dst;
+    uint64_t           srcOffset;
+    uint64_t           dstOffset;
+    uint64_t           size;
+} VkJudaMemcpyJUICE;
+
+typedef struct VkJudaCmdCopyBuffer3DJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    uint64_t           src;
+    uint64_t           srcType;
+    uint64_t           srcXInBytes;
+    uint64_t           srcY;
+    uint64_t           srcZ;
+    uint64_t           srcPitch;
+    uint64_t           srcHeight;
+    uint64_t           dst;
+    uint64_t           dstType;
+    uint64_t           dstXInBytes;
+    uint64_t           dstY;
+    uint64_t           dstZ;
+    uint64_t           dstPitch;
+    uint64_t           dstHeight;
+    uint64_t           widthInBytes;
+    uint64_t           height;
+    uint64_t           depth;
+} VkJudaCmdCopyBuffer3DJUICE;
+
+typedef VkResult (VKAPI_PTR *PFN_vkCreateJudaModuleJUICE)(VkDevice device, const uint8_t* ptxData, uint64_t ptxDataSize, uint64_t* outModule);
+typedef VkResult (VKAPI_PTR *PFN_vkCreateJudaFunctionFromModuleJUICE)(VkDevice device, uint64_t module, const uint8_t* funcNameData, uint64_t funcNameSize, uint64_t* outFunction, uint32_t** data, uint32_t* size);
+typedef VkResult (VKAPI_PTR *PFN_vkLaunchJudaKernelJUICE)(VkDevice device, const VkJudaKernelInvocationJUICE* invocation);
+typedef VkResult (VKAPI_PTR *PFN_vkDevicePtrRegisterJUICE)(VkDevice device, const VkJudaDevicePtrRegistrationJUICE* devPtr, void** outDevPtr);
+typedef uint64_t (VKAPI_PTR *PFN_vkQueryValueJUICE)(VkDevice device, VkJudaQueryValueJUICE* queryInfo, VkBool32 synchronous);
+typedef uint64_t (VKAPI_PTR *PFN_vkJudaMemcpyJUICE)(VkDevice device, const VkJudaMemcpyJUICE* memcpyInfo);
+typedef VkResult (VKAPI_PTR *PFN_vkCmdCopyBuffer3DJUICE)(VkDevice device, VkCommandBuffer commandBuffer, const VkJudaCmdCopyBuffer3DJUICE* copyInfo, VkBuffer dstBuffer, VkBuffer srcBuffer, uint32_t regionCount, const VkBufferCopy* pRegions);
+
+#ifndef VK_NO_PROTOTYPES
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateJudaModuleJUICE(
+    VkDevice                                    device,
+    const uint8_t*                              ptxData,
+    uint64_t                                    ptxDataSize,
+    uint64_t*                                   outModule);
+
+VKAPI_ATTR VkResult VKAPI_CALL vkCreateJudaFunctionFromModuleJUICE(
+    VkDevice                                    device,
+    uint64_t                                    module,
+    const uint8_t*                              funcNameData,
+    uint64_t                                    funcNameSize,
+    uint64_t*                                   outFunction,
+    uint32_t**                                  data,
+    uint32_t*                                   size);
+
+VKAPI_ATTR VkResult VKAPI_CALL vkLaunchJudaKernelJUICE(
+    VkDevice                                    device,
+    const VkJudaKernelInvocationJUICE*          invocation);
+
+VKAPI_ATTR VkResult VKAPI_CALL vkDevicePtrRegisterJUICE(
+    VkDevice                                    device,
+    const VkJudaDevicePtrRegistrationJUICE*     devPtr,
+    void**                                      outDevPtr);
+
+VKAPI_ATTR uint64_t VKAPI_CALL vkQueryValueJUICE(
+    VkDevice                                    device,
+    VkJudaQueryValueJUICE*                      queryInfo,
+    VkBool32                                    synchronous);
+
+VKAPI_ATTR uint64_t VKAPI_CALL vkJudaMemcpyJUICE(
+    VkDevice                                    device,
+    const VkJudaMemcpyJUICE*                    memcpyInfo);
+
+VKAPI_ATTR VkResult VKAPI_CALL vkCmdCopyBuffer3DJUICE(
+    VkDevice                                    device,
+    VkCommandBuffer                             commandBuffer,
+    const VkJudaCmdCopyBuffer3DJUICE*           copyInfo,
+    VkBuffer                                    dstBuffer,
+    VkBuffer                                    srcBuffer,
+    uint32_t                                    regionCount,
+    const VkBufferCopy*                         pRegions);
+#endif
+
+
+#define VK_JUICE_portability 1
+#define VK_JUICE_PORTABILITY_SPEC_VERSION 0
+#define VK_JUICE_PORTABILITY_EXTENSION_NAME "VK_JUICE_portability"
+
+typedef enum VkD3D11UsageJUICE {
+    VK_D3D11_USAGE_DEFAULT_JUICE = 0,
+    VK_D3D11_USAGE_IMMUTABLE_JUICE = 1,
+    VK_D3D11_USAGE_DYNAMIC_JUICE = 2,
+    VK_D3D11_USAGE_STAGING_JUICE = 3,
+    VK_D3D11_USAGE_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkD3D11UsageJUICE;
+
+typedef enum VkDxvkTypeJUICE {
+    VK_DXVK_TYPE_NONE_JUICE = 0,
+    VK_DXVK_TYPE_D3D11_SHADER_CONSTANTS_BUFFER_JUICE = 1,
+    VK_DXVK_TYPE_D3D11_TEXTURE_BUFFER_JUICE = 2,
+    VK_DXVK_TYPE_D3D11_UAV_COUNTER_BUFFER_JUICE = 3,
+    VK_DXVK_TYPE_D3D11_SO_COUNTER_BUFFER_JUICE = 4,
+    VK_DXVK_TYPE_TEMPORARY_COPY_BUFFER_JUICE = 5,
+    VK_DXVK_TYPE_UNBOUND_BUFFER_JUICE = 6,
+    VK_DXVK_TYPE_ZERO_BUFFER_JUICE = 7,
+    VK_DXVK_TYPE_SLICE_INVALIDATE_DEVICE_LOCAL_BUFFER_JUICE = 8,
+    VK_DXVK_TYPE_IMMEDIATE_MAP_DISCARD_BUFFER_JUICE = 9,
+    VK_DXVK_TYPE_IMMEDIATE_MAP_BUFFER_JUICE = 10,
+    VK_DXVK_TYPE_IMMEDIATE_MAP_DISCARD_IMAGE_JUICE = 11,
+    VK_DXVK_TYPE_IMMEDIATE_UPDATE_MAPPED_BUFFER_WITH_OVERWRITE_JUICE = 12,
+    VK_DXVK_TYPE_DEFERRED_MAP_DISCARD_BUFFER_JUICE = 13,
+    VK_DXVK_TYPE_DEFERRED_MAP_BUFFER_JUICE = 14,
+    VK_DXVK_TYPE_UNBOUND_IMAGE_JUICE = 15,
+    VK_DXVK_TYPE_HUD_FONT_IMAGE_JUICE = 16,
+    VK_DXVK_TYPE_RESOLVE_IMAGE_JUICE = 17,
+    VK_DXVK_TYPE_GAMMA_IMAGE_JUICE = 18,
+    VK_DXVK_TYPE_TEMPORARY_COPY_IMAGE_JUICE = 19,
+    VK_DXVK_TYPE_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkDxvkTypeJUICE;
+
+typedef enum VkVkd3dTypeJUICE {
+    VK_VKD3D_TYPE_NONE_JUICE = 0,
+    VK_VKD3D_TYPE_TRACER_JUICE = 1,
+    VK_VKD3D_TYPE_SHADER_DEBUG_RING_JUICE = 2,
+    VK_VKD3D_TYPE_DESCRIPTOR_DEBUG_JUICE = 3,
+    VK_VKD3D_TYPE_GET_REQUIREMENTS_JUICE = 4,
+    VK_VKD3D_TYPE_DESCRIPTOR_HEAP_SHADER_VISIBLE_JUICE = 5,
+    VK_VKD3D_TYPE_QUERY_DATA_JUICE = 6,
+    VK_VKD3D_TYPE_GLOBAL_MEMORY_BUFFER_JUICE = 7,
+    VK_VKD_3D_TYPE_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkVkd3dTypeJUICE;
+
+typedef enum VkDxvkCopyTypeJUICE {
+    VK_DXVK_COPY_TYPE_NONE_JUICE = 0,
+    VK_DXVK_COPY_TYPE_CLEAR_JUICE = 1,
+    VK_DXVK_COPY_TYPE_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkDxvkCopyTypeJUICE;
+
+typedef enum VkD3D12ResourceFlagBitsJUICE {
+    VK_D3D12_RESOURCE_FLAG_NONE = 0,
+    VK_D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET = 0x00000001,
+    VK_D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL = 0x00000002,
+    VK_D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS = 0x00000004,
+    VK_D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE = 0x00000008,
+    VK_D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER = 0x00000010,
+    VK_D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS = 0x00000020,
+    VK_D3D12_RESOURCE_FLAG_VIDEO_DECODE_REFERENCE_ONLY = 0x00000040,
+    VK_D3D12_RESOURCE_FLAG_VIDEO_ENCODE_REFERENCE_ONLY = 0x00000080,
+    VK_D3_D12_RESOURCE_FLAG_BITS_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkD3D12ResourceFlagBitsJUICE;
+typedef VkFlags VkD3D12ResourceFlagsJUICE;
+
+typedef enum VkD3D11BindFlagBitsJUICE {
+    VK_D3D11_BIND_NONE_JUICE = 0,
+    VK_D3D11_BIND_VERTEX_BUFFER_BIT_JUICE = 0x00000001,
+    VK_D3D11_BIND_INDEX_BUFFER_BIT_JUICE = 0x00000002,
+    VK_D3D11_BIND_CONSTANT_BUFFER_BIT_JUICE = 0x00000004,
+    VK_D3D11_BIND_SHADER_RESOURCE_BIT_JUICE = 0x00000008,
+    VK_D3D11_BIND_STREAM_OUTPUT_BIT_JUICE = 0x00000010,
+    VK_D3D11_BIND_RENDER_TARGET_BIT_JUICE = 0x00000020,
+    VK_D3D11_BIND_DEPTH_STENCIL_BIT_JUICE = 0x00000040,
+    VK_D3D11_BIND_UNORDERED_ACCESS_BIT_JUICE = 0x00000080,
+    VK_D3D11_BIND_FLAG_BITS_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkD3D11BindFlagBitsJUICE;
+typedef VkFlags VkD3D11BindFlagsJUICE;
+
+typedef enum VkD3D11CpuAccessFlagBitsJUICE {
+    VK_D3D11_CPU_ACCESS_NONE_JUICE = 0,
+    VK_D3D11_CPU_ACCESS_WRITE_BIT_JUICE = 0x00000001,
+    VK_D3D11_CPU_ACCESS_READ_BIT_JUICE = 0x00000002,
+    VK_D3D11_CPU_ACCESS_FLAG_BITS_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkD3D11CpuAccessFlagBitsJUICE;
+typedef VkFlags VkD3D11CpuAccessFlagsJUICE;
+
+typedef enum VkMesaUsageFlagBitsJUICE {
+    VK_MESA_USAGE_NONE_JUICE = 0,
+    VK_MESA_USAGE_STAGING_BIT_JUICE = 0x00000001,
+    VK_MESA_USAGE_FLAG_BITS_MAX_ENUM_JUICE = 0x7FFFFFFF
+} VkMesaUsageFlagBitsJUICE;
+typedef VkFlags VkMesaUsageFlagsJUICE;
+typedef struct VkD3D12ResourceCreateInfoJUICE {
+    VkStructureType              sType;
+    const void*                  pNext;
+    VkD3D12ResourceFlagsJUICE    flags;
+    VkVkd3dTypeJUICE             type;
+} VkD3D12ResourceCreateInfoJUICE;
+
+typedef struct VkD3D11BufferCreateInfoJUICE {
+    VkStructureType               sType;
+    const void*                   pNext;
+    VkD3D11BindFlagsJUICE         bindFlags;
+    VkD3D11UsageJUICE             usage;
+    VkD3D11CpuAccessFlagsJUICE    cpuAccessFlags;
+} VkD3D11BufferCreateInfoJUICE;
+
+typedef struct VkDxvkBufferCreateInfoJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    VkDxvkTypeJUICE    type;
+} VkDxvkBufferCreateInfoJUICE;
+
+typedef struct VkMesaBufferCreateInfoJUICE {
+    VkStructureType          sType;
+    const void*              pNext;
+    VkMesaUsageFlagsJUICE    usage;
+} VkMesaBufferCreateInfoJUICE;
+
+typedef struct VkD3D11ImageCreateInfoJUICE {
+    VkStructureType               sType;
+    const void*                   pNext;
+    VkD3D11BindFlagsJUICE         bindFlags;
+    VkD3D11UsageJUICE             usage;
+    VkD3D11CpuAccessFlagsJUICE    cpuAccessFlags;
+} VkD3D11ImageCreateInfoJUICE;
+
+typedef struct VkDxvkImageCreateInfoJUICE {
+    VkStructureType    sType;
+    const void*        pNext;
+    VkDxvkTypeJUICE    type;
+} VkDxvkImageCreateInfoJUICE;
+
+typedef struct VkDxvkCopyInfoJUICE {
+    VkStructureType        sType;
+    const void*            pNext;
+    VkDxvkCopyTypeJUICE    type;
+} VkDxvkCopyInfoJUICE;
 
 
 #define VK_EXT_opacity_micromap 1

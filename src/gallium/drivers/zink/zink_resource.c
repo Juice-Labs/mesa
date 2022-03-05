@@ -165,6 +165,18 @@ aspect_from_format(enum pipe_format fmt)
      return VK_IMAGE_ASPECT_COLOR_BIT;
 }
 
+static void
+add_juice_buffer_create_info(VkBufferCreateInfo* createInfo, VkMesaBufferCreateInfoJUICE* juiceCreateInfo, const struct pipe_resource *templ)
+{
+   assert(createInfo);
+   assert(juiceCreateInfo);
+   assert(templ);
+   juiceCreateInfo->sType = VK_STRUCTURE_TYPE_MESA_BUFFER_CREATE_INFO_JUICE;
+   juiceCreateInfo->pNext = createInfo->pNext;
+   juiceCreateInfo->usage = templ->usage == PIPE_USAGE_STAGING ? VK_MESA_USAGE_STAGING_BIT_JUICE : VK_MESA_USAGE_NONE_JUICE;
+   createInfo->pNext = juiceCreateInfo;
+}
+
 static VkBufferCreateInfo
 create_bci(struct zink_screen *screen, const struct pipe_resource *templ, unsigned bind)
 {
@@ -637,6 +649,8 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       return obj;
    } else if (templ->target == PIPE_BUFFER) {
       VkBufferCreateInfo bci = create_bci(screen, templ, templ->bind);
+      VkMesaBufferCreateInfoJUICE juiceBufferCreateInfo;
+      add_juice_buffer_create_info(&bci, &juiceBufferCreateInfo, templ);
 
       if (VKSCR(CreateBuffer)(screen->dev, &bci, NULL, &obj->buffer) != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateBuffer failed");

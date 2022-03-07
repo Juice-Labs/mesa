@@ -126,6 +126,9 @@ zink_wgl_framebuffer_destroy(struct stw_winsys_framebuffer *fb,
    framebuffer->surface_formats_count = 0;
 
    for (int i = 0; i < maximum_buffers; ++i) {
+      if (framebuffer->present_done_fence[i] != VK_NULL_HANDLE) {
+         VKSCR(WaitForFences)(screen->dev, 1, &framebuffer->present_done_fence[i], VK_TRUE, UINT64_MAX);
+      }
       VKSCR(DestroySemaphore)(screen->dev, framebuffer->draw_finished[i], NULL);
       framebuffer->draw_finished[i] = VK_NULL_HANDLE;
       VKSCR(DestroySemaphore)(screen->dev, framebuffer->image_available[i], NULL);

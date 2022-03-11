@@ -2038,6 +2038,10 @@ zink_internal_create_screen(const struct pipe_screen_config *config, intptr_t hd
       goto fail;
    }
 
+   // HACK: Temporarily disable timeline semaphores to workaround
+   // synchronization bugs with Juice.
+   screen->info.have_KHR_timeline_semaphore = false;
+
    /* Some Vulkan implementations have special requirements for WSI
     * allocations.
     */

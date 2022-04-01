@@ -191,7 +191,7 @@ create_batch_state(struct zink_context *ctx)
    bs->have_timelines = ctx->have_timelines;
    VkCommandPoolCreateInfo cpci = {0};
    cpci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-   cpci.queueFamilyIndex = screen->gfx_queue;
+   cpci.queueFamilyIndex = screen->graphics_queue_family;
    if (VKSCR(CreateCommandPool)(screen->dev, &cpci, NULL, &bs->cmdpool) != VK_SUCCESS)
       goto fail;
 

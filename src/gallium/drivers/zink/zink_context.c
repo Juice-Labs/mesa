@@ -56,6 +56,16 @@
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
 
+// HACK: This is to get access to the current framebuffer so that I can
+// retrieve a `zink_wgl_framebuffer` and its present finished and draw
+// finished semaphores.  I think that particular context is only valid
+// on Windows too.
+#include <GL/gl.h>
+#include <gallium/frontends/wgl/gldrv.h>
+#include <gallium/frontends/wgl/stw_context.h>
+#include <gallium/frontends/wgl/stw_framebuffer.h>
+#include <gallium/winsys/zink/wgl/zink_wgl_public.h>
+
 static void
 calc_descriptor_hash_sampler_state(struct zink_sampler_state *sampler_state)
 {
@@ -2359,6 +2369,17 @@ zink_end_render_pass(struct zink_context *ctx)
          struct zink_ctx_surface *csurf = (struct zink_ctx_surface*)ctx->fb_state.cbufs[i];
          if (csurf)
             csurf->transient_init = true;
+
+         // TODO: Is there a nicer way to determine what layout a render pass 
+         // transitions its images to?  Set render pass images as being in the
+         // VK_IMAGE_LAYOUT_UNDEFINED layout as this is valid to transition to
+         // any other layout.
+         struct pipe_resource *resource = ctx->fb_state.cbufs[i]->texture;
+         if (resource && (resource->bind & PIPE_BIND_SCANOUT))
+         {
+            struct zink_resource *zink_resource = (struct zink_resource*)resource;
+            zink_resource->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+         }
       }
    }
    ctx->batch.in_rp = false;
@@ -2497,7 +2518,7 @@ stall(struct zink_context *ctx)
 }
 
 static void
-flush_batch(struct zink_context *ctx, bool sync)
+flush_batch(struct zink_context *ctx, bool sync, unsigned flags)
 {
    struct zink_batch *batch = &ctx->batch;
    if (ctx->clears_enabled)
@@ -2506,6 +2527,19 @@ flush_batch(struct zink_context *ctx, bool sync)
    bool conditional_render_active = ctx->render_condition.active;
    zink_stop_conditional_render(ctx);
    zink_end_render_pass(ctx);
+
+   // Signal the draw finished semaphore when the end of frame flushed batch
+   // completes.  This semaphore is waited on before the current image is
+   // presented.
+   if (flags & PIPE_FLUSH_END_OF_FRAME) {
+      struct stw_context* ctx = stw_current_context();
+      assert(ctx);
+      assert(ctx->current_framebuffer);
+      struct zink_wgl_framebuffer* framebuffer = (struct zink_wgl_framebuffer*) ctx->current_framebuffer->winsys_framebuffer;
+      assert(framebuffer);
+      batch->state->signal_semaphore = zink_framebuffer_draw_finished(framebuffer);
+   }
+
    zink_end_batch(ctx, batch);
    ctx->deferred_fence = NULL;
 
@@ -2516,6 +2550,21 @@ flush_batch(struct zink_context *ctx, bool sync)
       check_device_lost(ctx);
    } else {
       zink_start_batch(ctx, batch);
+
+      // Wait on the present finished semaphore before drawing to the current
+      // image.  This semaphore is signalled by the swapchain when the image
+      // has been presented and is available to be reused.
+      if (flags & PIPE_FLUSH_END_OF_FRAME) {
+         struct stw_context* ctx = stw_current_context();
+         assert(ctx);
+         assert(ctx->current_framebuffer);
+         struct zink_wgl_framebuffer* framebuffer = (struct zink_wgl_framebuffer*) ctx->current_framebuffer->winsys_framebuffer;
+         assert(framebuffer);
+         VkPipelineStageFlags wait_stages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+         util_dynarray_append(&batch->state->wait_semaphores, VkSemaphore, zink_framebuffer_present_finished(framebuffer));
+         util_dynarray_append(&batch->state->wait_semaphore_stages, VkPipelineStageFlags, wait_stages);
+      }
+
       if (zink_screen(ctx->base.screen)->info.have_EXT_transform_feedback && ctx->num_so_targets)
          ctx->dirty_so_targets = true;
       ctx->pipeline_changed[0] = ctx->pipeline_changed[1] = true;
@@ -2538,7 +2587,7 @@ flush_batch(struct zink_context *ctx, bool sync)
 void
 zink_flush_queue(struct zink_context *ctx)
 {
-   flush_batch(ctx, true);
+   flush_batch(ctx, true, 0);
 }
 
 static bool
@@ -2679,7 +2728,7 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
    zink_batch_no_rp(ctx);
    /* this is an ideal time to oom flush since it won't split a renderpass */
    if (ctx->oom_flush)
-      flush_batch(ctx, false);
+      flush_batch(ctx, false, 0);
 }
 
 static void
@@ -2963,7 +3012,7 @@ zink_resource_image_barrier(struct zink_context *ctx, struct zink_resource *res,
    res->obj->needs_zs_evaluate = false;
    if (res->dmabuf_acquire) {
       imb.srcQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
-      imb.dstQueueFamilyIndex = zink_screen(ctx->base.screen)->gfx_queue;
+      imb.dstQueueFamilyIndex = zink_screen(ctx->base.screen)->graphics_queue_family;
       res->dmabuf_acquire = false;
    }
    VKCTX(CmdPipelineBarrier)(
@@ -3119,7 +3168,9 @@ zink_flush(struct pipe_context *pctx,
       /* start rp to do all the clears */
       zink_begin_render_pass(ctx);
 
-   if (!batch->has_work) {
+   // Always submit when flushing, even without any work, so that semaphores
+   // signaled when presenting an image finishes are waited on.
+   if (!batch->has_work && !(flags & PIPE_FLUSH_END_OF_FRAME)) {
        if (pfence) {
           /* reuse last fence */
           fence = ctx->last_fence;
@@ -3139,7 +3190,7 @@ zink_flush(struct pipe_context *pctx,
       if (deferred && !(flags & PIPE_FLUSH_FENCE_FD) && pfence)
          deferred_fence = true;
       else
-         flush_batch(ctx, true);
+         flush_batch(ctx, true, flags);
    }
 
    if (pfence) {
@@ -3204,7 +3255,7 @@ zink_wait_on_batch(struct zink_context *ctx, uint32_t batch_id)
    struct zink_batch_state *bs;
    if (!batch_id) {
       /* not submitted yet */
-      flush_batch(ctx, true);
+      flush_batch(ctx, true, 0);
       bs = zink_batch_state(ctx->last_fence);
       assert(bs);
       batch_id = bs->fence.batch_id;

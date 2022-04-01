@@ -139,10 +139,14 @@ create_surface(struct pipe_context *pctx,
                                 screen->format_props[templ->format].optimalTilingFeatures :
                                 screen->format_props[templ->format].linearTilingFeatures;
    VkImageUsageFlags attachment = (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-   usage_info.usage = res->obj->vkusage & ~attachment;
-   if ((res->obj->vkusage & attachment) &&
-       !(feats & (VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))) {
-      ivci->pNext = &usage_info;
+   if (!(feats & (VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))) {
+      usage_info.usage = res->obj->vkusage & ~attachment;
+      if (res->obj->vkusage & attachment) {
+         ivci->pNext = &usage_info;
+      }
+   }
+   else {
+      usage_info.usage = res->obj->vkusage;
    }
 
    pipe_resource_reference(&surface->base.texture, pres);

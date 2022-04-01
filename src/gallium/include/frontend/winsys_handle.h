@@ -17,6 +17,7 @@ extern "C" {
 #define WINSYS_HANDLE_TYPE_WIN32_HANDLE WINSYS_HANDLE_TYPE_FD
 #define WINSYS_HANDLE_TYPE_SHMID   3
 #define WINSYS_HANDLE_TYPE_D3D12_RES 4
+#define WINSYS_HANDLE_TYPE_VK_RES 5
 
 /**
  * For use with pipe_screen::{texture_from_handle|texture_get_handle}.
@@ -77,6 +78,12 @@ struct winsys_handle
     * Output for resource_get_handle.
     */
    void *com_obj;
+
+   /**
+    * Input to resource_from_handle.
+    * Output for resource_get_handle.
+    */
+   intptr_t vulkan_handle;
 };
 
 #ifdef __cplusplus

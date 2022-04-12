@@ -133,13 +133,15 @@ struct zink_screen {
    bool need_2D_zs;
    bool faked_e5sparse; //drivers may not expose R9G9B9E5 but cts requires it
 
-   uint32_t gfx_queue;
-   uint32_t max_queues;
+   uint32_t graphics_queue_family;
+   uint32_t max_graphics_queues;
+   uint32_t present_queue_family;
    uint32_t timestamp_valid_bits;
    unsigned max_fences;
    VkDevice dev;
    VkQueue queue; //gfx+compute
    VkQueue thread_queue; //gfx+compute
+   VkQueue present_queue; // present (might be same as queue above).
    simple_mtx_t queue_lock;
    VkDebugUtilsMessengerEXT debugUtilsCallbackHandle;
 
@@ -182,6 +184,11 @@ struct zink_screen {
       bool color_write_missing;
       bool depth_clip_control_missing;
    } driver_workarounds;
+
+   int surface_formats_count;
+   VkSurfaceFormatKHR* surface_formats;
+   int present_modes_count;
+   VkPresentModeKHR* present_modes;
 };
 
 

@@ -52,8 +52,18 @@ create_render_pass(struct zink_screen *screen, struct zink_render_pass_state *st
       attachments[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
       attachments[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
       attachments[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
       /* if layout changes are ever handled here, need VkAttachmentSampleLocationsEXT */
-      VkImageLayout layout = rt->fbfetch ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      VkImageLayout layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      if (rt->swapchain)
+      {
+         layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      }
+      else if (rt->fbfetch)
+      {
+         layout = VK_IMAGE_LAYOUT_GENERAL;
+      }
+
       attachments[i].initialLayout = layout;
       attachments[i].finalLayout = layout;
       color_refs[i].attachment = i;
@@ -163,7 +173,7 @@ create_render_pass2(struct zink_screen *screen, struct zink_render_pass_state *s
       /* if layout changes are ever handled here, need VkAttachmentSampleLocationsEXT */
       VkImageLayout layout = rt->fbfetch ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
       attachments[i].initialLayout = layout;
-      attachments[i].finalLayout = layout;
+      attachments[i].finalLayout = rt->swapchain ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : layout;
       color_refs[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
       color_refs[i].pNext = NULL;
       color_refs[i].attachment = i;

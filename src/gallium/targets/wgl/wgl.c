@@ -62,6 +62,7 @@
 
 #ifdef GALLIUM_ZINK
 #include "zink/zink_public.h"
+#include "zink/wgl/zink_wgl_public.h"
 #endif
 
 #ifdef GALLIUM_LLVMPIPE
@@ -97,7 +98,7 @@ wgl_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
 #endif
 #ifdef GALLIUM_ZINK
    if (strcmp(driver, "zink") == 0) {
-      screen = zink_create_screen(winsys);
+      screen = zink_create_screen(winsys, (intptr_t) hDC);
       if (screen)
          use_zink = TRUE;
    }
@@ -240,6 +241,12 @@ wgl_create_framebuffer(struct pipe_screen *screen,
    if (use_d3d12)
       return d3d12_wgl_create_framebuffer(screen, hWnd, iPixelFormat);
 #endif
+
+#ifdef GALLIUM_ZINK
+   if (use_zink)
+      return zink_wgl_create_framebuffer(screen, hWnd, iPixelFormat);
+#endif   
+
    return NULL;
 }
 

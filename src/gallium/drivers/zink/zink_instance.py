@@ -44,6 +44,7 @@ EXTENSIONS = [
     Extension("VK_EXT_headless_surface"),
     Extension("VK_KHR_wayland_surface"),
     Extension("VK_KHR_xcb_surface"),
+    Extension("VK_KHR_win32_surface"),
 ]
 
 # constructor: Layer(name, conditions=[])

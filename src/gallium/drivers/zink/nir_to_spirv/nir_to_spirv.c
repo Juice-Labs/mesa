@@ -971,7 +971,7 @@ get_bo_array_type(struct ntv_context *ctx, struct nir_variable *var)
    if (!glsl_type_is_unsized_array(type)) {
       type = glsl_get_struct_field(var->interface_type, 0);
       if (!glsl_type_is_unsized_array(type)) {
-         uint32_t array_size = glsl_get_length(type) * (bitsize / 4);
+         uint32_t array_size = glsl_get_length(type) * (bitsize / 8) / sizeof(uint32_t);
          assert(array_size);
          return get_sized_uint_array_type(ctx, array_size, bitsize);
       }

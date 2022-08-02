@@ -160,7 +160,7 @@ EXTENSIONS = [
     Extension("VK_EXT_extended_dynamic_state2",
         alias="dynamic_state2",
         features=True,
-        conditions=["$feats.extendedDynamicState2"]),
+        conditions=["$feats.extendedDynamicState2", "false"]),
     Extension("VK_EXT_pipeline_creation_cache_control",
         alias="pipeline_cache_control",
         features=True,

@@ -867,7 +867,13 @@ zink_kopper_fixup_depth_buffer(struct zink_context *ctx)
    if (!ctx->fb_state.zsbuf)
       return;
 
-   assert(ctx->fb_state.zsbuf->texture->bind & PIPE_BIND_DISPLAY_TARGET);
+   // HACK: I'm pretty sure that this assert is not needed?  The
+   // PIPE_BIND_DISPLAY_TARGET flag indicates that the buffer is... a front
+   // buffer or allocated by the windowing system.  The depth buffer will
+   // never be a front buffer, possibly it could be considered allocated
+   // by the windowing system in some logical way.  I'll comment it out
+   // for now and see if other seemingly related things break.
+   // assert(ctx->fb_state.zsbuf->texture->bind & PIPE_BIND_DISPLAY_TARGET);
 
    struct zink_resource *res = zink_resource(ctx->fb_state.zsbuf->texture);
    struct zink_surface *surf = zink_csurface(ctx->fb_state.zsbuf);

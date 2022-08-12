@@ -2,3 +2,6 @@
 *.pyo
 *.out
 /build
+debug/
+debugoptimized/
+release/

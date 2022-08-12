@@ -280,6 +280,7 @@ get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats
          usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
          if ((bind & (PIPE_BIND_LINEAR | PIPE_BIND_SHARED)) != (PIPE_BIND_LINEAR | PIPE_BIND_SHARED))
             usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+// <<<<<<< HEAD
       } else {
          /* trust that gallium isn't going to give us anything wild */
          *need_extended = true;
@@ -292,6 +293,11 @@ get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats
          return 0;
       }
       usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+// =======
+//       }
+//       else
+//          return 0;         
+// >>>>>>> a5f83bbf85c (zink: always set IMAGE_USAGE_COLOR_ATTACHMENT_BIT for render targets)
    }
 
    if (bind & PIPE_BIND_DEPTH_STENCIL) {
@@ -911,7 +917,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       /* not valid based on reqs; demote to more compatible type */
       switch (heap) {
       case ZINK_HEAP_DEVICE_LOCAL_VISIBLE:
-         heap = ZINK_HEAP_DEVICE_LOCAL;
+         heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;
          break;
       case ZINK_HEAP_HOST_VISIBLE_CACHED:
          heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;

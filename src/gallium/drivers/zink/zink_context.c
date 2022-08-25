@@ -162,9 +162,11 @@ zink_context_destroy(struct pipe_context *pctx)
 
    u_upload_destroy(pctx->stream_uploader);
    u_upload_destroy(pctx->const_uploader);
+   bool ctx_bs_destroyed = false;
    struct zink_batch_state *bs = ctx->batch_states;
    while (bs) {
       struct zink_batch_state *bs_next = bs->next;
+      ctx_bs_destroyed |= (bs == ctx->bs);
       zink_clear_batch_state(ctx, bs);
       bs->ctx = NULL;
       /* restore link as we insert them into the screens free_batch_states
@@ -205,7 +207,7 @@ zink_context_destroy(struct pipe_context *pctx)
    }
    while (screen->last_free_batch_state && screen->last_free_batch_state->next)
       screen->last_free_batch_state = screen->last_free_batch_state->next;
-   if (ctx->bs) {
+   if (!ctx_bs_destroyed && ctx->bs) {
       zink_clear_batch_state(ctx, ctx->bs);
       ctx->bs->ctx = NULL;
       if (screen->free_batch_states)

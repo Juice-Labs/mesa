@@ -66,8 +66,12 @@
 
 #else
 
+#include <TracyC.h>
+
 #define DISPATCH(FUNC, ARGS, MESSAGE)		\
-   GET_DISPATCH()->FUNC ARGS
+   TracyCZoneN(__tracy_zone, #FUNC, 1); \
+   GET_DISPATCH()->FUNC ARGS; \
+   TracyCZoneEnd(__tracy_zone) \
 
 #define RETURN_DISPATCH(FUNC, ARGS, MESSAGE) 	\
    return GET_DISPATCH()->FUNC ARGS

@@ -59,6 +59,8 @@
 /*#define VBO_DEBUG*/
 /*#define BOUNDS_CHECK*/
 
+#include <TracyC.h>
+
 
 /**
  * We count the number of buffer modification calls to check for
@@ -112,10 +114,12 @@ _mesa_bufferobj_subdata(struct gl_context *ctx,
     */
    struct pipe_context *pipe = ctx->pipe;
 
+   TracyCZoneN(__tracy_zone, "_mesa_bufferobj_subdata", 1);
    pipe->buffer_subdata(pipe, obj->buffer,
                         _mesa_bufferobj_mapped(obj, MAP_USER) ?
                            PIPE_MAP_DIRECTLY : 0,
                         offset, size, data);
+   TracyCZoneEnd(__tracy_zone);
 }
 
 

@@ -83,11 +83,15 @@ if with_moltenvk_dir != ''
   zink_c_args += ['-iframework' , 'Foundation']
 endif
 
+zink_c_args += ['-DTRACY_ENABLE', '-DTRACY_ON_DEMAND', '-DTRACY_DELAYED_INIT']
+
 libzink = static_library(
   'zink',
   [files_libzink, zink_device_info, zink_instance, zink_nir_algebraic_c, vk_dispatch_table],
   gnu_symbol_visibility : 'hidden',
-  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_vulkan_util, inc_zink_vk],
+  include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_vulkan_util, inc_zink_vk,
+    'D:/source/mesa/src/mapi/glapi/tracy'
+  ],
   dependencies: [
     idep_nir_headers, idep_mesautil, idep_vulkan_util_headers,
     idep_vulkan_wsi_headers, idep_vulkan_util, dep_libdrm

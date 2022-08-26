@@ -68,6 +68,8 @@
 #include "MoltenVK/vk_mvk_moltenvk.h"
 #endif
 
+#include <TracyC.h>
+
 static const struct debug_named_value
 zink_debug_options[] = {
    { "nir", ZINK_DEBUG_NIR, "Dump NIR during program compile" },
@@ -1942,8 +1944,11 @@ zink_screen_timeline_wait(struct zink_screen *screen, uint64_t batch_id, uint64_
    bool success = false;
    if (screen->device_lost)
       return true;
+
+   TracyCZoneN(__tracy_zone, "WaitSemaphores", 1);
    VkResult ret = VKSCR(WaitSemaphores)(screen->dev, &wi, timeout);
    success = zink_screen_handle_vkresult(screen, ret);
+   TracyCZoneEnd(__tracy_zone);
 
    if (success)
       zink_screen_update_last_finished(screen, batch_id);

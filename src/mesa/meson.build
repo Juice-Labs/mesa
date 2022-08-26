@@ -475,6 +475,8 @@ _mesa_windows_args = []
 if with_platform_windows
   _mesa_windows_args += [
     '-D_GDI32_',    # prevent gl* being declared __declspec(dllimport) in MS headers
+    '-DBUILD_GL32',  # declare gl* as __declspec(dllexport) in Mesa headers
+    '-DTRACY_ENABLE', '-DTRACY_ON_DEMAND', '-DTRACY_DELAYED_INIT',
   ]
   if not with_shared_glapi
     # prevent _glapi_* from being declared __declspec(dllimport)
@@ -490,7 +492,7 @@ libmesa = static_library(
   gnu_symbol_visibility : 'hidden',
   include_directories : [
     inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux,
-    inc_libmesa_asm, include_directories('main'),
+    inc_libmesa_asm, include_directories('main'), 'D:/source/mesa/src/mapi/glapi/tracy'
   ],
   link_with : [libglsl, libmesa_sse41],
   dependencies : [idep_nir_headers, dep_vdpau, idep_mesautil],

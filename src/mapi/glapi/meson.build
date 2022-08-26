@@ -53,6 +53,7 @@ endif
 static_glapi_args += '-DMAPI_MODE_UTIL'
 if with_platform_windows
   static_glapi_args += ['-D_GDI32_', '-DKHRONOS_DLL_EXPORTS', '-D_GLAPI_DLL_EXPORTS']
+  static_glapi_args += ['-DTRACY_ENABLE', '-DTRACY_ON_DEMAND', '-DTRACY_DELAYED_INIT']
 endif
 static_glapi_files += files(
   'glapi_dispatch.c',
@@ -81,6 +82,7 @@ libglapi_bridge = static_library(
   bridge_glapi_files,
   include_directories : [inc_mesa, inc_include, inc_src, inc_mapi],
   c_args : [c_msvc_compat_args, bridge_glapi_args],
+  cpp_args : [c_msvc_compat_args, bridge_glapi_args],
   dependencies : [dep_thread, dep_selinux, idep_mesautilc11, idep_mesautil],
   build_by_default : false,
 )

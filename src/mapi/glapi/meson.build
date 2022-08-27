@@ -39,6 +39,7 @@ bridge_glapi_files += files(
   '../entry_x86_tls.h',
   '../entry_ppc64le_tls.h',
   '../mapi_tmp.h',
+  'tracy/TracyClient.cpp',
 )
 bridge_glapi_files += glapi_mapi_tmp_h
 bridge_glapi_args += [
@@ -48,6 +49,7 @@ bridge_glapi_args += [
 ]
 if with_platform_windows
   bridge_glapi_args += ['-D_GDI32_']
+  bridge_glapi_args += ['-DTRACY_ENABLE', '-DTRACY_ON_DEMAND', '-DTRACY_DELAYED_INIT']
 endif
 
 static_glapi_args += '-DMAPI_MODE_UTIL'
@@ -63,6 +65,7 @@ static_glapi_files += files(
   'glapi.c',
   'glapi.h',
   'glapi_priv.h',
+  'tracy/TracyClient.cpp',
 )
 static_glapi_files += files_mapi_util
 static_glapi_files += [
@@ -80,7 +83,7 @@ endif
 libglapi_bridge = static_library(
   'glapi_bridge',
   bridge_glapi_files,
-  include_directories : [inc_mesa, inc_include, inc_src, inc_mapi],
+  include_directories : [inc_mesa, inc_include, inc_src, inc_mapi, 'D:/source/mesa/src/mapi/glapi/tracy'],
   c_args : [c_msvc_compat_args, bridge_glapi_args],
   cpp_args : [c_msvc_compat_args, bridge_glapi_args],
   dependencies : [dep_thread, dep_selinux, idep_mesautilc11, idep_mesautil],
@@ -93,8 +96,9 @@ else
   libglapi_static = static_library(
     'glapi_static',
     static_glapi_files,
-    include_directories : [inc_mesa, inc_include, inc_src, inc_mapi],
+    include_directories : [inc_mesa, inc_include, inc_src, inc_mapi, 'D:/source/mesa/src/mapi/glapi/tracy'],
     c_args : [c_msvc_compat_args, static_glapi_args],
+    cpp_args : [c_msvc_compat_args, static_glapi_args],
     dependencies : [dep_thread, dep_selinux, idep_mesautilc11, idep_mesautil],
     build_by_default : false,
   )
@@ -108,7 +112,7 @@ if with_any_opengl and not with_shared_glapi and with_tests and not with_platfor
     executable(
       'glapi_static_check_table',
       ['tests/check_table.cpp', glapitable_h],
-      include_directories : [inc_include, inc_src, inc_mesa, inc_mapi],
+      include_directories : [inc_include, inc_src, inc_mesa, inc_mapi, 'D:/source/mesa/src/mapi/glapi/tracy'],
       link_with : [libglapi_static],
       dependencies : [idep_gtest, dep_thread],
     ),

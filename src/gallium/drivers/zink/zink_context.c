@@ -2905,7 +2905,7 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
          ctx->rp_changed |= !!zink_transient_surface(psurf) != !!zink_transient_surface(state->cbufs[i]);
       unbind_fb_surface(ctx, psurf, i, i >= state->nr_cbufs || psurf != state->cbufs[i]);
       if (psurf && ctx->needs_present == zink_resource(psurf->texture))
-         ctx->needs_present = NULL;
+         pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, NULL);
    }
    if (ctx->fb_state.zsbuf) {
       struct pipe_surface *psurf = ctx->fb_state.zsbuf;
@@ -2954,7 +2954,7 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
             ctx->fb_layer_mismatch |= BITFIELD_BIT(i);
          if (res->modifiers) {
             assert(!ctx->needs_present || ctx->needs_present == res);
-            ctx->needs_present = res;
+            pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, (struct pipe_resource*)res);
          }
          if (res->obj->dt) {
             /* #6274 */
@@ -3605,7 +3605,7 @@ zink_flush(struct pipe_context *pctx,
    if (ctx->needs_present && (flags & PIPE_FLUSH_END_OF_FRAME)) {
       if (ctx->needs_present->obj->image)
          zink_screen(ctx->base.screen)->image_barrier(ctx, ctx->needs_present, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-      ctx->needs_present = NULL;
+      pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, NULL);
    }
 
    if (flags & PIPE_FLUSH_FENCE_FD) {
@@ -3882,7 +3882,7 @@ zink_flush_resource(struct pipe_context *pctx,
          zink_screen(ctx->base.screen)->image_barrier(ctx, res, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
          zink_batch_reference_resource_rw(&ctx->batch, res, true);
       } else {
-         ctx->needs_present = res;
+         pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, (struct pipe_resource*)res);
       }
       ctx->batch.swapchain = res;
    } else if (res->dmabuf)

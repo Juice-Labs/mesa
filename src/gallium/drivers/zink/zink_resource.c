@@ -1195,6 +1195,7 @@ resource_create(struct pipe_screen *pscreen,
                                                          64, loader_private,
                                                          &res->dt_stride);
          assert(res->obj->dt);
+         res->base.b.bind |= PIPE_BIND_DISPLAY_TARGET;
       } else {
          /* frontbuffer */
          struct zink_resource *back = (void*)loader_private;
@@ -1209,7 +1210,6 @@ resource_create(struct pipe_screen *pscreen,
       if (cdt->swapchain->scci.flags == VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)
          res->obj->vkflags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
       res->obj->vkusage = cdt->swapchain->scci.imageUsage;
-      res->base.b.bind |= PIPE_BIND_DISPLAY_TARGET;
       res->linear = false;
       res->swapchain = true;
    }

@@ -294,7 +294,7 @@ get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats
          *need_extended = true;
          return 0;
       }
-   } else if ((bind & PIPE_BIND_SAMPLER_VIEW) && !util_format_is_depth_or_stencil(templ->format)) {
+   } else if ((bind & PIPE_BIND_SAMPLER_VIEW) && !util_format_is_depth_or_stencil(templ->format) && !util_format_is_compressed(templ->format)) {
       if (!(feats & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) {
          /* ensure we can u_blitter this later */
          *need_extended = true;

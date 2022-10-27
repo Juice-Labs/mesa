@@ -30,6 +30,8 @@
 #include "zink_resource.h"
 #include "zink_kopper.h"
 
+#include <TracyC.h>
+
 static void
 zink_kopper_set_present_mode_for_interval(struct kopper_displaytarget *cdt, int interval)
 {
@@ -516,6 +518,8 @@ kopper_acquire(struct zink_screen *screen, struct zink_resource *res, uint64_t t
       }
       break;
    }
+
+   TracyCFrameMark;
 
    cdt->swapchain->images[res->obj->dt_idx].acquire = acquire;
    res->obj->image = cdt->swapchain->images[res->obj->dt_idx].image;

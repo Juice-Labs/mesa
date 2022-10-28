@@ -123,6 +123,9 @@ wgl_screen_create(HDC hDC)
 
    const char *const drivers[] = {
       debug_get_option("GALLIUM_DRIVER", ""),
+#ifdef GALLIUM_ZINK
+      sw_only ? "" : "zink",
+#endif
 #ifdef GALLIUM_D3D12
       sw_only ? "" : "d3d12",
 #endif

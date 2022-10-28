@@ -294,7 +294,7 @@ get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats
          *need_extended = true;
          return 0;
       }
-   } else if ((bind & PIPE_BIND_SAMPLER_VIEW) && !util_format_is_depth_or_stencil(templ->format)) {
+   } else if ((bind & PIPE_BIND_SAMPLER_VIEW) && !util_format_is_depth_or_stencil(templ->format) && !util_format_is_compressed(templ->format)) {
       if (!(feats & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) {
          /* ensure we can u_blitter this later */
          *need_extended = true;
@@ -948,7 +948,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       /* not valid based on reqs; demote to more compatible type */
       switch (heap) {
       case ZINK_HEAP_DEVICE_LOCAL_VISIBLE:
-         heap = ZINK_HEAP_DEVICE_LOCAL;
+         heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;
          break;
       case ZINK_HEAP_HOST_VISIBLE_CACHED:
          heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;
@@ -1202,6 +1202,7 @@ resource_create(struct pipe_screen *pscreen,
                                                          64, loader_private,
                                                          &res->dt_stride);
          assert(res->obj->dt);
+         res->base.b.bind |= PIPE_BIND_DISPLAY_TARGET;
       } else {
          /* frontbuffer */
          struct zink_resource *back = (void*)loader_private;
@@ -1216,7 +1217,6 @@ resource_create(struct pipe_screen *pscreen,
       if (cdt->swapchain->scci.flags == VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)
          res->obj->vkflags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
       res->obj->vkusage = cdt->swapchain->scci.imageUsage;
-      res->base.b.bind |= PIPE_BIND_DISPLAY_TARGET;
       res->linear = false;
       res->swapchain = true;
    }

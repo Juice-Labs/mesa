@@ -120,16 +120,19 @@ zink_context_destroy(struct pipe_context *pctx)
 
    zink_descriptors_deinit_bindless(ctx);
 
-   if (ctx->batch.state) {
-      zink_clear_batch_state(ctx, ctx->batch.state);
-      zink_batch_state_destroy(screen, ctx->batch.state);
-   }
+   bool ctx_bs_destroyed = false;
    struct zink_batch_state *bs = ctx->batch_states;
    while (bs) {
       struct zink_batch_state *bs_next = bs->next;
+      ctx_bs_destroyed |= (bs == ctx->batch.state);
       zink_clear_batch_state(ctx, bs);
       zink_batch_state_destroy(screen, bs);
       bs = bs_next;
+   }
+   if (!ctx_bs_destroyed && ctx->batch.state)
+   {
+       zink_clear_batch_state(ctx, ctx->batch.state);
+       zink_batch_state_destroy(screen, ctx->batch.state);
    }
    bs = ctx->free_batch_states;
    while (bs) {
@@ -2379,6 +2382,7 @@ begin_rendering(struct zink_context *ctx)
             ctx->dynamic_fb.attachments[PIPE_MAX_COLOR_BUFS].clearValue.depthStencil.depth = clear->zs.depth;
             ctx->dynamic_fb.attachments[PIPE_MAX_COLOR_BUFS].clearValue.depthStencil.stencil = clear->zs.stencil;
             /* always init separate stencil attachment */
+            ctx->dynamic_fb.attachments[PIPE_MAX_COLOR_BUFS+1].clearValue.depthStencil.depth = clear->zs.depth;
             ctx->dynamic_fb.attachments[PIPE_MAX_COLOR_BUFS+1].clearValue.depthStencil.stencil = clear->zs.stencil;
             if ((zink_fb_clear_element(fb_clear, 0)->zs.bits & PIPE_CLEAR_DEPTH))
                /* initiate a depth clear */
@@ -2905,7 +2909,7 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
          ctx->rp_changed |= !!zink_transient_surface(psurf) != !!zink_transient_surface(state->cbufs[i]);
       unbind_fb_surface(ctx, psurf, i, i >= state->nr_cbufs || psurf != state->cbufs[i]);
       if (psurf && ctx->needs_present == zink_resource(psurf->texture))
-         ctx->needs_present = NULL;
+         pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, NULL);
    }
    if (ctx->fb_state.zsbuf) {
       struct pipe_surface *psurf = ctx->fb_state.zsbuf;
@@ -2954,7 +2958,7 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
             ctx->fb_layer_mismatch |= BITFIELD_BIT(i);
          if (res->modifiers) {
             assert(!ctx->needs_present || ctx->needs_present == res);
-            ctx->needs_present = res;
+            pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, (struct pipe_resource*)res);
          }
          if (res->obj->dt) {
             /* #6274 */
@@ -3605,7 +3609,7 @@ zink_flush(struct pipe_context *pctx,
    if (ctx->needs_present && (flags & PIPE_FLUSH_END_OF_FRAME)) {
       if (ctx->needs_present->obj->image)
          zink_screen(ctx->base.screen)->image_barrier(ctx, ctx->needs_present, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
-      ctx->needs_present = NULL;
+      pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, NULL);
    }
 
    if (flags & PIPE_FLUSH_FENCE_FD) {
@@ -3882,7 +3886,7 @@ zink_flush_resource(struct pipe_context *pctx,
          zink_screen(ctx->base.screen)->image_barrier(ctx, res, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
          zink_batch_reference_resource_rw(&ctx->batch, res, true);
       } else {
-         ctx->needs_present = res;
+         pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, (struct pipe_resource*)res);
       }
       ctx->batch.swapchain = res;
    } else if (res->dmabuf)

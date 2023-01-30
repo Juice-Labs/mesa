@@ -2688,6 +2688,10 @@ zink_buffer_map(struct pipe_context *pctx,
       }
    }
 
+   bool deviceOnlyHeap = (res->obj->bo->heap!= ZINK_HEAP_DEVICE_LOCAL_VISIBLE) &&
+                         (res->obj->bo->heap != ZINK_HEAP_HOST_VISIBLE_COHERENT_CACHED) &&
+                         (res->obj->bo->heap != ZINK_HEAP_HOST_VISIBLE_COHERENT);
+
    unsigned map_offset = box->x;
    if (usage & PIPE_MAP_DISCARD_RANGE &&
         (!res->obj->host_visible ||
@@ -2737,7 +2741,7 @@ zink_buffer_map(struct pipe_context *pctx,
          goto success;
       usage |= PIPE_MAP_UNSYNCHRONIZED;
    } else if (((usage & PIPE_MAP_READ) && !(usage & PIPE_MAP_PERSISTENT) &&
-               ((screen->info.mem_props.memoryTypes[res->obj->bo->base.placement].propertyFlags & VK_STAGING_RAM) != VK_STAGING_RAM)) ||
+               ((screen->info.mem_props.memoryTypes[res->obj->bo->base.placement].propertyFlags & VK_STAGING_RAM) != VK_STAGING_RAM) && deviceOnlyHeap) ||
               !res->obj->host_visible) {
       /* any read, non-HV write, or unmappable that reaches this point needs staging */
       if ((usage & PIPE_MAP_READ) || !res->obj->host_visible || res->base.b.flags & PIPE_RESOURCE_FLAG_DONT_MAP_DIRECTLY) {

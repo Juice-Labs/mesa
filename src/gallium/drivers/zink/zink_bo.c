@@ -317,6 +317,7 @@ bo_create_internal(struct zink_screen *screen,
    bo->base.placement = screen->heap_flags[heap];
    bo->base.usage = flags;
    bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
+   bo->heap = heap;
 
    return bo;
 
@@ -625,6 +626,7 @@ zink_bo_create(struct zink_screen *screen, uint64_t size, unsigned alignment, en
       pipe_reference_init(&bo->base.reference, 1);
       bo->base.size = size;
       assert(alignment <= 1 << bo->base.alignment_log2);
+      bo->heap = heap;
 
       return &bo->base;
    }

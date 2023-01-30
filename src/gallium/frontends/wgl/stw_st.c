@@ -399,8 +399,10 @@ stw_st_flush(struct st_context_iface *stctx,
    args.stwfb = stwfb;
    args.flags = flags;
 
+#if 0
    if (flags & ST_FLUSH_END_OF_FRAME && !stwfb->fb->winsys_framebuffer)
       flags |= ST_FLUSH_WAIT;
+#endif
 
    if (flags & ST_FLUSH_WAIT)
       pfence = &fence;

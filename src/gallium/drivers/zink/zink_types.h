@@ -614,6 +614,8 @@ struct zink_bo {
    struct zink_batch_usage *reads;
    struct zink_batch_usage *writes;
 
+   enum zink_heap heap;
+
    struct pb_cache_entry cache_entry[];
 };
 

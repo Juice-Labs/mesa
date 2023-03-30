@@ -3592,6 +3592,10 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    init_queue(screen);
 
+   if (screen->info.driver_props.driverID == VK_DRIVER_ID_JUICE_PROPRIETARY)
+      /* I can't see this having good perf on Juice */
+      screen->info.have_KHR_push_descriptor = false;
+
    zink_verify_device_extensions(screen);
 
    /* descriptor set indexing is determined by 'compact' descriptor mode:

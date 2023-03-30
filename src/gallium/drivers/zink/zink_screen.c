@@ -2408,6 +2408,10 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
       /* this has bad perf on AMD */
       screen->info.have_KHR_push_descriptor = false;
 
+   if (screen->info.driver_props.driverID == VK_DRIVER_ID_JUICE_PROPRIETARY)
+      /* I can't see this having good perf on Juice */
+      screen->info.have_KHR_push_descriptor = false;
+
    zink_verify_device_extensions(screen);
 
    if ((zink_debug & ZINK_DEBUG_COMPACT) ||

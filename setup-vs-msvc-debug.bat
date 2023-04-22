@@ -1,1 +1,1 @@
-meson setup --backend=vs2019 --buildtype=debug -Dgallium-drivers=zink build\debug_vs2019
+meson setup --backend=vs2022 --buildtype=debug -Dgallium-drivers=zink -Dgles2=enabled -Degl=enabled -Dshared-glapi=enabled build\debug_vs2022

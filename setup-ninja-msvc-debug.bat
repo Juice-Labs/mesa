@@ -1,1 +1,1 @@
-meson setup --backend=ninja --buildtype=debug -Dgallium-drivers=zink build\debug
+meson setup --backend=ninja --buildtype=debug -Dgallium-drivers=zink -Dgles2=enabled -Degl=enabled -Dshared-glapi=enabled build\debug

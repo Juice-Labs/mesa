@@ -2085,37 +2085,39 @@ zink_transfer_flush_region(struct pipe_context *pctx,
    struct zink_resource *res = zink_resource(ptrans->resource);
    struct zink_transfer *trans = (struct zink_transfer *)ptrans;
 
-   if (trans->base.b.usage & PIPE_MAP_WRITE) {
-      struct zink_screen *screen = zink_screen(pctx->screen);
-      struct zink_resource *m = trans->staging_res ? zink_resource(trans->staging_res) :
-                                                     res;
-      ASSERTED VkDeviceSize size, src_offset, dst_offset = 0;
-      if (m->obj->is_buffer) {
-         size = box->width;
-         src_offset = box->x + (trans->staging_res ? trans->offset : ptrans->box.x);
-         dst_offset = box->x + ptrans->box.x;
-      } else {
-         size = (VkDeviceSize)box->width * box->height * util_format_get_blocksize(m->base.b.format);
-         src_offset = trans->offset +
-                  box->z * trans->depthPitch +
-                  util_format_get_2d_size(m->base.b.format, trans->base.b.stride, box->y) +
-                  util_format_get_stride(m->base.b.format, box->x);
-         assert(src_offset + size <= res->obj->size);
-      }
-      if (!m->obj->coherent) {
-         VkMappedMemoryRange range = zink_resource_init_mem_range(screen, m->obj, m->obj->offset, m->obj->size);
-         if (VKSCR(FlushMappedMemoryRanges)(screen->dev, 1, &range) != VK_SUCCESS) {
-            mesa_loge("ZINK: vkFlushMappedMemoryRanges failed");
-         }
-      }
-      if (trans->staging_res) {
-         struct zink_resource *staging_res = zink_resource(trans->staging_res);
+   struct zink_screen *screen = zink_screen(pctx->screen);
+   struct zink_resource *m = trans->staging_res ? zink_resource(trans->staging_res) :
+                                                   res;
+   ASSERTED VkDeviceSize size, src_offset, dst_offset = 0;
+   if (m->obj->is_buffer) {
+      size = box->width;
+      src_offset = box->x + (trans->staging_res ? trans->offset : ptrans->box.x);
+      dst_offset = box->x + ptrans->box.x;
+   } else {
+      size = (VkDeviceSize)box->width * box->height * util_format_get_blocksize(m->base.b.format);
+      src_offset = trans->offset +
+               box->z * trans->depthPitch +
+               util_format_get_2d_size(m->base.b.format, trans->base.b.stride, box->y) +
+               util_format_get_stride(m->base.b.format, box->x);
+      assert(src_offset + size <= res->obj->size);
+   }
 
-         if (ptrans->resource->target == PIPE_BUFFER)
-            zink_copy_buffer(ctx, res, staging_res, dst_offset, src_offset, size);
-         else
-            zink_transfer_copy_bufimage(ctx, res, staging_res, trans);
-      }
+   VkMesaBufferCreateInfoJUICE info = { VK_STRUCTURE_TYPE_MESA_BUFFER_CREATE_INFO_JUICE, NULL };
+   VkMappedMemoryRange range = zink_resource_init_mem_range(screen, m->obj, m->obj->offset, m->obj->size);
+   range.pNext = &info;
+   uint32_t* val = (uint32_t*)&info.usage;
+   *val = (uint32_t)ptrans->usage;
+
+   if (VKSCR(FlushMappedMemoryRanges)(screen->dev, 1, &range) != VK_SUCCESS) {
+      mesa_loge("ZINK: vkFlushMappedMemoryRanges failed");
+   }
+   if (trans->staging_res) {
+      struct zink_resource *staging_res = zink_resource(trans->staging_res);
+
+      if (ptrans->resource->target == PIPE_BUFFER)
+         zink_copy_buffer(ctx, res, staging_res, dst_offset, src_offset, size);
+      else
+         zink_transfer_copy_bufimage(ctx, res, staging_res, trans);
    }
 }
 
@@ -2126,12 +2128,10 @@ transfer_unmap(struct pipe_context *pctx, struct pipe_transfer *ptrans)
    struct zink_resource *res = zink_resource(ptrans->resource);
    struct zink_transfer *trans = (struct zink_transfer *)ptrans;
 
-   if (!(trans->base.b.usage & (PIPE_MAP_FLUSH_EXPLICIT | PIPE_MAP_COHERENT))) {
-      /* flush_region is relative to the mapped region: use only the extents */
-      struct pipe_box box = ptrans->box;
-      box.x = box.y = box.z = 0;
-      zink_transfer_flush_region(pctx, ptrans, &box);
-   }
+   /* flush_region is relative to the mapped region: use only the extents */
+   struct pipe_box box = ptrans->box;
+   box.x = box.y = box.z = 0;
+   zink_transfer_flush_region(pctx, ptrans, &box);
 
    if ((trans->base.b.usage & PIPE_MAP_PERSISTENT) && !(trans->base.b.usage & PIPE_MAP_COHERENT))
       res->obj->persistent_maps--;

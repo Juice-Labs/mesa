@@ -2165,6 +2165,8 @@ zink_create_logical_device(struct zink_screen *screen)
    VkResult result = VKSCR(CreateDevice)(screen->pdev, &dci, NULL, &dev);
    if (result != VK_SUCCESS)
       mesa_loge("ZINK: vkCreateDevice failed (%s)", vk_Result_to_str(result));
+
+   mesa_logi("zink: create device");
    
    return dev;
 }

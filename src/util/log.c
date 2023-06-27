@@ -35,6 +35,33 @@
 #include "util/log.h"
 #include "util/ralloc.h"
 
+#define BUILD_FOR_JUICE 1
+
+#if defined(BUILD_FOR_JUICE)
+#include <windows.h>
+
+#define JUICE_LOGGING_FATAL 0
+#define JUICE_LOGGING_ERR   2
+#define JUICE_LOGGING_WARN  3
+#define JUICE_LOGGING_INFO  4
+#define JUICE_LOGGING_DBG   5
+
+typedef void (*PFN_Juice_Logging_Log)(uint64_t logGroup, const wchar_t* file, const wchar_t* line, const wchar_t* message, size_t length);
+
+static inline uint64_t level_to_juice(enum mesa_log_level l)
+{
+   switch (l) {
+   case MESA_LOG_ERROR: return JUICE_LOGGING_ERR;
+   case MESA_LOG_WARN: return JUICE_LOGGING_WARN;
+   case MESA_LOG_INFO: return JUICE_LOGGING_INFO;
+   case MESA_LOG_DEBUG: return JUICE_LOGGING_DBG;
+   }
+
+   unreachable("bad mesa_log_level");
+}
+
+#endif
+
 #ifdef ANDROID
 static inline android_LogPriority
 level_to_android(enum mesa_log_level l)
@@ -81,6 +108,26 @@ mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
 {
 #ifdef ANDROID
    __android_log_vprint(level_to_android(level), tag, format, va);
+#elif 1
+   static HMODULE juiceclient = NULL;
+   static PFN_Juice_Logging_Log Juice_Logging_Log = NULL;
+
+   if(juiceclient == NULL)
+   {
+      juiceclient = LoadLibraryA("juiceclient.dll");
+      Juice_Logging_Log = (PFN_Juice_Logging_Log)GetProcAddress(juiceclient, "Juice_Logging_Log");
+   }
+
+#define MAX_BUFFER 4096
+   char buffer[MAX_BUFFER];
+   wchar_t wbuffer[MAX_BUFFER];
+
+   vsprintf_s(buffer, MAX_BUFFER, format, va);
+   size_t buflen = strlen(buffer);
+   mbstowcs(wbuffer, buffer, MAX_BUFFER);
+
+   Juice_Logging_Log(level_to_juice(level), L"MESA", L"MESA", wbuffer, buflen);
+
 #else
 #if !DETECT_OS_WINDOWS
    flockfile(stderr);

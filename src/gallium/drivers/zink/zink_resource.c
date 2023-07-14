@@ -1321,7 +1321,7 @@ create_buffer(struct zink_screen *screen, struct zink_resource_object *obj,
    else if (templ->usage == PIPE_USAGE_IMMUTABLE)
       alloc_info->flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
    else
-      alloc_info->flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+      alloc_info->flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
    obj->is_buffer = true;
    obj->transfer_dst = true;

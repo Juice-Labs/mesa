@@ -159,8 +159,25 @@ wglChoosePixelFormat(
       return 0;
    if (ppfd->dwFlags & PFD_DRAW_TO_BITMAP)
       return 0;
-   if (!(ppfd->dwFlags & PFD_STEREO_DONTCARE) && (ppfd->dwFlags & PFD_STEREO))
-      return 0;
+
+   // JUICE: Ignore requests for stereo pixel formats so that Siemens NX
+   // can start.  Siemens NX requests PFD_STEREO without PFD_STEREO_DONTCARE
+   // which, I assume, Mesa doesn't support.  It's not clear exactly what
+   // the behavior of PFD_STEREO is.  Some ReactOS source code comments that
+   // PFD_STEREO indicates that stereo pixel formats are preferred but not
+   // required.  ChatGPT states that PFD_STEREO without PFD_STEREO_DONTCARE
+   // should fail.  See https://doxygen.reactos.org/de/dca/wgl_8c_source.html
+   // and ask ChatGPT to explain what PFD_STEREO and PFD_STEREO_DONTCARE mean.
+   //
+   // I'll disable this check to allow Siemens NX to get a little further
+   // along.  Then if it's worth it to us we can investigate further or
+   // rollback to the default Mesa behavior.
+   //
+   // See https://github.com/Juice-Labs/juice/issues/1975.
+   //
+   // - Charles, 2023-10-04.
+   // if (!(ppfd->dwFlags & PFD_STEREO_DONTCARE) && (ppfd->dwFlags & PFD_STEREO))
+   //    return 0;
 
    return stw_pixelformat_choose( hdc, ppfd );
 }

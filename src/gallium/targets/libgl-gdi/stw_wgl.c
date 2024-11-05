@@ -157,8 +157,8 @@ wglChoosePixelFormat(
       return 0;
    if (!(ppfd->dwFlags & PFD_SUPPORT_OPENGL))
       return 0;
-   if (ppfd->dwFlags & PFD_DRAW_TO_BITMAP)
-      return 0;
+   //if (ppfd->dwFlags & PFD_DRAW_TO_BITMAP)
+   //   return 0;
 
    // JUICE: Ignore requests for stereo pixel formats so that Siemens NX
    // can start.  Siemens NX requests PFD_STEREO without PFD_STEREO_DONTCARE

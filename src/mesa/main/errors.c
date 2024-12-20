@@ -42,8 +42,16 @@
 #  include <log/log.h>
 #endif
 
+#if defined(_WIN32)
+#  include <windows.h>
+#endif
+
 static FILE *LogFile = NULL;
 
+#if defined(_WIN32)
+typedef int (STDMETHODCALLTYPE *PFN_wineLogOutput)(const char *);
+static PFN_wineLogOutput wineLogOutput = NULL;
+#endif
 
 static void
 output_if_debug(const char *prefixString, const char *outputString,
@@ -78,6 +86,26 @@ output_if_debug(const char *prefixString, const char *outputString,
 
    /* Now only print the string if we're required to do so. */
    if (debug) {
+#if defined(_WIN32)
+      /* Using Juice/Wine/DXVK/VKD3D method to log messages */
+      {
+         char buf[4096];
+         if (prefixString)
+            snprintf(buf, sizeof(buf), "%s: %s%s", prefixString, outputString, newline ? "\n" : "");
+         else
+            snprintf(buf, sizeof(buf), "%s%s", outputString, newline ? "\n" : "");
+
+         if (wineLogOutput == NULL)
+         {
+            HMODULE ntdll = LoadLibraryA("RemoteGPUVlk.dll");
+            if (ntdll)
+               wineLogOutput = (PFN_wineLogOutput)GetProcAddress(ntdll, "__wine_dbg_output");
+         }
+
+         if (wineLogOutput != NULL)
+            wineLogOutput(buf);
+      }
+#else
       if (prefixString)
          fprintf(LogFile, "%s: %s", prefixString, outputString);
       else
@@ -85,18 +113,6 @@ output_if_debug(const char *prefixString, const char *outputString,
       if (newline)
          fprintf(LogFile, "\n");
       fflush(LogFile);
-
-#if defined(_WIN32)
-      /* stderr from windows applications without console is not usually
-       * visible, so communicate with the debugger instead */
-      {
-         char buf[4096];
-         if (prefixString)
-            snprintf(buf, sizeof(buf), "%s: %s%s", prefixString, outputString, newline ? "\n" : "");
-         else
-            snprintf(buf, sizeof(buf), "%s%s", outputString, newline ? "\n" : "");
-         OutputDebugStringA(buf);
-      }
 #endif
 
 #if DETECT_OS_ANDROID

@@ -132,14 +132,21 @@ create_version_string(struct gl_context *ctx, const char *prefix)
 
    ctx->VersionString = malloc(max);
    if (ctx->VersionString) {
-      snprintf(ctx->VersionString, max,
-		     "%s%u.%u%s Mesa " PACKAGE_VERSION MESA_GIT_SHA1,
-		     prefix,
-		     ctx->Version / 10, ctx->Version % 10,
-		     (ctx->API == API_OPENGL_CORE) ? " (Core Profile)" :
-                     (ctx->API == API_OPENGL_COMPAT && ctx->Version >= 32) ?
-                        " (Compatibility Profile)" : ""
-		     );
+      if (getenv("REMOTE_GPU_NATIVE_NAME")) {
+         snprintf(ctx->VersionString, max, "%u.%u.0 NVIDIA 560.76",
+                 ctx->Version / 10, ctx->Version % 10);
+      }
+      else
+      {
+         snprintf(ctx->VersionString, max,
+            "%s%u.%u%s Mesa " PACKAGE_VERSION MESA_GIT_SHA1,
+            prefix,
+            ctx->Version / 10, ctx->Version % 10,
+            (ctx->API == API_OPENGL_CORE) ? " (Core Profile)" :
+                        (ctx->API == API_OPENGL_COMPAT && ctx->Version >= 32) ?
+                           " (Compatibility Profile)" : ""
+            );
+      }
    }
 }
 

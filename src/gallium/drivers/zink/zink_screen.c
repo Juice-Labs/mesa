@@ -102,16 +102,40 @@ enum zink_descriptor_mode zink_descriptor_mode;
 static const char *
 zink_get_vendor(struct pipe_screen *pscreen)
 {
-   return "Collabora Ltd";
+   if (getenv("REMOTE_GPU_NATIVE_NAME")) {
+      struct zink_screen *screen = zink_screen(pscreen);
+
+      switch (screen->info.props.vendorID) {
+         case 0x10DE:
+            return "NVIDIA Corporation";
+         case 0x1002:
+            return "Advanced Micro Devices, Inc.";
+         case 0x1010:
+            return "Intel Corporation";
+         case 0x1022:
+            return "Apple Inc.";
+         case 0x10001:
+            return "Collabora Ltd";
+         default:
+            {
+               static char buf[1000];
+               snprintf(buf, sizeof(buf), "Unknown (vendor-id: 0x%04x)", screen->info.props.vendorID);
+               return buf;
+            }
+      }
+   }
+   else
+   {
+      return "Collabora Ltd";
+   }
 }
+
+
 
 static const char *
 zink_get_device_vendor(struct pipe_screen *pscreen)
 {
-   struct zink_screen *screen = zink_screen(pscreen);
-   static char buf[1000];
-   snprintf(buf, sizeof(buf), "Unknown (vendor-id: 0x%04x)", screen->info.props.vendorID);
-   return buf;
+   return zink_get_vendor(pscreen);
 }
 
 static const char *
@@ -119,7 +143,10 @@ zink_get_name(struct pipe_screen *pscreen)
 {
    struct zink_screen *screen = zink_screen(pscreen);
    static char buf[1000];
-   snprintf(buf, sizeof(buf), "zink (%s)", screen->info.props.deviceName);
+   if (getenv("REMOTE_GPU_NATIVE_NAME"))
+      snprintf(buf, sizeof(buf), "%s/PCIe/SSE2", screen->info.props.deviceName);
+   else
+      snprintf(buf, sizeof(buf), "zink (%s)", screen->info.props.deviceName);
    return buf;
 }
 

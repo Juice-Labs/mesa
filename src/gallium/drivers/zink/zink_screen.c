@@ -189,8 +189,6 @@ zink_get_vendor(struct pipe_screen *pscreen)
    }
 }
 
-
-
 static const char *
 zink_get_device_vendor(struct pipe_screen *pscreen)
 {
@@ -208,12 +206,14 @@ zink_get_screen_fd(struct pipe_screen *pscreen)
 static const char *
 zink_get_name(struct pipe_screen *pscreen)
 {
+   #if 1
    if (getenv("REMOTE_GPU_NATIVE_NAME")) {
       struct zink_screen *screen = zink_screen(pscreen);
       static char buf[1000];
-      snprintf(buf, sizeof(buf), "%s/PCIe/SSE2", screen->info.props.deviceName);
+      snprintf(buf, sizeof(buf), "zink (%s/PCIe/SSE2)", screen->info.props.deviceName);
       return buf;
    }
+   #endif
    return zink_screen(pscreen)->device_name;
 }
 

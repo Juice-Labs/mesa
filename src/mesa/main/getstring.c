@@ -147,8 +147,24 @@ _mesa_GetString( GLenum name )
       }
       case GL_RENDERER: {
          const GLubyte *str = (const GLubyte *)screen->get_name(screen);
-         if (str)
+         if (str) {
+            if (getenv("REMOTE_GPU_NATIVE_NAME")) {
+               /* Find text within parentheses */
+               const char *start = strchr((const char *)str, '(');
+               const char *end = strrchr((const char *)str, ')');
+               if (start && end && start < end) {
+                  static char buf[1000];
+                  start++; /* Skip the opening parenthesis */
+                  size_t len = end - start;
+                  if (len >= sizeof(buf))
+                     len = sizeof(buf) - 1;
+                  memcpy(buf, start, len);
+                  buf[len] = '\0';
+                  return (const GLubyte *)buf;
+               }
+            }
             return str;
+         }
          return (const GLubyte *) renderer;
       }
       case GL_VERSION:

@@ -41,6 +41,125 @@
 
 #include "util/u_debug.h"
 
+/* Stub function for WGL_NV_copy_image */
+BOOL WINAPI
+wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
+                      GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ,
+                      HGLRC hDstRC, GLuint dstName, GLenum dstTarget,
+                      GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ,
+                      GLsizei width, GLsizei height, GLsizei depth)
+{
+   debug_printf("wglCopyImageSubDataNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+/* Stub functions for WGL_NV_gpu_affinity */
+HDC WINAPI
+wglCreateAffinityDCNV(const HGPUNV *gpuList)
+{
+   debug_printf("wglCreateAffinityDCNV: Not implemented, fatal error\n");
+   assert(0);
+   return NULL;
+}
+
+BOOL WINAPI
+wglDeleteDCNV(HDC hdc)
+{
+   debug_printf("wglDeleteDCNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+BOOL WINAPI
+wglEnumGpusNV(UINT iGpuIndex, HGPUNV *phGpu)
+{
+   debug_printf("wglEnumGpusNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+BOOL WINAPI
+wglEnumGpuDevicesNV(HGPUNV hGpu, UINT iDeviceIndex, PGPU_DEVICE lpGpuDevice)
+{
+   debug_printf("wglEnumGpuDevicesNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+BOOL WINAPI
+wglEnumGpusFromAffinityDCNV(HDC hAffinityDC, UINT iGpuIndex, HGPUNV *phGpu)
+{
+   debug_printf("wglEnumGpusFromAffinityDCNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+/* Stub functions for WGL_NV_DX_interop */
+HANDLE WINAPI
+wglDXOpenDeviceNV(void *dxDevice)
+{
+   debug_printf("wglDXOpenDeviceNV: Not implemented, fatal error\n");
+   assert(0);
+   return NULL;
+}
+
+BOOL WINAPI
+wglDXCloseDeviceNV(HANDLE hDevice)
+{
+   debug_printf("wglDXCloseDeviceNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+HANDLE WINAPI
+wglDXRegisterObjectNV(HANDLE hDevice, void *dxObject, GLuint name, GLenum type, GLenum access)
+{
+   debug_printf("wglDXRegisterObjectNV: Not implemented, fatal error\n");
+   assert(0);
+   return NULL;
+}
+
+BOOL WINAPI
+wglDXUnregisterObjectNV(HANDLE hDevice, HANDLE hObject)
+{
+   debug_printf("wglDXUnregisterObjectNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+BOOL WINAPI
+wglDXObjectAccessNV(HANDLE hObject, GLenum access)
+{
+   debug_printf("wglDXObjectAccessNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+BOOL WINAPI
+wglDXLockObjectsNV(HANDLE hDevice, GLint count, HANDLE *hObjects)
+{
+   debug_printf("wglDXLockObjectsNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+BOOL WINAPI
+wglDXUnlockObjectsNV(HANDLE hDevice, GLint count, HANDLE *hObjects)
+{
+   debug_printf("wglDXUnlockObjectsNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+BOOL WINAPI
+wglDXSetResourceShareHandleNV(void *dxObject, HANDLE shareHandle)
+{
+   debug_printf("wglDXSetResourceShareHandleNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
 struct stw_extension_entry
 {
    const char *name;
@@ -84,6 +203,26 @@ static const struct stw_extension_entry stw_extension_entries[] = {
    /*  WGL_ARB_make_current_read */
    STW_EXTENSION_ENTRY( wglMakeContextCurrentARB ),
    STW_EXTENSION_ENTRY( wglGetCurrentReadDCARB ),
+
+   /* WGL_NV_copy_image */
+   STW_EXTENSION_ENTRY( wglCopyImageSubDataNV ),
+
+   /* WGL_NV_gpu_affinity */
+   STW_EXTENSION_ENTRY( wglCreateAffinityDCNV ),
+   STW_EXTENSION_ENTRY( wglDeleteDCNV ),
+   STW_EXTENSION_ENTRY( wglEnumGpusNV ),
+   STW_EXTENSION_ENTRY( wglEnumGpuDevicesNV ),
+   STW_EXTENSION_ENTRY( wglEnumGpusFromAffinityDCNV ),
+
+   /* WGL_NV_DX_interop */
+   STW_EXTENSION_ENTRY( wglDXOpenDeviceNV ),
+   STW_EXTENSION_ENTRY( wglDXCloseDeviceNV ),
+   STW_EXTENSION_ENTRY( wglDXRegisterObjectNV ),
+   STW_EXTENSION_ENTRY( wglDXUnregisterObjectNV ),
+   STW_EXTENSION_ENTRY( wglDXObjectAccessNV ),
+   STW_EXTENSION_ENTRY( wglDXLockObjectsNV ),
+   STW_EXTENSION_ENTRY( wglDXUnlockObjectsNV ),
+   STW_EXTENSION_ENTRY( wglDXSetResourceShareHandleNV ),
 
    /* Unnamed */
    STW_EXTENSION_ENTRY( wglMesaGLInteropQueryDeviceInfo ),

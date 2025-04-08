@@ -160,6 +160,99 @@ wglDXSetResourceShareHandleNV(void *dxObject, HANDLE shareHandle)
    return FALSE;
 }
 
+VOID WINAPI
+glBufferAddressRangeNV(GLenum target, GLuint index, GLuint64EXT address, GLsizeiptr length)
+{
+   debug_printf("glBufferAddressRangeNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glCreateSemaphoresNV(GLsizei n, GLuint *semaphores)
+{
+   debug_printf("glCreateSemaphoresNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glDepthRangedNV(GLdouble zNear, GLdouble zFar)
+{
+   debug_printf("glDepthRangedNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glGetNamedBufferParameterui64vNV(GLuint buffer, GLenum pname, GLuint64EXT *params)
+{
+   debug_printf("glGetNamedBufferParameterui64vNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+GLuint64 WINAPI
+glGetTextureSamplerHandleNV(GLuint texture, GLuint sampler)
+{
+   debug_printf("glGetTextureSamplerHandleNV: Not implemented, fatal error\n");
+   assert(0);
+   return 0;
+}
+
+GLboolean WINAPI
+glIsNamedBufferResidentNV(GLuint buffer)
+{
+   debug_printf("glIsNamedBufferResidentNV: Not implemented, fatal error\n");
+   assert(0);
+   return FALSE;
+}
+
+VOID WINAPI
+glMakeNamedBufferResidentNV(GLuint buffer, GLenum access)
+{
+   debug_printf("glMakeNamedBufferResidentNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glMakeNamedBufferNonResidentNV(GLuint buffer)
+{
+   debug_printf("glMakeNamedBufferNonResidentNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glMakeTextureHandleNonResidentNV(GLuint64 handle)
+{
+   debug_printf("glMakeTextureHandleNonResidentNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glMakeTextureHandleResidentNV(GLuint64 handle)
+{
+   debug_printf("glMakeTextureHandleResidentNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glSemaphoreParameterivNV(GLuint semaphore, GLenum pname, const GLint *params)
+{
+   debug_printf("glSemaphoreParameterivNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glUniformui64NV(GLint location, GLuint64EXT value)
+{
+   debug_printf("glUniformui64NV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glUniformui64vNV(GLint location, GLsizei count, const GLuint64EXT *value)
+{
+   debug_printf("glUniformui64vNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
 struct stw_extension_entry
 {
    const char *name;
@@ -231,6 +324,24 @@ static const struct stw_extension_entry stw_extension_entries[] = {
    { NULL, NULL }
 };
 
+static const struct stw_extension_entry stw_gl_extension_entries[] = {
+   /* GL_NV_command_list */
+   STW_EXTENSION_ENTRY( glBufferAddressRangeNV ),
+   STW_EXTENSION_ENTRY( glCreateSemaphoresNV ),
+   STW_EXTENSION_ENTRY( glDepthRangedNV ),
+   STW_EXTENSION_ENTRY( glGetNamedBufferParameterui64vNV ),
+   STW_EXTENSION_ENTRY( glGetTextureSamplerHandleNV ),
+   STW_EXTENSION_ENTRY( glIsNamedBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeNamedBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeNamedBufferNonResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeTextureHandleNonResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeTextureHandleResidentNV ),
+   STW_EXTENSION_ENTRY( glSemaphoreParameterivNV ),
+   STW_EXTENSION_ENTRY( glUniformui64NV ),
+   STW_EXTENSION_ENTRY( glUniformui64vNV ),
+   { NULL, NULL }
+};   
+
 PROC APIENTRY
 DrvGetProcAddress(
    LPCSTR lpszProc )
@@ -247,6 +358,11 @@ DrvGetProcAddress(
             return entry->proc;
 
    if (lpszProc[0] == 'g' && lpszProc[1] == 'l') {
+
+      for (entry = stw_gl_extension_entries; entry->name; entry++)
+         if (strcmp( lpszProc, entry->name ) == 0)
+            return entry->proc;
+
       p = (PROC) _mesa_glapi_get_proc_address(lpszProc);
       if (p)
          return p;

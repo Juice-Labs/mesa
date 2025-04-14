@@ -170,8 +170,7 @@ glBufferAddressRangeNV(GLenum target, GLuint index, GLuint64EXT address, GLsizei
 VOID WINAPI
 glCreateSemaphoresNV(GLsizei n, GLuint *semaphores)
 {
-   debug_printf("glCreateSemaphoresNV: Not implemented, fatal error\n");
-   assert(0);
+   _mesa_GenSemaphoresEXT(n, semaphores);
 }
 
 VOID WINAPI
@@ -236,6 +235,13 @@ VOID WINAPI
 glSemaphoreParameterivNV(GLuint semaphore, GLenum pname, const GLint *params)
 {
    debug_printf("glSemaphoreParameterivNV: Not implemented, fatal error\n");
+   assert(0);
+}
+
+VOID WINAPI
+glGetSemaphoreParameterivNV(GLuint semaphore, GLenum pname, GLint *params)
+{
+   debug_printf("glGetSemaphoreParameterivNV: Not implemented, fatal error\n");
    assert(0);
 }
 
@@ -337,6 +343,7 @@ static const struct stw_extension_entry stw_gl_extension_entries[] = {
    STW_EXTENSION_ENTRY( glMakeTextureHandleNonResidentNV ),
    STW_EXTENSION_ENTRY( glMakeTextureHandleResidentNV ),
    STW_EXTENSION_ENTRY( glSemaphoreParameterivNV ),
+   STW_EXTENSION_ENTRY( glGetSemaphoreParameterivNV ),
    STW_EXTENSION_ENTRY( glUniformui64NV ),
    STW_EXTENSION_ENTRY( glUniformui64vNV ),
    { NULL, NULL }

@@ -2453,6 +2453,13 @@ zink_resource_from_memobj(struct pipe_screen *pscreen,
    struct zink_memory_object *memobj = (struct zink_memory_object *)pmemobj;
 
    struct pipe_resource *pres = resource_create(pscreen, templ, &memobj->whandle, 0, NULL, 0, NULL, NULL);
+   if (!pres) {
+      /* If resource_create fails, try with templ->usage as STAGING */
+      struct pipe_resource templ_staging = *templ;
+      templ_staging.usage = PIPE_USAGE_STAGING;
+      pres = resource_create(pscreen, &templ_staging, &memobj->whandle, 0, NULL, 0, NULL, NULL);
+   }
+   
    if (pres) {
       if (pres->target != PIPE_BUFFER)
          zink_resource(pres)->valid = true;

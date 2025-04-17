@@ -1006,6 +1006,7 @@ struct mem_alloc_info {
    bool need_dedicated;
    bool shared;
    const void *user_mem;
+   const void *memory_heap_override;
    VkExternalMemoryHandleTypeFlags external;
    VkExternalMemoryHandleTypeFlags export_types;
 };
@@ -1059,8 +1060,17 @@ allocate_bo(struct zink_screen *screen, const struct pipe_resource *templ,
    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
    mai.pNext = NULL;
    mai.allocationSize = reqs->size;
-   enum zink_heap heap = zink_heap_from_domain_flags(alloc_info->flags, alloc_info->aflags);
-   if (templ->flags & PIPE_RESOURCE_FLAG_MAP_COHERENT) {
+   enum zink_heap heap;
+
+   if (alloc_info->memory_heap_override) {
+      // Use the provided heap override
+      heap = (enum zink_heap)(uintptr_t)alloc_info->memory_heap_override;
+   } else {
+      // Use the normal heap selection logic
+      heap = zink_heap_from_domain_flags(alloc_info->flags, alloc_info->aflags);
+   }
+
+   if (!alloc_info->memory_heap_override && templ->flags & PIPE_RESOURCE_FLAG_MAP_COHERENT) {
       if (!(vk_domain_from_heap(heap) & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
          heap = zink_heap_from_domain_flags(alloc_info->flags & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, alloc_info->aflags);
    }
@@ -1728,7 +1738,8 @@ create_image(struct zink_screen *screen, struct zink_resource_object *obj,
 
 static struct zink_resource_object *
 resource_object_create(struct zink_screen *screen, const struct pipe_resource *templ, struct winsys_handle *whandle, bool *linear,
-                       uint64_t *modifiers, int modifiers_count, const void *loader_private, const void *user_mem)
+                       uint64_t *modifiers, int modifiers_count, const void *loader_private, const void *user_mem,
+                       const void *memory_heap_override)
 {
    struct zink_resource_object *obj = CALLOC_STRUCT(zink_resource_object);
    unsigned max_level = 0;
@@ -1746,7 +1757,8 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       .need_dedicated = false,
       .export_types = ZINK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_BIT,
       .shared = templ->bind & PIPE_BIND_SHARED,
-      .user_mem = user_mem
+      .user_mem = user_mem,
+      .memory_heap_override = memory_heap_override
    };
 
    /* figure out aux plane count */
@@ -1818,7 +1830,8 @@ resource_create(struct pipe_screen *pscreen,
                 struct winsys_handle *whandle,
                 unsigned external_usage,
                 const uint64_t *modifiers, int modifiers_count,
-                const void *loader_private, const void *user_mem)
+                const void *loader_private, const void *user_mem,
+                const void *memory_heap_override)
 {
    struct zink_screen *screen = zink_screen(pscreen);
    struct zink_resource *res = CALLOC_STRUCT_CL(zink_resource);
@@ -1883,7 +1896,7 @@ resource_create(struct pipe_screen *pscreen,
    }
 #endif
 
-   res->obj = resource_object_create(screen, &templ2, whandle, &linear, res->modifiers, res->modifiers_count, loader_private, user_mem);
+   res->obj = resource_object_create(screen, &templ2, whandle, &linear, res->modifiers, res->modifiers_count, loader_private, user_mem, memory_heap_override);
    if (!res->obj)
       goto fail;
 
@@ -2001,14 +2014,14 @@ static struct pipe_resource *
 zink_resource_create(struct pipe_screen *pscreen,
                      const struct pipe_resource *templ)
 {
-   return resource_create(pscreen, templ, NULL, 0, NULL, 0, NULL, NULL);
+   return resource_create(pscreen, templ, NULL, 0, NULL, 0, NULL, NULL, NULL);
 }
 
 static struct pipe_resource *
 zink_resource_create_with_modifiers(struct pipe_screen *pscreen, const struct pipe_resource *templ,
                                     const uint64_t *modifiers, int modifiers_count)
 {
-   return resource_create(pscreen, templ, NULL, 0, modifiers, modifiers_count, NULL, NULL);
+   return resource_create(pscreen, templ, NULL, 0, modifiers, modifiers_count, NULL, NULL, NULL);
 }
 
 static struct pipe_resource *
@@ -2016,7 +2029,7 @@ zink_resource_create_drawable(struct pipe_screen *pscreen,
                               const struct pipe_resource *templ,
                               const void *loader_private)
 {
-   return resource_create(pscreen, templ, NULL, 0, NULL, 0, loader_private, NULL);
+   return resource_create(pscreen, templ, NULL, 0, NULL, 0, loader_private, NULL, NULL);
 }
 
 static bool
@@ -2037,7 +2050,7 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
 
       mod = res->modifiers[0] = DRM_FORMAT_MOD_LINEAR;
    }
-   struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, NULL, &res->linear, res->modifiers, res->modifiers_count, NULL, NULL);
+   struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, NULL, &res->linear, res->modifiers, res->modifiers_count, NULL, NULL, NULL);
    if (!new_obj) {
       debug_printf("new backing resource alloc failed!\n");
       res->base.b.bind &= ~bind;
@@ -2353,7 +2366,7 @@ zink_resource_from_handle(struct pipe_screen *pscreen,
       }
    }
    templ2.bind |= ZINK_BIND_DMABUF;
-   struct pipe_resource *pres = resource_create(pscreen, &templ2, whandle, usage, &modifier, modifier_count, NULL, NULL);
+   struct pipe_resource *pres = resource_create(pscreen, &templ2, whandle, usage, &modifier, modifier_count, NULL, NULL, NULL);
    if (!pres)
       return NULL;
 
@@ -2394,7 +2407,7 @@ zink_resource_from_user_memory(struct pipe_screen *pscreen,
    if (((uintptr_t)user_memory) & alignMask)
       return NULL;
 
-   return resource_create(pscreen, templ, NULL, 0, NULL, 0, NULL, user_memory);
+   return resource_create(pscreen, templ, NULL, 0, NULL, 0, NULL, user_memory, NULL);
 }
 
 struct zink_memory_object {
@@ -2452,12 +2465,20 @@ zink_resource_from_memobj(struct pipe_screen *pscreen,
 {
    struct zink_memory_object *memobj = (struct zink_memory_object *)pmemobj;
 
-   struct pipe_resource *pres = resource_create(pscreen, templ, &memobj->whandle, 0, NULL, 0, NULL, NULL);
+   struct pipe_resource *pres = resource_create(pscreen, templ, &memobj->whandle, 0, NULL, 0, NULL, NULL, NULL);
    if (!pres) {
-      /* If resource_create fails, try with templ->usage as STAGING */
+      /* If resource_create fails, try with templ->usage as DYNAMIC and a HOST_VISIBLE_COHERENT heap */
+      struct pipe_resource templ_dynamic = *templ;
+      templ_dynamic.usage = PIPE_USAGE_DYNAMIC;
+      pres = resource_create(pscreen, &templ_dynamic, &memobj->whandle, 0, NULL, 0,
+                            NULL, NULL, (void*)(uintptr_t)ZINK_HEAP_HOST_VISIBLE_COHERENT);
+   }
+   if (!pres) {
+      /* If that fails, try with templ->usage as STAGING and a HOST_VISIBLE_CACHED heap */
       struct pipe_resource templ_staging = *templ;
       templ_staging.usage = PIPE_USAGE_STAGING;
-      pres = resource_create(pscreen, &templ_staging, &memobj->whandle, 0, NULL, 0, NULL, NULL);
+      pres = resource_create(pscreen, &templ_staging, &memobj->whandle, 0, NULL, 0,
+                            NULL, NULL, (void*)(uintptr_t)ZINK_HEAP_HOST_VISIBLE_COHERENT_CACHED);
    }
    
    if (pres) {
@@ -2498,7 +2519,7 @@ invalidate_buffer(struct zink_context *ctx, struct zink_resource *res)
    if (!zink_resource_has_usage(res))
       return false;
 
-   struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, NULL, NULL, NULL, 0, NULL, 0);
+   struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, NULL, NULL, NULL, 0, NULL, 0, NULL);
    if (!new_obj) {
       debug_printf("new backing resource alloc failed!\n");
       return false;

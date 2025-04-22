@@ -993,6 +993,8 @@ _mesa_SignalSemaphoreEXT(GLuint semaphore,
    struct gl_buffer_object **bufObjs = NULL;
    struct gl_texture_object **texObjs = NULL;
 
+   _mesa_flush(ctx);
+
    const char *func = "glSignalSemaphoreEXT";
 
    if (!ctx->Extensions.EXT_semaphore) {

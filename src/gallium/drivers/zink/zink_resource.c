@@ -649,6 +649,15 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       return obj;
    } else if (templ->target == PIPE_BUFFER) {
       VkBufferCreateInfo bci = create_bci(screen, templ, templ->bind);
+      VkExternalMemoryBufferCreateInfo external_memory_buffer_create_info = {
+         .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+         .handleTypes = external,
+      };
+
+      if (whandle) {
+         bci.pNext = &external_memory_buffer_create_info;
+      }
+
       VkMesaBufferCreateInfoJUICE juiceBufferCreateInfo;
       add_juice_buffer_create_info(&bci, &juiceBufferCreateInfo, templ);
 

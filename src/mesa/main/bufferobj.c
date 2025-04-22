@@ -2319,6 +2319,13 @@ void GLAPIENTRY
 _mesa_NamedBufferStorageMemEXT(GLuint buffer, GLsizeiptr size,
                                GLuint memory, GLuint64 offset)
 {
+   GET_CURRENT_CONTEXT(ctx);  
+   
+   struct gl_buffer_object *bufObj = _mesa_lookup_bufferobj(ctx, buffer);
+   if (!handle_bind_buffer_gen(ctx, buffer,
+                              &bufObj, "glNamedBufferStorageMemEXT", false))
+      return;
+   
    inlined_buffer_storage(GL_NONE, buffer, size, NULL, 0, memory, offset,
                           true, true, false, "glNamedBufferStorageMemEXT");
 }
@@ -2328,6 +2335,11 @@ void GLAPIENTRY
 _mesa_NamedBufferStorageMemEXT_no_error(GLuint buffer, GLsizeiptr size,
                                         GLuint memory, GLuint64 offset)
 {
+   GET_CURRENT_CONTEXT(ctx);
+   
+   struct gl_buffer_object *bufObj = _mesa_lookup_bufferobj(ctx, buffer);
+   handle_bind_buffer_gen(ctx, buffer, &bufObj, "glNamedBufferStorageMemEXT_no_error", true);
+   
    inlined_buffer_storage(GL_NONE, buffer, size, NULL, 0, memory, offset,
                           true, true, true, "glNamedBufferStorageMemEXT");
 }

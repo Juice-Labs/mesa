@@ -1312,7 +1312,7 @@ create_buffer(struct zink_screen *screen, struct zink_resource_object *obj,
    embci.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
    if (alloc_info->external) {
       embci.pNext = bci.pNext;
-      embci.handleTypes = alloc_info->export_types;
+      embci.handleTypes = alloc_info->export_types | alloc_info->external;
       bci.pNext = &embci;
    }
 

@@ -183,80 +183,80 @@ glDepthRangedNV(GLdouble zNear, GLdouble zFar)
 VOID WINAPI
 glGetNamedBufferParameterui64vNV(GLuint buffer, GLenum pname, GLuint64EXT *params)
 {
-   debug_printf("glGetNamedBufferParameterui64vNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glGetNamedBufferParameterui64vNV: Not implemented\n");
+   //assert(0);
 }
 
 GLuint64 WINAPI
 glGetTextureSamplerHandleNV(GLuint texture, GLuint sampler)
 {
-   debug_printf("glGetTextureSamplerHandleNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glGetTextureSamplerHandleNV: Not implemented\n");
+   //assert(0);
    return 0;
 }
 
 GLboolean WINAPI
 glIsNamedBufferResidentNV(GLuint buffer)
 {
-   debug_printf("glIsNamedBufferResidentNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glIsNamedBufferResidentNV: Not implemented\n");
+   //assert(0);
    return FALSE;
 }
 
 VOID WINAPI
 glMakeNamedBufferResidentNV(GLuint buffer, GLenum access)
 {
-   debug_printf("glMakeNamedBufferResidentNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glMakeNamedBufferResidentNV: Not implemented\n");
+   //assert(0);
 }
 
 VOID WINAPI
 glMakeNamedBufferNonResidentNV(GLuint buffer)
 {
-   debug_printf("glMakeNamedBufferNonResidentNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glMakeNamedBufferNonResidentNV: Not implemented\n");
+   //assert(0);
 }
 
 VOID WINAPI
 glMakeTextureHandleNonResidentNV(GLuint64 handle)
 {
-   debug_printf("glMakeTextureHandleNonResidentNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glMakeTextureHandleNonResidentNV: Not implemented\n");
+   //assert(0);
 }
 
 VOID WINAPI
 glMakeTextureHandleResidentNV(GLuint64 handle)
 {
-   debug_printf("glMakeTextureHandleResidentNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glMakeTextureHandleResidentNV: Not implemented\n");
+   //assert(0);
 }
 
 VOID WINAPI
 glSemaphoreParameterivNV(GLuint semaphore, GLenum pname, const GLint *params)
 {
-   debug_printf("glSemaphoreParameterivNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glSemaphoreParameterivNV: Not implemented\n");
+   //assert(0);
 }
 
 VOID WINAPI
 glGetSemaphoreParameterivNV(GLuint semaphore, GLenum pname, GLint *params)
 {
    debug_printf("glGetSemaphoreParameterivNV: Not implemented, fatal error\n");
-   assert(0);
+   //assert(0);
 }
 
 VOID WINAPI
 glUniformui64NV(GLint location, GLuint64EXT value)
 {
-   debug_printf("glUniformui64NV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glUniformui64NV: Not implemented\n");
+   //assert(0);
 }
 
 VOID WINAPI
 glUniformui64vNV(GLint location, GLsizei count, const GLuint64EXT *value)
 {
-   debug_printf("glUniformui64vNV: Not implemented, fatal error\n");
-   assert(0);
+   debug_printf("glUniformui64vNV: Not implemented\n");
+   //assert(0);
 }
 
 struct stw_extension_entry

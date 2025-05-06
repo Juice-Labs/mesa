@@ -279,6 +279,7 @@ zink_create_fence_fd(struct pipe_context *pctx, struct pipe_fence_handle **pfenc
       goto fail_fd_dup;
 
    static const VkExternalSemaphoreHandleTypeFlagBits flags[] = {
+      [PIPE_FD_TYPE_TIMELINE_SEMAPHORE] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
       [PIPE_FD_TYPE_NATIVE_SYNC] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
       [PIPE_FD_TYPE_SYNCOBJ] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
    };
@@ -312,10 +313,16 @@ fail_tc_fence_create:
 
 #ifdef _WIN32
 void
-zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **pfence, void *handle, const void *name, enum pipe_fd_type type)
+zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **pfence, void *handle, const void *name, enum pipe_fd_type type, uint64_t initial_value)
 {
    struct zink_screen *screen = zink_screen(pscreen);
    VkResult ret = VK_ERROR_UNKNOWN;
+   VkSemaphoreTypeCreateInfo timelineCreateInfo;
+   timelineCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+   timelineCreateInfo.pNext = NULL;
+   timelineCreateInfo.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+   timelineCreateInfo.initialValue = initial_value;
+
    VkSemaphoreCreateInfo sci = {
       VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
       NULL,
@@ -323,6 +330,7 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
    };
    struct zink_tc_fence *mfence = zink_create_tc_fence();
    VkExternalSemaphoreHandleTypeFlagBits flags[] = {
+      [PIPE_FD_TYPE_TIMELINE_SEMAPHORE] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
       [PIPE_FD_TYPE_NATIVE_SYNC] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
       [PIPE_FD_TYPE_SYNCOBJ] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
    };

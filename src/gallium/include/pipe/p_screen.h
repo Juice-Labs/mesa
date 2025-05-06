@@ -414,12 +414,14 @@ struct pipe_screen {
 	 *    new fence reference to
 	 * \param handle opaque handle representing the fence object
 	 * \param type   indicates which fence types backs the handle
+    * \param initial_value the initial value of the semaphore (only used for timeline semaphores)
 	 */
    void (*create_fence_win32)(struct pipe_screen *screen,
                               struct pipe_fence_handle **fence,
                               void *handle,
                               const void *name,
-                              enum pipe_fd_type type);
+                              enum pipe_fd_type type,
+                              uint64_t initial_value);
 
    /**
     * Returns a driver-specific query.

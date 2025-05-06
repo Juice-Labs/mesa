@@ -21,6 +21,8 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#include <windows.h>
+
 #include "macros.h"
 #include "mtypes.h"
 #include "bufferobj.h"
@@ -46,6 +48,13 @@ struct st_context;
 #ifdef HAVE_LIBDRM
 #include "drm-uapi/drm_fourcc.h"
 #endif
+
+/* NV_timeline_semaphore constants */
+#define GL_SEMAPHORE_TYPE_NV                            0x95B3
+#define GL_SEMAPHORE_TYPE_BINARY_NV                     0x95B4
+#define GL_SEMAPHORE_TYPE_TIMELINE_NV                   0x95B5
+#define GL_TIMELINE_SEMAPHORE_VALUE_NV                  0x9595
+#define GL_MAX_TIMELINE_SEMAPHORE_VALUE_DIFFERENCE_NV   0x95B6
 
 static struct gl_memory_object *
 memoryobj_alloc(struct gl_context *ctx, GLuint name)
@@ -647,12 +656,13 @@ import_semaphoreobj_win32(struct gl_context *ctx,
                           struct gl_semaphore_object *semObj,
                           void *handle,
                           const void *name,
-                          enum pipe_fd_type type)
+                          enum pipe_fd_type type,
+                          uint64_t initial_value)
 {
    struct pipe_context *pipe = ctx->pipe;
    semObj->type = type;
 
-   pipe->screen->create_fence_win32(pipe->screen, &semObj->fence, handle, name, type);
+   pipe->screen->create_fence_win32(pipe->screen, &semObj->fence, handle, name, type, initial_value);
 }
 
 static void
@@ -1198,18 +1208,23 @@ _mesa_ImportSemaphoreWin32HandleEXT(GLuint semaphore,
    if (!semObj)
       return;
 
+   uint64_t timelineValue = 0;
+
    if (semObj == &DummySemaphoreObject) {
+      enum pipe_fd_type type = semObj->type;
+       timelineValue = semObj->timeline_value;
+
       semObj = semaphoreobj_alloc(ctx, semaphore);
       if (!semObj) {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "%s", func);
          return;
       }
+
+      semObj->type = type;
       _mesa_HashInsert(ctx->Shared->SemaphoreObjects, semaphore, semObj, true);
    }
 
-   enum pipe_fd_type type = handleType == GL_HANDLE_TYPE_D3D12_FENCE_EXT ?
-      PIPE_FD_TYPE_TIMELINE_SEMAPHORE : PIPE_FD_TYPE_SYNCOBJ;
-   import_semaphoreobj_win32(ctx, semObj, handle, NULL, type);
+   import_semaphoreobj_win32(ctx, semObj, handle, NULL, semObj->type, timelineValue);
 }
 
 void GLAPIENTRY
@@ -1242,16 +1257,112 @@ _mesa_ImportSemaphoreWin32NameEXT(GLuint semaphore,
    if (!semObj)
       return;
 
+   uint64_t timelineValue = 0;
+
    if (semObj == &DummySemaphoreObject) {
+      enum pipe_fd_type type = semObj->type;
+      timelineValue = semObj->timeline_value;
+
       semObj = semaphoreobj_alloc(ctx, semaphore);
       if (!semObj) {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "%s", func);
          return;
       }
+
+      semObj->type = type;
+      semObj->timeline_value = timelineValue;
+
       _mesa_HashInsert(ctx->Shared->SemaphoreObjects, semaphore, semObj, true);
    }
 
-   enum pipe_fd_type type = handleType == GL_HANDLE_TYPE_D3D12_FENCE_EXT ?
-      PIPE_FD_TYPE_TIMELINE_SEMAPHORE : PIPE_FD_TYPE_SYNCOBJ;
-   import_semaphoreobj_win32(ctx, semObj, NULL, name, type);
+   import_semaphoreobj_win32(ctx, semObj, NULL, name, semObj->type, timelineValue);
+}
+
+void GLAPIENTRY
+_mesa_SemaphoreParameterivNV(GLuint semaphore, GLenum pname, const GLint *params)
+{
+   GET_CURRENT_CONTEXT(ctx);
+   struct gl_semaphore_object *semObj;
+
+   const char *func = "glSemaphoreParameterivNV";
+
+   if (!ctx->Extensions.NV_timeline_semaphore) {
+      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(unsupported)", func);
+      return;
+   }
+
+   semObj = _mesa_lookup_semaphore_object(ctx, semaphore);
+   if (!semObj)
+      return;
+
+   if (pname == GL_SEMAPHORE_TYPE_NV) {
+      const GLenum type = params[0];
+      if (type != GL_SEMAPHORE_TYPE_BINARY_NV && type != GL_SEMAPHORE_TYPE_TIMELINE_NV) {
+         _mesa_error(ctx, GL_INVALID_VALUE, "%s(type=%u)", func, type);
+         return;
+      }
+
+      /* Type can only be set once */
+      if (semObj->fence) {
+         _mesa_error(ctx, GL_INVALID_OPERATION, 
+                    "%s(semaphore already has a type)", func);
+         return;
+      }
+
+      if (type == GL_SEMAPHORE_TYPE_TIMELINE_NV) {
+         semObj->type = PIPE_FD_TYPE_TIMELINE_SEMAPHORE;
+      } else {
+         semObj->type = PIPE_FD_TYPE_SYNCOBJ;
+      }
+   } else if (pname == GL_TIMELINE_SEMAPHORE_VALUE_NV) {
+      if (semObj->type != PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
+         _mesa_error(ctx, GL_INVALID_OPERATION,
+                    "%s(semaphore is not a timeline semaphore)", func);
+         return;
+      }
+
+      const GLuint64 value = (GLuint64)params[0];
+      semObj->timeline_value = value;
+      
+      if (semObj->fence && ctx->screen && ctx->screen->set_fence_timeline_value) {
+         ctx->screen->set_fence_timeline_value(ctx->screen, semObj->fence, value);
+      }
+   } else {
+      _mesa_error(ctx, GL_INVALID_ENUM, "%s(pname=0x%x)", func, pname);
+   }
+}
+
+void GLAPIENTRY
+_mesa_GetSemaphoreParameterivNV(GLuint semaphore, GLenum pname, GLint *params)
+{
+   GET_CURRENT_CONTEXT(ctx);
+   struct gl_semaphore_object *semObj;
+
+   const char *func = "glGetSemaphoreParameterivNV";
+
+   if (!ctx->Extensions.NV_timeline_semaphore) {
+      _mesa_error(ctx, GL_INVALID_OPERATION, "%s(unsupported)", func);
+      return;
+   }
+
+   semObj = _mesa_lookup_semaphore_object(ctx, semaphore);
+   if (!semObj)
+      return;
+
+   if (pname == GL_SEMAPHORE_TYPE_NV) {
+      if (semObj->type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
+         params[0] = GL_SEMAPHORE_TYPE_TIMELINE_NV;
+      } else {
+         params[0] = GL_SEMAPHORE_TYPE_BINARY_NV;
+      }
+   } else if (pname == GL_TIMELINE_SEMAPHORE_VALUE_NV) {
+      if (semObj->type != PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
+         _mesa_error(ctx, GL_INVALID_OPERATION,
+                    "%s(semaphore is not a timeline semaphore)", func);
+         return;
+      }
+      params[0] = (GLint)semObj->timeline_value;
+   } else {
+      _mesa_error(ctx, GL_INVALID_ENUM, "%s(pname=0x%x)", func, pname);
+   }
 }

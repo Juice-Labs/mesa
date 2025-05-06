@@ -1009,7 +1009,8 @@ trace_screen_create_fence_win32(struct pipe_screen *_screen,
                                 struct pipe_fence_handle **fence,
                                 void *handle,
                                 const void *name,
-                                enum pipe_fd_type type)
+                                enum pipe_fd_type type,
+                                uint64_t initial_value)
 {
    struct trace_screen *tr_scr = trace_screen(_screen);
    struct pipe_screen *screen = tr_scr->screen;
@@ -1022,10 +1023,11 @@ trace_screen_create_fence_win32(struct pipe_screen *_screen,
    trace_dump_arg(ptr, handle);
    trace_dump_arg(ptr, name);
    trace_dump_arg_enum(type, tr_util_pipe_fd_type_name(type));
+   trace_dump_arg(uint, initial_value);
 
    trace_dump_call_end();
 
-   screen->create_fence_win32(screen, fence, handle, name, type);
+   screen->create_fence_win32(screen, fence, handle, name, type, initial_value);
 }
 
 

@@ -1124,7 +1124,7 @@ d3d12_get_node_mask(struct pipe_screen *pscreen)
 }
 
 static void
-d3d12_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **pfence, void *handle, const void *name, enum pipe_fd_type type)
+d3d12_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **pfence, void *handle, const void *name, enum pipe_fd_type type, uint64_t initial_value)
 {
    d3d12_fence_reference((struct d3d12_fence **)pfence,
                          type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE ?

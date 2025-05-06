@@ -377,6 +377,7 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
    VkExternalSemaphoreHandleTypeFlagBits flags[] = {
       [PIPE_FD_TYPE_NATIVE_SYNC] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
       [PIPE_FD_TYPE_SYNCOBJ] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+      [PIPE_FD_TYPE_TIMELINE_SEMAPHORE_VK] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
    };
    VkImportSemaphoreWin32HandleInfoKHR sdi = {0};
    assert(type < ARRAY_SIZE(flags));

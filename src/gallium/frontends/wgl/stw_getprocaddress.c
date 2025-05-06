@@ -40,6 +40,17 @@
 #include "stw_nopfuncs.h"
 
 #include "util/u_debug.h"
+#include "pipe/p_screen.h"
+#include "pipe/p_context.h"
+#include "main/context.h"
+#include "main/externalobjects.h"
+
+/* NV_timeline_semaphore enum definitions */
+#define GL_SEMAPHORE_TYPE_NV                            0x95B3
+#define GL_SEMAPHORE_TYPE_BINARY_NV                     0x95B4
+#define GL_SEMAPHORE_TYPE_TIMELINE_NV                   0x95B5
+#define GL_TIMELINE_SEMAPHORE_VALUE_NV                  0x9595
+#define GL_MAX_TIMELINE_SEMAPHORE_VALUE_DIFFERENCE_NV   0x95B6
 
 /* Stub function for WGL_NV_copy_image */
 BOOL WINAPI
@@ -170,7 +181,25 @@ glBufferAddressRangeNV(GLenum target, GLuint index, GLuint64EXT address, GLsizei
 VOID WINAPI
 glCreateSemaphoresNV(GLsizei n, GLuint *semaphores)
 {
+   GET_CURRENT_CONTEXT(ctx);
+   
+   if (!ctx) {
+      debug_printf("glCreateSemaphoresNV: No current context\n");
+      return;
+   }
+   
+   /* First generate the semaphore objects */
    _mesa_GenSemaphoresEXT(n, semaphores);
+   
+   /* The NV spec doesn't set a default type, but it's a good practice to
+    * initialize them as TIMELINE semaphores since that's the extension's purpose */
+   for (GLsizei i = 0; i < n; i++) {
+      if (semaphores[i] > 0) {
+         /* This will set the default type to timeline */
+         GLint params = GL_SEMAPHORE_TYPE_TIMELINE_NV;
+         _mesa_SemaphoreParameterivNV(semaphores[i], GL_SEMAPHORE_TYPE_NV, &params);
+      }
+   }
 }
 
 VOID WINAPI
@@ -234,15 +263,37 @@ glMakeTextureHandleResidentNV(GLuint64 handle)
 VOID WINAPI
 glSemaphoreParameterivNV(GLuint semaphore, GLenum pname, const GLint *params)
 {
-   debug_printf("glSemaphoreParameterivNV: Not implemented\n");
-   //assert(0);
+   GET_CURRENT_CONTEXT(ctx);
+   
+   if (!ctx) {
+      debug_printf("glSemaphoreParameterivNV: No current context\n");
+      return;
+   }
+
+   if (pname == GL_SEMAPHORE_TYPE_NV || pname == GL_TIMELINE_SEMAPHORE_VALUE_NV) {
+      /* Let the Mesa implementation handle these properly */
+      _mesa_SemaphoreParameterivNV(semaphore, pname, params);
+   } else {
+      debug_printf("glSemaphoreParameterivNV: Invalid parameter name\n");
+   }
 }
 
 VOID WINAPI
 glGetSemaphoreParameterivNV(GLuint semaphore, GLenum pname, GLint *params)
 {
-   debug_printf("glGetSemaphoreParameterivNV: Not implemented, fatal error\n");
-   //assert(0);
+   GET_CURRENT_CONTEXT(ctx);
+   
+   if (!ctx) {
+      debug_printf("glGetSemaphoreParameterivNV: No current context\n");
+      return;
+   }
+
+   if (pname == GL_SEMAPHORE_TYPE_NV || pname == GL_TIMELINE_SEMAPHORE_VALUE_NV) {
+      /* Let the Mesa implementation handle these properly */
+      _mesa_GetSemaphoreParameterivNV(semaphore, pname, params);
+   } else {
+      debug_printf("glGetSemaphoreParameterivNV: Invalid parameter name\n");
+   }
 }
 
 VOID WINAPI

@@ -85,4 +85,11 @@ extern void
 _mesa_delete_semaphore_object(struct gl_context *ctx,
                               struct gl_semaphore_object *semObj);
 
+/* NV_timeline_semaphore functions */
+extern void GLAPIENTRY
+_mesa_SemaphoreParameterivNV(GLuint semaphore, GLenum pname, const GLint *params);
+
+extern void GLAPIENTRY
+_mesa_GetSemaphoreParameterivNV(GLuint semaphore, GLenum pname, GLint *params);
+
 #endif

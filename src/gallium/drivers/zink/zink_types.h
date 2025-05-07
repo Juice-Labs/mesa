@@ -205,7 +205,6 @@ enum zink_debug {
 
 /** fence types */
 struct tc_unflushed_batch_token;
-
 /* an async fence created for tc */
 struct zink_tc_fence {
    struct pipe_reference reference;
@@ -220,6 +219,10 @@ struct zink_tc_fence {
    struct zink_fence *fence;
    /* for use with semaphore/imported fences */
    VkSemaphore sem;
+   /* semaphore type: binary or timeline */
+   enum pipe_fd_type type;
+   /* timeline semaphore value - only used when type is PIPE_FD_TYPE_TIMELINE_SEMAPHORE */
+   uint64_t timeline_value;
 };
 
 /* a fence is actually a zink_batch_state, but these are split out for logical consistency */

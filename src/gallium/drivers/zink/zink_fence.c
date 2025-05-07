@@ -224,6 +224,36 @@ zink_fence_server_signal(struct pipe_context *pctx, struct pipe_fence_handle *pf
    struct zink_context *ctx = zink_context(pctx);
    struct zink_tc_fence *mfence = (struct zink_tc_fence *)pfence;
 
+   // Dumb simple signal for now
+   if (mfence->type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
+
+      /* If we're in a batch, flush it to ensure proper ordering */
+      if (ctx->batch.has_work) {
+         /* Flush the batch but don't wait for it to complete */
+         pctx->flush(pctx, NULL, PIPE_FLUSH_ASYNC);
+      }      
+
+      struct zink_screen *screen = zink_screen(ctx->base.screen);
+      const VkTimelineSemaphoreSubmitInfo timelineInfo = {
+         .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+         .signalSemaphoreValueCount = 1,
+         .pSignalSemaphoreValues = &mfence->timeline_value
+      };
+      
+      const VkSubmitInfo submit = {
+         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+         .pNext = &timelineInfo,
+         .signalSemaphoreCount = 1,
+         .pSignalSemaphores = &mfence->sem,
+      };
+      
+      VkResult result = VKSCR(QueueSubmit)(screen->queue, 1, &submit, VK_NULL_HANDLE);
+      if (result != VK_SUCCESS)
+         mesa_loge("ZINK: vkQueueSubmit failed (%s)", vk_Result_to_str(result));
+      
+      return;
+   }
+
    assert(!ctx->batch.state->signal_semaphore);
    ctx->batch.state->signal_semaphore = mfence->sem;
    ctx->batch.has_work = true;
@@ -242,6 +272,37 @@ zink_fence_server_sync(struct pipe_context *pctx, struct pipe_fence_handle *pfen
 
    if (mfence->deferred_ctx == pctx || !mfence->sem)
       return;
+
+   // Dumb simple sync for now
+   if (mfence->type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
+
+      /* If we're in a batch, flush it to ensure proper ordering */
+      if (ctx->batch.has_work) {
+         /* Flush the batch but don't wait for it to complete */
+         pctx->flush(pctx, NULL, PIPE_FLUSH_ASYNC);
+      }
+
+      struct zink_screen *screen = zink_screen(ctx->base.screen);
+      const VkTimelineSemaphoreSubmitInfo timelineInfo = {
+         .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+         .waitSemaphoreValueCount = 1,
+         .pWaitSemaphoreValues = &mfence->timeline_value
+      };
+      
+      const VkSubmitInfo submit = {
+         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+         .pNext = &timelineInfo,
+         .waitSemaphoreCount = 1,
+         .pWaitSemaphores = &mfence->sem,
+         .pWaitDstStageMask = &(VkPipelineStageFlags){VK_PIPELINE_STAGE_ALL_COMMANDS_BIT},
+      };
+      
+      VkResult result = VKSCR(QueueSubmit)(screen->queue, 1, &submit, VK_NULL_HANDLE);
+      if (result != VK_SUCCESS)
+         mesa_loge("ZINK: vkQueueSubmit failed (%s)", vk_Result_to_str(result));
+      
+      return;
+   }
 
    mfence->deferred_ctx = pctx;
    /* this will be applied on the next submit */
@@ -298,6 +359,8 @@ zink_create_fence_fd(struct pipe_context *pctx, struct pipe_fence_handle **pfenc
       goto fail_sem_import;
    }
 
+   mfence->type = type;
+
    *pfence = (struct pipe_fence_handle *)mfence;
    return;
 
@@ -328,6 +391,11 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
       NULL,
       0
    };
+
+   if (type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
+      sci.pNext = &timelineCreateInfo;
+   }
+
    struct zink_tc_fence *mfence = zink_create_tc_fence();
    VkExternalSemaphoreHandleTypeFlagBits flags[] = {
       [PIPE_FD_TYPE_TIMELINE_SEMAPHORE] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
@@ -353,12 +421,28 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
 
    if (!zink_screen_handle_vkresult(screen, ret))
       goto fail;
+
+   mfence->type = type;
+   
+   if (type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
+      mfence->timeline_value = initial_value;
+   }
+
    *pfence = (struct pipe_fence_handle *)mfence;
    return;
 
 fail:
    VKSCR(DestroySemaphore)(screen->dev, mfence->sem, NULL);
    FREE(mfence);
+}
+
+void
+zink_set_fence_timeline_value(struct pipe_screen *pscreen, struct pipe_fence_handle *pfence, uint64_t value)
+{
+   struct zink_screen *screen = zink_screen(pscreen);
+   struct zink_tc_fence *mfence = (struct zink_tc_fence *)pfence;
+
+   mfence->timeline_value = value;
 }
 #endif
 
@@ -368,4 +452,5 @@ zink_screen_fence_init(struct pipe_screen *pscreen)
    pscreen->fence_reference = fence_reference;
    pscreen->fence_finish = fence_finish;
    pscreen->fence_get_fd = fence_get_fd;
+   pscreen->set_fence_timeline_value = zink_set_fence_timeline_value;
 }

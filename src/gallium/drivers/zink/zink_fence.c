@@ -368,12 +368,12 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
 {
    struct zink_screen *screen = zink_screen(pscreen);
    VkResult ret = VK_ERROR_UNKNOWN;
-   VkSemaphoreCreateInfo sci = {
-      VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-      NULL,
-      0
+   VkSemaphoreType semtype[] = {
+      [PIPE_FD_TYPE_NATIVE_SYNC] = VK_SEMAPHORE_TYPE_BINARY,
+      [PIPE_FD_TYPE_SYNCOBJ] = VK_SEMAPHORE_TYPE_BINARY,
+      [PIPE_FD_TYPE_TIMELINE_SEMAPHORE_VK] = VK_SEMAPHORE_TYPE_TIMELINE,
    };
-   struct zink_tc_fence *mfence = zink_create_tc_fence();
+   struct zink_tc_fence *mfence = zink_semaphore_fence_create(pscreen, semtype[type]);
    VkExternalSemaphoreHandleTypeFlagBits flags[] = {
       [PIPE_FD_TYPE_NATIVE_SYNC] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
       [PIPE_FD_TYPE_SYNCOBJ] = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT,
@@ -384,10 +384,8 @@ zink_create_fence_win32(struct pipe_screen *pscreen, struct pipe_fence_handle **
 
    *pfence = NULL;
 
-   if (VKSCR(CreateSemaphore)(screen->dev, &sci, NULL, &mfence->sem) != VK_SUCCESS) {
-      FREE(mfence);
+   if (!mfence)
       return;
-   }
 
    sdi.sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_WIN32_HANDLE_INFO_KHR;
    sdi.semaphore = mfence->sem;

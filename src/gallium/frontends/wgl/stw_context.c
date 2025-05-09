@@ -436,6 +436,9 @@ stw_make_current(struct stw_framebuffer *fb, struct stw_framebuffer *fbRead, str
          if (old_ctx->current_framebuffer == fb && old_ctx->current_read_framebuffer == fbRead) {
             /* Return if already current. */
             return TRUE;
+         } else {
+            stw_st_flush(old_ctx->st, old_ctx->current_framebuffer->stfb,
+                            ST_FLUSH_FRONT);
          }
       } else {
          if(false) {

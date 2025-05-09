@@ -446,11 +446,10 @@ stw_make_current(struct stw_framebuffer *fb, struct stw_framebuffer *fbRead, str
                             ST_FLUSH_FRONT);
          }
       } else {
-         if(false) {
-         //if (old_ctx->shared ||
-         //   /* Using a winsys framebuffer effectively means that there's sharing since another
-         //    * context might end up using the same resources. */
-         //   (old_ctx->current_framebuffer && old_ctx->current_framebuffer->winsys_framebuffer)) {
+         if (old_ctx->shared ||
+            /* Using a winsys framebuffer effectively means that there's sharing since another
+             * context might end up using the same resources. */
+            (old_ctx->current_framebuffer && old_ctx->current_framebuffer->winsys_framebuffer)) {
             if (old_ctx->current_framebuffer) {
                stw_st_flush(old_ctx->st, old_ctx->current_framebuffer->drawable,
                             ST_FLUSH_FRONT | ST_FLUSH_WAIT);

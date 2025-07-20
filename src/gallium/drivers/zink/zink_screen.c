@@ -30,6 +30,7 @@
 #include "zink_fence.h"
 #include "zink_format.h"
 #include "zink_framebuffer.h"
+#include "zink_misc_ext.h"
 #include "zink_program.h"
 #include "zink_public.h"
 #include "zink_query.h"
@@ -1350,6 +1351,9 @@ zink_destroy_screen(struct pipe_screen *pscreen)
 {
    struct zink_screen *screen = zink_screen(pscreen);
 
+   /* Cleanup GPU enumeration */
+   zink_misc_cleanup_gpu_enum();
+
    hash_table_foreach(&screen->dts, entry)
       zink_kopper_deinit_displaytarget(screen, entry->data);
    simple_mtx_destroy(&screen->dt_lock);
@@ -2392,6 +2396,11 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    screen->is_cpu = choose_pdev(screen);
    if (screen->pdev == VK_NULL_HANDLE)
       goto fail;
+
+   /* Initialize GPU enumeration for WGL_NV_gpu_affinity */
+   if (!zink_misc_init_gpu_enum(screen)) {
+      debug_printf("ZINK: Failed to initialize GPU enumeration\n");
+   }
 
    update_queue_props(screen);
 

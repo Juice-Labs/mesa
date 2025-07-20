@@ -85,9 +85,30 @@ wglDeleteDCNV(HDC hdc)
 BOOL WINAPI
 wglEnumGpusNV(UINT iGpuIndex, HGPUNV *phGpu)
 {
-   debug_printf("wglEnumGpusNV: Not implemented, fatal error\n");
-   assert(0);
-   return FALSE;
+   if (!stw_dev) {
+      debug_printf("wglEnumGpusNV: No STW device\n");
+      return FALSE;
+   }
+
+   /* Only support GPU enumeration when using Zink */
+   if (!stw_dev->zink) {
+      debug_printf("wglEnumGpusNV: Not using Zink driver\n");
+      return FALSE;
+   }
+
+   if (!phGpu) {
+      debug_printf("wglEnumGpusNV: NULL phGpu pointer\n");
+      return FALSE;
+   }
+
+   /* Forward to Zink implementation - will be linked if Zink is available */
+   extern bool zink_misc_enum_gpus(uint32_t gpu_index, HGPUNV *gpu_handle);
+   if (zink_misc_enum_gpus(iGpuIndex, phGpu)) {
+      return TRUE;
+   } else {
+      /* Index out of range or other error */
+      return FALSE;
+   }
 }
 
 BOOL WINAPI

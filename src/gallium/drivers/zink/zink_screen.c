@@ -30,6 +30,7 @@
 #include "zink_fence.h"
 #include "vk_format.h"
 #include "zink_format.h"
+#include "zink_misc_ext.h"
 #include "zink_program.h"
 #include "zink_public.h"
 #include "zink_query.h"
@@ -1588,6 +1589,9 @@ static void
 zink_destroy_screen(struct pipe_screen *pscreen)
 {
    struct zink_screen *screen = zink_screen(pscreen);
+
+   /* Cleanup GPU enumeration */
+   zink_misc_cleanup_gpu_enum();
 
    if (!screen->device_lost && screen->queue) {
       // Multiple screens can share a queue, so we need to lock queue_lock even
@@ -3507,6 +3511,11 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
       goto fail;
    }
    screen->is_cpu = screen->info.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+
+   /* Initialize GPU enumeration for WGL_NV_gpu_affinity */
+   if (!zink_misc_init_gpu_enum(screen)) {
+      debug_printf("ZINK: Failed to initialize GPU enumeration\n");
+   }
 
    update_queue_props(screen);
 

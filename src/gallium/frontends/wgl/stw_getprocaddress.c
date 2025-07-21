@@ -67,18 +67,18 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
 
 /* Stub functions for WGL_NV_gpu_affinity */
 HDC WINAPI
-wglCreateAffinityDCNV(const HGPUNV *gpuList)
+wglCreateAffinityDCNV(const HGPUNV *phGpuList)
 {
-   debug_printf("wglCreateAffinityDCNV: Not implemented, fatal error\n");
-   assert(0);
+   /* Always fail as requested - affinity DC creation not supported */
+   debug_printf("wglCreateAffinityDCNV: Not supported, returning NULL\n");
    return NULL;
 }
 
 BOOL WINAPI
 wglDeleteDCNV(HDC hdc)
 {
-   debug_printf("wglDeleteDCNV: Not implemented, fatal error\n");
-   assert(0);
+   /* Always fail as requested - affinity DC deletion not supported */
+   debug_printf("wglDeleteDCNV: Not supported, returning FALSE\n");
    return FALSE;
 }
 
@@ -114,9 +114,30 @@ wglEnumGpusNV(UINT iGpuIndex, HGPUNV *phGpu)
 BOOL WINAPI
 wglEnumGpuDevicesNV(HGPUNV hGpu, UINT iDeviceIndex, PGPU_DEVICE lpGpuDevice)
 {
-   debug_printf("wglEnumGpuDevicesNV: Not implemented, fatal error\n");
-   assert(0);
-   return FALSE;
+   if (!stw_dev) {
+      debug_printf("wglEnumGpuDevicesNV: No STW device\n");
+      return FALSE;
+   }
+
+   /* Only support GPU device enumeration when using Zink */
+   if (!stw_dev->zink) {
+      debug_printf("wglEnumGpuDevicesNV: Not using Zink driver\n");
+      return FALSE;
+   }
+
+   if (!hGpu || !lpGpuDevice) {
+      debug_printf("wglEnumGpuDevicesNV: Invalid parameters\n");
+      return FALSE;
+   }
+
+   /* Forward to Zink implementation */
+   extern bool zink_misc_enum_gpu_devices(HGPUNV gpu_handle, uint32_t device_index, PGPU_DEVICE gpu_device);
+   if (zink_misc_enum_gpu_devices(hGpu, iDeviceIndex, lpGpuDevice)) {
+      return TRUE;
+   } else {
+      /* Device index out of range or other error */
+      return FALSE;
+   }
 }
 
 BOOL WINAPI

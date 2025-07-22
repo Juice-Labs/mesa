@@ -3737,10 +3737,11 @@ __declspec(dllexport)
 #endif
 bool
 zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_target, 
-                                         uint64_t* out_handle, uint64_t* out_size, 
+                                         uint64_t* out_handle, uint64_t* out_size,
+                                         uint64_t* out_semaphore_handle, uint64_t* out_semaphore,
                                          char* error_msg, size_t error_msg_size)
 {
-   if (!out_handle || !out_size) {
+   if (!out_handle || !out_size || !out_semaphore_handle || !out_semaphore) {
       if (error_msg) snprintf(error_msg, error_msg_size, "Invalid output parameters");
       return false;
    }
@@ -3762,6 +3763,7 @@ zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_tar
 
    struct pipe_context *pipe_ctx = st_ctx->pipe;
    struct pipe_screen *pipe_screen = pipe_ctx->screen;
+   struct zink_screen *screen = zink_screen(pipe_screen);
 
    // Look up the GL texture object
    struct gl_texture_object *tex_obj = _mesa_lookup_texture(gl_ctx, gl_texture_id);
@@ -3785,8 +3787,53 @@ zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_tar
       return false;
    }
 
+   // Create exportable timeline semaphore for synchronization
+   VkSemaphore semaphore = VK_NULL_HANDLE;
+   VkSemaphoreTypeCreateInfo semaphore_type_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+      .pNext = NULL,
+      .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+      .initialValue = 0
+   };
+
+   VkExportSemaphoreCreateInfo export_semaphore_info = {
+      .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+      .pNext = &semaphore_type_info,
+      .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT
+   };
+
+   VkSemaphoreCreateInfo semaphore_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+      .pNext = &export_semaphore_info,
+      .flags = 0
+   };
+
+   VkResult result = VKSCR(CreateSemaphore)(screen->dev, &semaphore_info, NULL, &semaphore);
+   if (result != VK_SUCCESS) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to create exportable semaphore");
+      return false;
+   }
+
+   // Export the semaphore handle
+   VkSemaphoreGetWin32HandleInfoKHR semaphore_handle_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR,
+      .pNext = NULL,
+      .semaphore = semaphore,
+      .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT
+   };
+
+   HANDLE semaphore_handle;
+   result = VKSCR(GetSemaphoreWin32HandleKHR)(screen->dev, &semaphore_handle_info, &semaphore_handle);
+   if (result != VK_SUCCESS) {
+      VKSCR(DestroySemaphore)(screen->dev, semaphore, NULL);
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to export semaphore handle");
+      return false;
+   }
+
    // Extract results
    *out_handle = (uint64_t)export_handle.handle;
+   *out_semaphore_handle = (uint64_t)semaphore_handle;
+   *out_semaphore = (uint64_t)semaphore;
    
    // Calculate memory size - this is an approximation
    // In practice, we'd need to get the actual memory requirements
@@ -3804,6 +3851,153 @@ zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_tar
             *out_size += level_width * level_height * bpp;
          }
       }
+   }
+
+   return true;
+#else
+   if (error_msg) snprintf(error_msg, error_msg_size, "Platform not supported");
+   return false;
+#endif
+}
+
+/**
+ * Signal a timeline semaphore with the specified value
+ * This function submits a signal operation to the Vulkan queue
+ */
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_signal_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
+                                   char* error_msg, size_t error_msg_size)
+{
+   if (!semaphore) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Invalid semaphore");
+      return false;
+   }
+
+#ifdef _WIN32
+   // Get the current Mesa GL context
+   struct gl_context *gl_ctx = _mesa_get_current_context();
+   if (!gl_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No current GL context");
+      return false;
+   }
+
+   // Get the Mesa state tracker context
+   struct st_context *st_ctx = (struct st_context*)gl_ctx->st;
+   if (!st_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No Mesa state tracker context");
+      return false;
+   }
+
+   struct pipe_context *pipe_ctx = st_ctx->pipe;
+   struct zink_context *zink_ctx = zink_context(pipe_ctx);
+   struct zink_screen *screen = zink_screen(pipe_ctx->screen);
+   
+   VkSemaphore vk_semaphore = (VkSemaphore)(uintptr_t)semaphore;
+   
+   // Create timeline semaphore submit info
+   VkTimelineSemaphoreSubmitInfo timeline_info = {
+      .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+      .pNext = NULL,
+      .waitSemaphoreValueCount = 0,
+      .pWaitSemaphoreValues = NULL,
+      .signalSemaphoreValueCount = 1,
+      .pSignalSemaphoreValues = &timeline_value
+   };
+
+   // Submit info for signaling the semaphore
+   VkSubmitInfo submit_info = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .pNext = &timeline_info,
+      .waitSemaphoreCount = 0,
+      .pWaitSemaphores = NULL,
+      .pWaitDstStageMask = NULL,
+      .commandBufferCount = 0,
+      .pCommandBuffers = NULL,
+      .signalSemaphoreCount = 1,
+      .pSignalSemaphores = &vk_semaphore
+   };
+
+   VkResult result = VKSCR(QueueSubmit)(screen->queue, 1, &submit_info, VK_NULL_HANDLE);
+   if (result != VK_SUCCESS) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to signal timeline semaphore: %s", vk_Result_to_str(result));
+      return false;
+   }
+
+   return true;
+#else
+   if (error_msg) snprintf(error_msg, error_msg_size, "Platform not supported");
+   return false;
+#endif
+}
+
+/**
+ * Wait on a timeline semaphore with the specified value
+ * This function submits a wait operation to the Vulkan queue
+ */
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_wait_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
+                                 char* error_msg, size_t error_msg_size)
+{
+   if (!semaphore) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Invalid semaphore");
+      return false;
+   }
+
+#ifdef _WIN32
+   // Get the current Mesa GL context
+   struct gl_context *gl_ctx = _mesa_get_current_context();
+   if (!gl_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No current GL context");
+      return false;
+   }
+
+   // Get the Mesa state tracker context
+   struct st_context *st_ctx = (struct st_context*)gl_ctx->st;
+   if (!st_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No Mesa state tracker context");
+      return false;
+   }
+
+   struct pipe_context *pipe_ctx = st_ctx->pipe;
+   struct zink_context *zink_ctx = zink_context(pipe_ctx);
+   struct zink_screen *screen = zink_screen(pipe_ctx->screen);
+   
+   VkSemaphore vk_semaphore = (VkSemaphore)(uintptr_t)semaphore;
+   VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+   
+   // Create timeline semaphore submit info
+   VkTimelineSemaphoreSubmitInfo timeline_info = {
+      .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+      .pNext = NULL,
+      .waitSemaphoreValueCount = 1,
+      .pWaitSemaphoreValues = &timeline_value,
+      .signalSemaphoreValueCount = 0,
+      .pSignalSemaphoreValues = NULL
+   };
+
+   // Submit info for waiting on the semaphore
+   VkSubmitInfo submit_info = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .pNext = &timeline_info,
+      .waitSemaphoreCount = 1,
+      .pWaitSemaphores = &vk_semaphore,
+      .pWaitDstStageMask = &wait_stage,
+      .commandBufferCount = 0,
+      .pCommandBuffers = NULL,
+      .signalSemaphoreCount = 0,
+      .pSignalSemaphores = NULL
+   };
+
+   VkResult result = VKSCR(QueueSubmit)(screen->queue, 1, &submit_info, VK_NULL_HANDLE);
+   if (result != VK_SUCCESS) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to wait on timeline semaphore: %s", vk_Result_to_str(result));
+      return false;
    }
 
    return true;

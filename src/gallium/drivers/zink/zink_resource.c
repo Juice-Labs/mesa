@@ -614,7 +614,6 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
 
    bool need_dedicated = false;
    bool shared = templ->bind & PIPE_BIND_SHARED;
-   bool dmabuf = false;
 #if !defined(_WIN32)
    VkExternalMemoryHandleTypeFlags export_types = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
 #else
@@ -645,14 +644,11 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          external = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
          export_types |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
       }
-      shared = true;
-      if (templ->bind & ZINK_BIND_DMABUF)
-         dmabuf = true;
-      
-      /* we may export WINSYS_HANDLE_TYPE_FD handle which is dma-buf */
-      if (shared && screen->info.have_EXT_external_memory_dma_buf)
-         export_types |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
    }
+      
+   /* we may export WINSYS_HANDLE_TYPE_FD handle which is dma-buf */
+   if (shared && screen->info.have_EXT_external_memory_dma_buf)
+      export_types |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
 
    pipe_reference_init(&obj->reference, 1);
    if (loader_private) {
@@ -796,7 +792,8 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
             idfmlci.drmFormatModifierCount = modifiers_count;
             idfmlci.pDrmFormatModifiers = modifiers;
             ici.pNext = &idfmlci;
-         } else if (ici.tiling == VK_IMAGE_TILING_OPTIMAL) {
+         }
+         else if (ici.tiling == VK_IMAGE_TILING_OPTIMAL) {
             shared = false;
          }
       }
@@ -1034,7 +1031,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       NULL,
    };
 
-   if (whandle) {
+   if (whandle && whandle->handle) {
       imfi.pNext = NULL;
       imfi.handleType = external;
       imfi.fd = os_dupfd_cloexec(whandle->handle);
@@ -1052,7 +1049,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       NULL,
    };
 
-   if (whandle) {
+   if (whandle && whandle->handle) {
       HANDLE source_target = GetCurrentProcess();
       HANDLE out_handle;
 
@@ -1303,7 +1300,7 @@ zink_resource_create_drawable(struct pipe_screen *pscreen,
 }
 
 static bool
-add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned bind)
+add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned bind, unsigned remove_bind)
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
    assert((res->base.b.bind & bind) == 0);
@@ -1311,6 +1308,7 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
    //zink_screen(ctx->base.screen)->image_barrier(ctx, res, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, 0);
 
    res->base.b.bind |= bind;
+   res->base.b.bind &= ~remove_bind;
    struct zink_resource_object *old_obj = res->obj;
    
    // Handle CUDA export binding - force export capabilities
@@ -1507,7 +1505,7 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
             unsigned bind = ZINK_BIND_DMABUF;
             if (!(res->base.b.bind & PIPE_BIND_SHARED))
                bind |= PIPE_BIND_SHARED;
-            if (!add_resource_bind(screen->copy_context, res, bind))
+            if (!add_resource_bind(screen->copy_context, res, bind, 0))
                return false;
             p_atomic_inc(&screen->image_rebind_counter);
             screen->copy_context->base.flush(&screen->copy_context->base, NULL, 0);
@@ -2282,7 +2280,7 @@ resource_object_add_bind(struct zink_context *ctx, struct zink_resource *res, un
    }
    assert(!res->obj->dt);
    zink_fb_clears_apply_region(ctx, &res->base.b, (struct u_rect){0, res->base.b.width0, 0, res->base.b.height0});
-   bool ret = add_resource_bind(ctx, res, bind);
+   bool ret = add_resource_bind(ctx, res, bind, 0);
    if (ret)
       zink_resource_rebind(ctx, res);
 
@@ -2474,8 +2472,9 @@ zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
    }
 
    // Add CUDA export bind flag and recreate with export capabilities
-   unsigned bind = ZINK_BIND_CUDA_EXPORT | PIPE_BIND_SHARED;
-   if (!add_resource_bind(ctx, res, bind)) {
+   unsigned bind = ZINK_BIND_CUDA_EXPORT | PIPE_BIND_SHARED | PIPE_BIND_LINEAR;
+   unsigned remove_bind = PIPE_BIND_RENDER_TARGET;
+   if (!add_resource_bind(ctx, res, bind, remove_bind)) {
       return false;
    }
 

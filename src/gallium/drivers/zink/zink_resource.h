@@ -33,6 +33,7 @@
 #define ZINK_BIND_DMABUF (1u << 29)
 #define ZINK_BIND_TRANSIENT (1u << 30) //transient fb attachment
 #define ZINK_BIND_VIDEO (1u << 31)
+#define ZINK_BIND_CUDA_EXPORT (1u << 27) // Custom bind flag for CUDA export
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,6 +63,20 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
 
 void
 debug_describe_zink_resource_object(char *buf, const struct zink_resource_object *ptr);
+
+bool
+zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
+                                      struct pipe_context *pctx,
+                                      struct pipe_resource *pres,
+                                      struct winsys_handle *out_handle);
+
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_target, 
+                                         uint64_t* out_handle, uint64_t* out_size, 
+                                         char* error_msg, size_t error_msg_size);
 
 static ALWAYS_INLINE void
 zink_resource_object_reference(struct zink_screen *screen,

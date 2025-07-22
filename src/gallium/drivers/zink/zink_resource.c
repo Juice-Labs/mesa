@@ -30,6 +30,12 @@
 #include "zink_format.h"
 #include "zink_program.h"
 #include "zink_screen.h"
+
+#include "main/context.h"
+#include "main/texobj.h"
+#include "main/format_utils.h"
+#include "state_tracker/st_context.h"
+#include "state_tracker/st_texture.h"
 #include "zink_surface.h"
 #include "zink_kopper.h"
 
@@ -67,6 +73,7 @@
 #endif /* __APPLE__ */
 
 #define ZINK_EXTERNAL_MEMORY_HANDLE 999
+#define ZINK_BIND_CUDA_EXPORT (1 << 27) // Custom bind flag for CUDA export
 
 
 
@@ -1014,7 +1021,7 @@ struct mem_alloc_info {
 static inline bool
 get_export_flags(struct zink_screen *screen, const struct pipe_resource *templ, struct mem_alloc_info *alloc_info)
 {
-   bool needs_export = (templ->bind & (ZINK_BIND_VIDEO | ZINK_BIND_DMABUF)) != 0;
+   bool needs_export = (templ->bind & (ZINK_BIND_VIDEO | ZINK_BIND_DMABUF | ZINK_BIND_CUDA_EXPORT)) != 0;
    if (alloc_info->whandle) {
       if (alloc_info->whandle->type == WINSYS_HANDLE_TYPE_FD ||
           alloc_info->whandle->type == ZINK_EXTERNAL_MEMORY_HANDLE)
@@ -2040,6 +2047,9 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
    res->base.b.bind |= bind;
    struct zink_resource_object *old_obj = res->obj;
    ASSERTED uint64_t mod = DRM_FORMAT_MOD_INVALID;
+
+   // Handle CUDA export binding - force export capabilities
+   bool force_export = (bind & ZINK_BIND_CUDA_EXPORT) != 0;
    if (bind & ZINK_BIND_DMABUF && !res->modifiers_count && !res->obj->is_buffer && screen->info.have_EXT_image_drm_format_modifier) {
       res->modifiers_count = 1;
       res->modifiers = malloc(res->modifiers_count * sizeof(uint64_t));
@@ -2056,6 +2066,12 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
       res->base.b.bind &= ~bind;
       return false;
    }
+
+   // Ensure the new object is marked as exportable if CUDA export was requested
+   if (force_export) {
+      new_obj->exportable = true;
+   }
+
    assert(mod == DRM_FORMAT_MOD_INVALID || new_obj->modifier == DRM_FORMAT_MOD_LINEAR);
    struct zink_resource staging = *res;
    staging.obj = old_obj;
@@ -2065,6 +2081,7 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
    res->queue = VK_QUEUE_FAMILY_IGNORED;
    bool valid_contents = (res->obj->is_buffer && (res->valid_buffer_range.end || res->base.valid_buffer_range.end)) ||
                          (!res->obj->is_buffer && res->valid);
+   #if 0 
    if (valid_contents) {
       for (unsigned i = 0; i <= res->base.b.last_level; i++) {
          struct pipe_box box;
@@ -2075,6 +2092,7 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
          ctx->base.resource_copy_region(&ctx->base, &res->base.b, i, 0, 0, 0, &staging.base.b, i, &box);
       }
    }
+   #endif
    res->rebind_count++;
    if (old_obj->exportable) {
       simple_mtx_lock(&ctx->bs->exportable_lock);
@@ -3658,4 +3676,138 @@ zink_context_resource_init(struct pipe_context *pctx)
    pctx->buffer_subdata = zink_buffer_subdata;
    pctx->texture_subdata = zink_image_subdata;
    pctx->invalidate_resource = zink_resource_invalidate;
+}
+
+/**
+ * Recreate a GL texture with export capabilities for CUDA interop.
+ * This function handles the case where cuGraphicsGLRegisterImage is called
+ * on a texture that wasn't originally created with export capabilities.
+ */
+bool
+zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
+                                      struct pipe_context *pctx,
+                                      struct pipe_resource *pres,
+                                      struct winsys_handle *out_handle)
+{
+   struct zink_resource *res = zink_resource(pres);
+   struct zink_screen *screen = zink_screen(pscreen);
+   struct zink_context *ctx = zink_context(pctx);
+   
+   if (!res || !out_handle)
+      return false;
+      
+   // Check if we're on Windows (only platform supported for now)
+#ifndef _WIN32
+   return false;
+#endif
+
+   // Check if already exportable
+   if (res->obj && res->obj->exportable) {
+      // Already exportable, just get the handle
+      return zink_resource_get_handle(pscreen, pctx, pres, out_handle, 0);
+   }
+
+   // Ensure we're not in the middle of any operations
+   if (zink_resource_usage_is_unflushed(res)) {
+      ctx->base.flush(&ctx->base, NULL, 0);
+   }
+
+   // Add CUDA export bind flag and recreate with export capabilities
+   unsigned bind = ZINK_BIND_CUDA_EXPORT | PIPE_BIND_SHARED;
+   if (!add_resource_bind(ctx, res, bind)) {
+      return false;
+   }
+
+   // Flush to ensure recreation is complete
+   ctx->base.flush(&ctx->base, NULL, 0);
+
+   // Now export the handle
+   out_handle->type = WINSYS_HANDLE_TYPE_FD;
+  
+   return zink_resource_get_handle(pscreen, pctx, pres, out_handle, 0);
+}
+
+/**
+ * External interface for CUDA interop - can be called from outside Mesa
+ * This function bridges between the client layer and Zink driver
+ */
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_target, 
+                                         uint64_t* out_handle, uint64_t* out_size, 
+                                         char* error_msg, size_t error_msg_size)
+{
+   if (!out_handle || !out_size) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Invalid output parameters");
+      return false;
+   }
+
+#ifdef _WIN32
+   // Get the current Mesa GL context
+   struct gl_context *gl_ctx = _mesa_get_current_context();
+   if (!gl_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No current GL context");
+      return false;
+   }
+
+   // Get the Mesa state tracker context
+   struct st_context *st_ctx = (struct st_context*)gl_ctx->st;
+   if (!st_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No Mesa state tracker context");
+      return false;
+   }
+
+   struct pipe_context *pipe_ctx = st_ctx->pipe;
+   struct pipe_screen *pipe_screen = pipe_ctx->screen;
+
+   // Look up the GL texture object
+   struct gl_texture_object *tex_obj = _mesa_lookup_texture(gl_ctx, gl_texture_id);
+   if (!tex_obj) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "GL texture %u not found", gl_texture_id);
+      return false;
+   }
+
+   struct pipe_resource *pipe_res = st_get_texobj_resource(tex_obj);
+   if (!pipe_res) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No pipe resource for GL texture %u", gl_texture_id);
+      return false;
+   }
+
+   // Now recreate with export capabilities
+   struct winsys_handle export_handle = {};
+   bool success = zink_resource_recreate_for_cuda_export(pipe_screen, pipe_ctx, pipe_res, &export_handle);
+   
+   if (!success) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to recreate texture with export capabilities");
+      return false;
+   }
+
+   // Extract results
+   *out_handle = (uint64_t)export_handle.handle;
+   
+   // Calculate memory size - this is an approximation
+   // In practice, we'd need to get the actual memory requirements
+   uint32_t width = tex_obj->Image[0][0]->Width;
+   uint32_t height = tex_obj->Image[0][0]->Height;
+   uint32_t bpp = _mesa_get_format_bytes(tex_obj->Image[0][0]->TexFormat);
+   *out_size = width * height * bpp;
+   
+   // Add mipmap levels if present
+   for (int level = 1; level < tex_obj->_MaxLevel; level++) {
+      if (tex_obj->Image[0][level]) {
+         uint32_t level_width = tex_obj->Image[0][level]->Width;
+         uint32_t level_height = tex_obj->Image[0][level]->Height;
+         if (level_width > 0 && level_height > 0) {
+            *out_size += level_width * level_height * bpp;
+         }
+      }
+   }
+
+   return true;
+#else
+   if (error_msg) snprintf(error_msg, error_msg_size, "Platform not supported");
+   return false;
+#endif
 }

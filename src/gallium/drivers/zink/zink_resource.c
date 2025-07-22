@@ -2050,17 +2050,16 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
 
    // Handle CUDA export binding - force export capabilities
    bool force_export = (bind & ZINK_BIND_CUDA_EXPORT) != 0;
-   if (bind & ZINK_BIND_DMABUF && !res->modifiers_count && !res->obj->is_buffer && screen->info.have_EXT_image_drm_format_modifier) {
-      res->modifiers_count = 1;
-      res->modifiers = malloc(res->modifiers_count * sizeof(uint64_t));
-      if (!res->modifiers) {
-         mesa_loge("ZINK: failed to allocate res->modifiers!");
-         return false;
-      }
 
-      mod = res->modifiers[0] = DRM_FORMAT_MOD_LINEAR;
-   }
-   struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, NULL, &res->linear, res->modifiers, res->modifiers_count, NULL, NULL, NULL);
+   struct winsys_handle whandle = {0};
+   whandle.type = ZINK_EXTERNAL_MEMORY_HANDLE;
+   whandle.handle = 0;
+   whandle.modifier = DRM_FORMAT_MOD_INVALID;
+   whandle.offset = 0;
+   whandle.stride = 0;
+   whandle.format = res->base.b.format;
+   
+   struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, &whandle, &res->linear, res->modifiers, res->modifiers_count, NULL, NULL, NULL);
    if (!new_obj) {
       debug_printf("new backing resource alloc failed!\n");
       res->base.b.bind &= ~bind;

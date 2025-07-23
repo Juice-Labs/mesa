@@ -793,9 +793,11 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
             idfmlci.pDrmFormatModifiers = modifiers;
             ici.pNext = &idfmlci;
          }
+         #if 0
          else if (ici.tiling == VK_IMAGE_TILING_OPTIMAL) {
             shared = false;
          }
+         #endif
       }
 
       if (linear)
@@ -2472,8 +2474,8 @@ zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
    }
 
    // Add CUDA export bind flag and recreate with export capabilities
-   unsigned bind = ZINK_BIND_CUDA_EXPORT | PIPE_BIND_SHARED | PIPE_BIND_LINEAR;
-   unsigned remove_bind = PIPE_BIND_RENDER_TARGET;
+   unsigned bind = ZINK_BIND_CUDA_EXPORT | PIPE_BIND_SHARED; // | PIPE_BIND_LINEAR;
+   unsigned remove_bind = 0; // PIPE_BIND_RENDER_TARGET;
    if (!add_resource_bind(ctx, res, bind, remove_bind)) {
       return false;
    }

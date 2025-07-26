@@ -3838,24 +3838,10 @@ zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_tar
    *out_semaphore_handle = (uint64_t)semaphore_handle;
    *out_semaphore = (uint64_t)semaphore;
    
-   // Calculate memory size - this is an approximation
-   // In practice, we'd need to get the actual memory requirements
-   uint32_t width = tex_obj->Image[0][0]->Width;
-   uint32_t height = tex_obj->Image[0][0]->Height;
-   uint32_t bpp = _mesa_get_format_bytes(tex_obj->Image[0][0]->TexFormat);
-   *out_size = width * height * bpp;
+   // Get the actual allocation size from the Vulkan resource object
+   struct zink_resource *zink_res = zink_resource(pipe_res);
+   *out_size = zink_res->obj->size;
    
-   // Add mipmap levels if present
-   for (int level = 1; level < tex_obj->_MaxLevel; level++) {
-      if (tex_obj->Image[0][level]) {
-         uint32_t level_width = tex_obj->Image[0][level]->Width;
-         uint32_t level_height = tex_obj->Image[0][level]->Height;
-         if (level_width > 0 && level_height > 0) {
-            *out_size += level_width * level_height * bpp;
-         }
-      }
-   }
-
    return true;
 #else
    if (error_msg) snprintf(error_msg, error_msg_size, "Platform not supported");

@@ -1410,6 +1410,32 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
    case GL_VIEWPORT_SWIZZLE_W_NV:
       v->value_enum = ctx->ViewportArray[0].SwizzleW;
       break;
+
+   /* GL_NVX_linked_gpu_multicast */
+   case GL_MAX_LGPU_GPUS_NVX:
+      {
+         /* Get max GPU count from zink if available */
+         struct pipe_screen *screen = ctx->pipe->screen;
+         
+         /* Check if we're using Zink driver and get GPU count */
+         extern uint32_t zink_misc_get_gpu_count(void);
+         extern bool zink_misc_init_gpu_enum(void* zink_screen);
+         
+         /* Try to get GPU count from Zink's enumeration */
+         uint32_t gpu_count = zink_misc_get_gpu_count();
+         
+         /* If not initialized and we have a screen, try to initialize */
+         if (gpu_count == 0 && screen) {
+            /* Attempt to initialize with the screen (assuming it's Zink) */
+            if (zink_misc_init_gpu_enum(screen)) {
+               gpu_count = zink_misc_get_gpu_count();
+            }
+         }
+         
+         /* Return GPU count, or 1 as fallback */
+         v->value_int = gpu_count > 0 ? gpu_count : 1;
+      }
+      break;
    }
 }
 

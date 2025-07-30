@@ -35,6 +35,15 @@
 #include "util/log.h"
 #include "util/ralloc.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
+// Wine/Juice logging support - similar to vkd3d and dxvk
+typedef int (*PFN_juice_log)(const char *);
+static PFN_juice_log juice_log_output = NULL;
+static int juice_log_initialized = 0;
+
 #ifdef ANDROID
 static inline android_LogPriority
 level_to_android(enum mesa_log_level l)
@@ -65,6 +74,28 @@ level_to_str(enum mesa_log_level l)
 }
 #endif
 
+static void
+init_juice_logging(void)
+{
+   if (juice_log_initialized)
+      return;
+      
+#if defined(_WIN32)
+   // Try to get juice logging from RemoteGPUVlk.dll
+   const char* juiceLib = "RemoteGPUVlk.dll";
+   HMODULE juicevlk = GetModuleHandleA(juiceLib);
+   if (juicevlk)
+      juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
+
+   if (!juice_log_output) {
+      MessageBoxA(NULL, "Juice logging is not available (RemoteGPUVlk.dll not loaded or __wine_dbg_output not found).", "Mesa Log Error", MB_OK | MB_ICONWARNING);
+   }
+   
+#endif
+   
+   juice_log_initialized = 1;
+}
+
 void
 mesa_log(enum mesa_log_level level, const char *tag, const char *format, ...)
 {
@@ -79,20 +110,40 @@ void
 mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
             va_list va)
 {
+   char buf[4096];  // Buffer for the complete log message
+   char msg[4096];  // Buffer for the formatted message part
+   
+   // Initialize juice logging if not already done
+   init_juice_logging();
+   
+   // If juice logging is not available, don't output anything
+   if (!juice_log_output)
+      return;
+   
+   // Format the message part first
+   vsnprintf(msg, sizeof(msg), format, va);
+   
+   // Create the complete log message with tag and level
 #ifdef ANDROID
-   __android_log_vprint(level_to_android(level), tag, format, va);
+   snprintf(buf, sizeof(buf), "%s: %s: %s", tag, 
+           level == MESA_LOG_ERROR ? "error" :
+           level == MESA_LOG_WARN ? "warning" :
+           level == MESA_LOG_INFO ? "info" : "debug", msg);
 #else
-#if !DETECT_OS_WINDOWS
-   flockfile(stderr);
+   snprintf(buf, sizeof(buf), "%s: %s: %s", tag, level_to_str(level), msg);
 #endif
-   fprintf(stderr, "%s: %s: ", tag, level_to_str(level));
-   vfprintf(stderr, format, va);
-   if (format[strlen(format) - 1] != '\n')
-      fprintf(stderr, "\n");
-#if !DETECT_OS_WINDOWS
-   funlockfile(stderr);
-#endif
-#endif
+   
+   // Ensure newline at end if not present
+   size_t len = strlen(buf);
+   if (len > 0 && buf[len - 1] != '\n') {
+      if (len < sizeof(buf) - 1) {
+         buf[len] = '\n';
+         buf[len + 1] = '\0';
+      }
+   }
+   
+   // Output through juice logging
+   juice_log_output(buf);
 }
 
 struct log_stream *

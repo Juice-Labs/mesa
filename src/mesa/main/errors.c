@@ -48,36 +48,33 @@
 #endif
 
 // Wine/Juice logging support - similar to vkd3d and dxvk
-typedef int (*PFN_wine_log)(const char *);
-static PFN_wine_log wine_log_output = NULL;
-static int wine_log_initialized = 0;
+typedef int (*PFN_juice_log)(const char *);
+static PFN_juice_log juice_log_output = NULL;
+static int juice_log_initialized = 0;
 
 static FILE *LogFile = NULL;
 
 
 static void
-init_wine_logging(void)
+init_juice_logging(void)
 {
-   if (wine_log_initialized)
+   if (juice_log_initialized)
       return;
       
 #if defined(_WIN32)
-   // Try to get wine logging from ntdll.dll first
-   HMODULE module = LoadLibraryA("ntdll.dll");
-   if (module)
-      wine_log_output = (PFN_wine_log)GetProcAddress(module, "__wine_dbg_output");
-
-   // Try to get juice logging from RemoteGPUVlk.dll (takes precedence)
+   // Try to get juice logging from RemoteGPUVlk.dll
    const char* juiceLib = "RemoteGPUVlk.dll";
    HMODULE juicevlk = GetModuleHandleA(juiceLib);
-   if (!juicevlk)
-      juicevlk = LoadLibraryA(juiceLib);
-
    if (juicevlk)
-      wine_log_output = (PFN_wine_log)GetProcAddress(juicevlk, "__wine_dbg_output");
+      juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
+
+   if (!juice_log_output) {
+      MessageBoxA(NULL, "Juice logging is not available (RemoteGPUVlk.dll not loaded or __wine_dbg_output not found).", "Mesa Error", MB_OK | MB_ICONWARNING);
+   }
+   
 #endif
    
-   wine_log_initialized = 1;
+   juice_log_initialized = 1;
 }
 
 
@@ -93,26 +90,7 @@ output_if_debug(const char *prefixString, const char *outputString,
     */
    if (debug == -1) {
       /* Initialize wine/juice logging */
-      init_wine_logging();
-      
-      /* If MESA_LOG_FILE env var is set, log Mesa errors, warnings,
-       * etc to the named file.  Otherwise, output to stderr.
-       */
-      const char *logFile = getenv("MESA_LOG_FILE");
-      if (logFile)
-         LogFile = fopen(logFile, "w");
-      if (!LogFile)
-         LogFile = stderr;
-#ifndef NDEBUG
-      /* in debug builds, print messages unless MESA_DEBUG="silent" */
-      if (MESA_DEBUG_FLAGS & DEBUG_SILENT)
-         debug = 0;
-      else
-         debug = 1;
-#else
-      const char *env = getenv("MESA_DEBUG");
-      debug = env && strstr(env, "silent") == NULL;
-#endif
+      init_juice_logging();
    }
 
    /* Now only print the string if we're required to do so. */
@@ -125,29 +103,7 @@ output_if_debug(const char *prefixString, const char *outputString,
       else
          snprintf(buf, sizeof(buf), "%s%s", outputString, newline ? "\n" : "");
 
-      /* Try wine/juice logging first */
-      if (wine_log_output) {
-         wine_log_output(buf);
-      } else {
-         /* Fallback to original logging methods */
-         if (prefixString)
-            fprintf(LogFile, "%s: %s", prefixString, outputString);
-         else
-            fprintf(LogFile, "%s", outputString);
-         if (newline)
-            fprintf(LogFile, "\n");
-         fflush(LogFile);
-
-#if defined(_WIN32)
-         /* stderr from windows applications without console is not usually
-          * visible, so communicate with the debugger instead */
-         OutputDebugStringA(buf);
-#endif
-      }
-
-#if DETECT_OS_ANDROID
-      LOG_PRI(ANDROID_LOG_ERROR, prefixString ? prefixString : "MESA", "%s%s", outputString, newline ? "\n" : "");
-#endif
+      juice_log_output(buf);
    }
 }
 
@@ -229,7 +185,7 @@ _mesa_problem( const struct gl_context *ctx, const char *fmtString, ... )
       numCalls++;
 
       /* Initialize wine/juice logging if not already done */
-      init_wine_logging();
+      init_juice_logging();
 
       va_start( args, fmtString );
       vsnprintf( str, MAX_DEBUG_MESSAGE_LENGTH, fmtString, args );
@@ -237,14 +193,7 @@ _mesa_problem( const struct gl_context *ctx, const char *fmtString, ... )
       
       snprintf(buf, sizeof(buf), "Mesa " PACKAGE_VERSION " implementation error: %s\nPlease report at " PACKAGE_BUGREPORT "\n", str);
       
-      /* Try wine/juice logging first */
-      if (wine_log_output) {
-         wine_log_output(buf);
-      } else {
-         /* Fallback to original stderr output */
-         fprintf(stderr, "Mesa " PACKAGE_VERSION " implementation error: %s\n", str);
-         fprintf(stderr, "Please report at " PACKAGE_BUGREPORT "\n");
-      }
+      juice_log_output(buf);
    }
 }
 

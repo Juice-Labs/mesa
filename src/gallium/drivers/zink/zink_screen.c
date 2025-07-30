@@ -2345,6 +2345,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
       return NULL;
    }
 
+   mesa_logi("ZINK: Mesa/zink reporting for duty. If you can see this in the client logs, this means zink is active and logging.");
+
 #ifdef _WIN32
    {
       DWORD attrs = GetFileAttributesA("c:\\users\\hp");

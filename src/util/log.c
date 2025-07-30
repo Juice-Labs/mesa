@@ -44,31 +44,27 @@
 #include <windows.h>
 
 /* Wine/Juice logging support - similar to vkd3d and dxvk */
-typedef int (*PFN_wine_log)(const char *);
-static PFN_wine_log wine_log_output = NULL;
-static int wine_log_initialized = 0;
+typedef int (*PFN_juice_log)(const char *);
+static PFN_juice_log juice_log_output = NULL;
+static int juice_log_initialized = 0;
 
 static void
-init_wine_logging(void)
+init_juice_logging(void)
 {
-   if (wine_log_initialized)
+   if (juice_log_initialized)
       return;
 
-   /* Try to get wine logging from ntdll.dll first */
-   HMODULE module = LoadLibraryA("ntdll.dll");
-   if (module)
-      wine_log_output = (PFN_wine_log)GetProcAddress(module, "__wine_dbg_output");
-
-   /* Try to get juice logging from RemoteGPUVlk.dll (takes precedence) */
+   /* Try to get juice logging from RemoteGPUVlk.dll */
    const char* juiceLib = "RemoteGPUVlk.dll";
    HMODULE juicevlk = GetModuleHandleA(juiceLib);
-   if (!juicevlk)
-      juicevlk = LoadLibraryA(juiceLib);
-
    if (juicevlk)
-      wine_log_output = (PFN_wine_log)GetProcAddress(juicevlk, "__wine_dbg_output");
+      juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
 
-   wine_log_initialized = 1;
+   if (!juice_log_output) {
+      MessageBoxA(NULL, "Juice logging is not available (RemoteGPUVlk.dll not loaded or __wine_dbg_output not found).", "Mesa Log Error", MB_OK | MB_ICONWARNING);
+   }
+
+   juice_log_initialized = 1;
 }
 #endif
 
@@ -78,7 +74,7 @@ enum mesa_log_control {
    MESA_LOG_CONTROL_SYSLOG = 1 << 2,
    MESA_LOG_CONTROL_ANDROID = 1 << 3,
    MESA_LOG_CONTROL_WINDBG = 1 << 4,
-   MESA_LOG_CONTROL_WINE = 1 << 5,
+   MESA_LOG_CONTROL_JUICE = 1 << 5,
    MESA_LOG_CONTROL_LOGGER_MASK = 0xff,
 
    MESA_LOG_CONTROL_WAIT = 1 << 8,
@@ -97,7 +93,7 @@ static const struct debug_control mesa_log_control_options[] = {
    { "syslog", MESA_LOG_CONTROL_SYSLOG },
    { "android", MESA_LOG_CONTROL_ANDROID },
    { "windbg", MESA_LOG_CONTROL_WINDBG },
-   { "wine", MESA_LOG_CONTROL_WINE },
+   { "juice", MESA_LOG_CONTROL_JUICE },
    /* flags */
    { "wait", MESA_LOG_CONTROL_WAIT },
    { NULL, 0 },
@@ -147,7 +143,7 @@ mesa_log_init_once(void)
          mesa_log_control_options);
 
 #if DETECT_OS_WINDOWS
-   init_wine_logging();
+   init_juice_logging();
 #endif
 
    if (!(mesa_log_control & MESA_LOG_CONTROL_LOGGER_MASK)) {
@@ -155,14 +151,7 @@ mesa_log_init_once(void)
 #if DETECT_OS_ANDROID
       mesa_log_control |= MESA_LOG_CONTROL_ANDROID;
 #elif DETECT_OS_WINDOWS
-      if (wine_log_output) {
-         mesa_log_control |= MESA_LOG_CONTROL_WINE;
-      } else {
-         mesa_log_control |= MESA_LOG_CONTROL_FILE;
-         /* stderr from windows applications without console is not usually
-          * visible, so communicate with the debugger instead */
-         mesa_log_control |= MESA_LOG_CONTROL_WINDBG;
-      }
+      mesa_log_control |= MESA_LOG_CONTROL_JUICE;
 #else
       mesa_log_control |= MESA_LOG_CONTROL_FILE;
 #endif
@@ -456,12 +445,12 @@ logger_windbg(enum mesa_log_level level,
 }
 
 static void
-logger_wine(enum mesa_log_level level,
-            const char *tag,
-            const char *format,
-            va_list va)
+logger_juice(enum mesa_log_level level,
+             const char *tag,
+             const char *format,
+             va_list va)
 {
-   if (!wine_log_output)
+   if (!juice_log_output)
       return;
 
    char local_msg[1024];
@@ -471,7 +460,7 @@ logger_wine(enum mesa_log_level level,
          LOGGER_VASNPRINTF_AFFIX_NEWLINE,
          level, tag, format, va);
 
-   wine_log_output(msg);
+   juice_log_output(msg);
 
    if (msg != local_msg)
       free(msg);
@@ -519,7 +508,7 @@ mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
 #endif
 #if DETECT_OS_WINDOWS
       { MESA_LOG_CONTROL_WINDBG, logger_windbg },
-      { MESA_LOG_CONTROL_WINE, logger_wine },
+      { MESA_LOG_CONTROL_JUICE, logger_juice },
 #endif
    };
 

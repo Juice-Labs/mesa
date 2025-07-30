@@ -1432,8 +1432,9 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
             }
          }
          
-         /* Return GPU count, or 1 as fallback */
-         v->value_int = gpu_count > 0 ? gpu_count : 1;
+         /* Return logical GPU count */
+         // Natively seems to return 1 if any GPUs are available, so we'll do the same
+         v->value_int = gpu_count > 0 ? 1 : 0;
       }
       break;
    }

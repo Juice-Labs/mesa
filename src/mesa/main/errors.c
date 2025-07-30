@@ -105,9 +105,8 @@ _mesa_problem( const struct gl_context *ctx, const char *fmtString, ... )
       va_start( args, fmtString );
       vsnprintf( str, MAX_DEBUG_MESSAGE_LENGTH, fmtString, args );
       va_end( args );
-      fprintf(stderr, "Mesa " PACKAGE_VERSION " implementation error: %s\n",
-              str);
-      fprintf(stderr, "Please report at " PACKAGE_BUGREPORT "\n");
+      mesa_loge("Mesa " PACKAGE_VERSION " implementation error: %s\n"
+                "Please report at " PACKAGE_BUGREPORT, str);
    }
 }
 

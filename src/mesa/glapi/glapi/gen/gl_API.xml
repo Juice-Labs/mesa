@@ -10748,6 +10748,10 @@
     <enum name="GPU_MEMORY_INFO_EVICTED_MEMORY_NVX"           value="0x904B" />
 </category>
 
+<category name="GL_NVX_linked_gpu_multicast">
+    <enum name="MAX_LGPU_GPUS_NVX"                            value="0x92BA" />
+</category>
+
 <category name="GL_EXT_debug_label" number="439">
   <function name="LabelObjectEXT" es1="1.1" es2="2.0">
     <param name="type" type="GLenum"/>

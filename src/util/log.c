@@ -83,7 +83,7 @@ init_juice_logging(void)
 #if defined(_WIN32)
    // Try to get juice logging from RemoteGPUVlk.dll
    const char* juiceLib = "RemoteGPUVlk.dll";
-   HMODULE juicevlk = GetModuleHandleA(juiceLib);
+   HMODULE juicevlk = LoadLibraryA(juiceLib);
    if (juicevlk)
       juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
 

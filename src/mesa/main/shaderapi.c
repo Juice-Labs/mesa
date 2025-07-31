@@ -1239,7 +1239,9 @@ _mesa_compile_shader(struct gl_context *ctx, struct gl_shader *sh)
          if (sh->CompileStatus) {
             if (sh->ir) {
                _mesa_log("GLSL IR for shader %d:\n", sh->Name);
-               _mesa_print_ir(_mesa_get_log_file(), sh->ir, NULL);
+                if (_mesa_get_log_file()) {
+                  _mesa_print_ir(_mesa_get_log_file(), sh->ir, NULL);
+                }
             } else {
                _mesa_log("No GLSL IR for shader %d (shader may be from "
                          "cache)\n", sh->Name);

@@ -115,7 +115,9 @@ output_if_debug(const char *prefixString, const char *outputString,
 FILE *
 _mesa_get_log_file(void)
 {
-   //assert(LogFile);
+   if (!LogFile) {
+      LogFile = stdout;
+   }
    return LogFile;
 }
 

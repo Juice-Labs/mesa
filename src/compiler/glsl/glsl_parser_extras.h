@@ -225,7 +225,7 @@ struct _mesa_glsl_parse_state {
 
    bool has_explicit_attrib_stream() const
    {
-      return ARB_gpu_shader5_enable || is_version(400, 0);
+      return ARB_gpu_shader5_enable || NV_gpu_shader5_enable || is_version(400, 0);
    }
 
    bool has_explicit_attrib_location() const
@@ -369,7 +369,7 @@ struct _mesa_glsl_parse_state {
 
    bool has_implicit_int_to_uint_conversion() const
    {
-      return ARB_gpu_shader5_enable ||
+      return ARB_gpu_shader5_enable || NV_gpu_shader5_enable ||
              MESA_shader_integer_functions_enable ||
              EXT_shader_implicit_conversions_enable ||
              is_version(400, 0);
@@ -949,6 +949,8 @@ struct _mesa_glsl_parse_state {
    bool NV_compute_shader_derivatives_warn;
    bool NV_fragment_shader_interlock_enable;
    bool NV_fragment_shader_interlock_warn;
+   bool NV_gpu_shader5_enable;
+   bool NV_gpu_shader5_warn;
    bool NV_image_formats_enable;
    bool NV_image_formats_warn;
    bool NV_shader_atomic_float_enable;

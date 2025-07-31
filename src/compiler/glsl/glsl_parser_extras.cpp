@@ -859,6 +859,7 @@ static const _mesa_glsl_extension _mesa_glsl_supported_extensions[] = {
    EXT(MESA_shader_integer_functions),
    EXT(NV_compute_shader_derivatives),
    EXT(NV_fragment_shader_interlock),
+   EXT(NV_gpu_shader5),
    EXT(NV_image_formats),
    EXT(NV_shader_atomic_float),
    EXT(NV_shader_atomic_int64),

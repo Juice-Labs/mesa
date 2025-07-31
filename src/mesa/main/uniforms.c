@@ -2111,3 +2111,203 @@ _mesa_ProgramUniform4ui64vARB(GLuint program, GLint location,  GLsizei count, co
                                       "glProgramUniform4ui64vARB");
    _mesa_uniform(location, count, value, ctx, shProg, GLSL_TYPE_UINT64, 4);
 }
+
+
+/** OpenGL NV_gpu_shader5 */
+void GLAPIENTRY
+_mesa_Uniform1i64NV(GLint location, GLint64 v0)
+{
+   _mesa_Uniform1i64ARB(location, v0);
+}
+
+void GLAPIENTRY
+_mesa_Uniform2i64NV(GLint location, GLint64 v0, GLint64 v1)
+{
+   _mesa_Uniform2i64ARB(location, v0, v1);
+}
+
+void GLAPIENTRY
+_mesa_Uniform3i64NV(GLint location, GLint64 v0, GLint64 v1, GLint64 v2)
+{
+   _mesa_Uniform3i64ARB(location, v0, v1, v2);
+}
+
+void GLAPIENTRY
+_mesa_Uniform4i64NV(GLint location, GLint64 v0, GLint64 v1, GLint64 v2, GLint64 v3)
+{
+   _mesa_Uniform4i64ARB(location, v0, v1, v2, v3);
+}
+
+void GLAPIENTRY
+_mesa_Uniform1i64vNV(GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_Uniform1i64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_Uniform2i64vNV(GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_Uniform2i64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_Uniform3i64vNV(GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_Uniform3i64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_Uniform4i64vNV(GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_Uniform4i64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_Uniform1ui64NV(GLint location, GLuint64 v0)
+{
+   _mesa_Uniform1ui64ARB(location, v0);
+}
+
+void GLAPIENTRY
+_mesa_Uniform2ui64NV(GLint location, GLuint64 v0, GLuint64 v1)
+{
+   _mesa_Uniform2ui64ARB(location, v0, v1);
+}
+
+void GLAPIENTRY
+_mesa_Uniform3ui64NV(GLint location, GLuint64 v0, GLuint64 v1, GLuint64 v2)
+{
+   _mesa_Uniform3ui64ARB(location, v0, v1, v2);
+}
+
+void GLAPIENTRY
+_mesa_Uniform4ui64NV(GLint location, GLuint64 v0, GLuint64 v1, GLuint64 v2, GLuint64 v3)
+{
+   _mesa_Uniform4ui64ARB(location, v0, v1, v2, v3);
+}
+
+void GLAPIENTRY
+_mesa_Uniform1ui64vNV(GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_Uniform1ui64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_Uniform2ui64vNV(GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_Uniform2ui64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_Uniform3ui64vNV(GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_Uniform3ui64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_Uniform4ui64vNV(GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_Uniform4ui64vARB(location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_GetUniformi64vNV(GLuint program, GLint location, GLint64 *params)
+{
+   _mesa_GetUniformi64vARB(program, location, params);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform1i64NV(GLuint program, GLint location, GLint64 v0)
+{
+   _mesa_ProgramUniform1i64ARB(program, location, v0);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform2i64NV(GLuint program, GLint location, GLint64 v0, GLint64 v1)
+{
+   _mesa_ProgramUniform2i64ARB(program, location, v0, v1);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform3i64NV(GLuint program, GLint location, GLint64 v0, GLint64 v1, GLint64 v2)
+{
+   _mesa_ProgramUniform3i64ARB(program, location, v0, v1, v2);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform4i64NV(GLuint program, GLint location, GLint64 v0, GLint64 v1, GLint64 v2, GLint64 v3)
+{
+   _mesa_ProgramUniform4i64ARB(program, location, v0, v1, v2, v3);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform1i64vNV(GLuint program, GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_ProgramUniform1i64vARB(program, location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform2i64vNV(GLuint program, GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_ProgramUniform2i64vARB(program, location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform3i64vNV(GLuint program, GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_ProgramUniform3i64vARB(program, location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform4i64vNV(GLuint program, GLint location, GLsizei count, const GLint64 *value)
+{
+   _mesa_ProgramUniform4i64vARB(program, location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform1ui64NV(GLuint program, GLint location, GLuint64 v0)
+{
+   _mesa_ProgramUniform1ui64ARB(program, location, v0);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform2ui64NV(GLuint program, GLint location, GLuint64 v0, GLuint64 v1)
+{
+   _mesa_ProgramUniform2ui64ARB(program, location, v0, v1);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform3ui64NV(GLuint program, GLint location, GLuint64 v0, GLuint64 v1, GLuint64 v2)
+{
+   _mesa_ProgramUniform3ui64ARB(program, location, v0, v1, v2);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform4ui64NV(GLuint program, GLint location, GLuint64 v0, GLuint64 v1, GLuint64 v2, GLuint64 v3)
+{
+   _mesa_ProgramUniform4ui64ARB(program, location, v0, v1, v2, v3);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform1ui64vNV(GLuint program, GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_ProgramUniform1ui64vARB(program, location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform2ui64vNV(GLuint program, GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_ProgramUniform2ui64vARB(program, location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform3ui64vNV(GLuint program, GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_ProgramUniform3ui64vARB(program, location, count, value);
+}
+
+void GLAPIENTRY
+_mesa_ProgramUniform4ui64vNV(GLuint program, GLint location, GLsizei count, const GLuint64 *value)
+{
+   _mesa_ProgramUniform4ui64vARB(program, location, count, value);
+}

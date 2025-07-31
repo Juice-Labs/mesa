@@ -268,6 +268,7 @@ struct gl_extensions
    GLboolean NV_primitive_restart;
    GLboolean NV_shader_atomic_float;
    GLboolean NV_shader_atomic_int64;
+   GLboolean NV_gpu_shader5;
    GLboolean NV_texture_barrier;
    GLboolean NV_texture_env_combine4;
    GLboolean NV_texture_rectangle;

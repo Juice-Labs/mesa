@@ -1989,6 +1989,26 @@ glsl_type::can_implicitly_convert_to(const glsl_type *desired,
          return true;
    }
 
+   /* GL_NV_gpu_shader5: implicit conversions follow "little->big and int->uint->float" pattern */
+   if ((!state || state->NV_gpu_shader5_enable) && desired->base_type == GLSL_TYPE_FLOAT16) {
+      /* Only smaller types can be implicitly promoted to float16 */
+      if (this->base_type == GLSL_TYPE_INT8)
+         return true;
+      if (this->base_type == GLSL_TYPE_UINT8)
+         return true;
+      if (this->base_type == GLSL_TYPE_INT16)
+         return true;
+      if (this->base_type == GLSL_TYPE_UINT16)
+         return true;
+      /* float->float16 is NOT allowed (big->little) */
+   }
+
+   /* GL_NV_gpu_shader5: float16 to float conversion (little->big) */
+   if ((!state || state->NV_gpu_shader5_enable) && this->base_type == GLSL_TYPE_FLOAT16) {
+      if (desired->base_type == GLSL_TYPE_FLOAT)
+         return true;
+   }
+
    return false;
 }
 

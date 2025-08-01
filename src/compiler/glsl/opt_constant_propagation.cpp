@@ -226,6 +226,12 @@ ir_constant_propagation_visitor::constant_propagation(ir_rvalue **rvalue) {
       case GLSL_TYPE_UINT16:
 	 data.u16[i] = found->constant->value.u16[rhs_channel];
 	 break;
+      case GLSL_TYPE_INT8:
+	 data.i8[i] = found->constant->value.i8[rhs_channel];
+	 break;
+      case GLSL_TYPE_UINT8:
+	 data.u8[i] = found->constant->value.u8[rhs_channel];
+	 break;
       case GLSL_TYPE_BOOL:
 	 data.b[i] = found->constant->value.b[rhs_channel];
 	 break;

@@ -3706,6 +3706,7 @@ zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
 
    // Check if already exportable
    if (res->obj && res->obj->exportable) {
+      out_handle->type = WINSYS_HANDLE_TYPE_FD;
       // Already exportable, just get the handle
       return zink_resource_get_handle(pscreen, pctx, pres, out_handle, 0);
    }

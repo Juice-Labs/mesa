@@ -95,15 +95,38 @@ output_if_debug(const char *prefixString, const char *outputString,
 
    /* Now only print the string if we're required to do so. */
    if (debug) {
-      char buf[MAX_DEBUG_MESSAGE_LENGTH];
-      
-      /* Format the message */
-      if (prefixString)
-         snprintf(buf, sizeof(buf), "%s: %s%s", prefixString, outputString, newline ? "\n" : "");
-      else
-         snprintf(buf, sizeof(buf), "%s%s", outputString, newline ? "\n" : "");
+      size_t outputLen = strlen(outputString);
+      size_t prefixLen = prefixString ? strlen(prefixString) : 0;
+      size_t totalLen = outputLen + prefixLen + (prefixString ? 2 : 0) + (newline ? 1 : 0) + 1; // +2 for ": ", +1 for null terminator
 
-      juice_log_output(buf);
+      char buf[MAX_DEBUG_MESSAGE_LENGTH];
+
+      bool allocedBuf = false;
+      char* useBuf = buf;
+      
+      if (totalLen >= MAX_DEBUG_MESSAGE_LENGTH) {
+         /* Dynamically allocate for large messages (e.g., shader source) */
+         char* heapBuf = malloc(totalLen);
+
+         if (heapBuf) {
+            useBuf = heapBuf;
+            allocedBuf = true;
+         }
+         else {
+            totalLen = MAX_DEBUG_MESSAGE_LENGTH - 1;
+         }
+      }
+
+      if (prefixString)
+         snprintf(useBuf, totalLen, "%s: %s%s", prefixString, outputString, newline ? "\n" : "");
+      else
+         snprintf(useBuf, totalLen, "%s%s", outputString, newline ? "\n" : "");
+
+      juice_log_output(useBuf);
+
+      if (allocedBuf) {
+         free(useBuf);
+      }
    }
 }
 

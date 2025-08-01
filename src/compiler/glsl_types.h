@@ -768,6 +768,14 @@ public:
    }
 
    /**
+    * Query whether or not a type is an 8-bit integer.
+    */
+   bool is_integer_8() const
+   {
+      return base_type == GLSL_TYPE_UINT8 || base_type == GLSL_TYPE_INT8;
+   }
+
+   /**
     * Query whether or not a type is a 16-bit integer.
     */
    bool is_integer_16() const
@@ -797,6 +805,14 @@ public:
    bool is_integer_32_64() const
    {
       return is_integer_32() || is_integer_64();
+   }
+
+   /**
+    * Query whether or not a type is an 8-bit, 16-bit or 32-bit integer
+    */
+   bool is_integer_8_16_32() const
+   {
+      return is_integer_8() || is_integer_16() || is_integer_32();
    }
 
    /**
@@ -889,6 +905,20 @@ public:
    {
       return base_type == GLSL_TYPE_UINT ||
              base_type == GLSL_TYPE_UINT16;
+   }
+
+   bool is_int_8_16_32() const
+   {
+      return base_type == GLSL_TYPE_INT8 ||
+             base_type == GLSL_TYPE_INT16 ||
+             base_type == GLSL_TYPE_INT;
+   }
+
+   bool is_uint_8_16_32() const
+   {
+      return base_type == GLSL_TYPE_UINT8 ||
+             base_type == GLSL_TYPE_UINT16 ||
+             base_type == GLSL_TYPE_UINT;
    }
 
    /**

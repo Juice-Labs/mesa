@@ -604,6 +604,12 @@ glsl_type_is_64bit(const glsl_type *t)
 }
 
 static inline bool
+glsl_type_is_integer_8(const glsl_type *t)
+{
+   return t->base_type == GLSL_TYPE_UINT8 || t->base_type == GLSL_TYPE_INT8;
+}
+
+static inline bool
 glsl_type_is_integer_16(const glsl_type *t)
 {
    return t->base_type == GLSL_TYPE_UINT16 || t->base_type == GLSL_TYPE_INT16;
@@ -637,6 +643,12 @@ static inline bool
 glsl_type_is_integer_16_32_64(const glsl_type *t)
 {
    return glsl_type_is_integer_16(t) || glsl_type_is_integer_32(t) || glsl_type_is_integer_64(t);
+}
+
+static inline bool
+glsl_type_is_integer_8_16_32(const glsl_type *t)
+{
+   return glsl_type_is_integer_8(t) || glsl_type_is_integer_16(t) || glsl_type_is_integer_32(t);
 }
 
 static inline bool
@@ -711,6 +723,22 @@ glsl_type_is_uint_16_32(const glsl_type *t)
 {
    return t->base_type == GLSL_TYPE_UINT ||
           t->base_type == GLSL_TYPE_UINT16;
+}
+
+static inline bool
+glsl_type_is_int_8_16_32(const glsl_type *t)
+{
+   return t->base_type == GLSL_TYPE_INT8 ||
+          t->base_type == GLSL_TYPE_INT16 ||
+          t->base_type == GLSL_TYPE_INT;
+}
+
+static inline bool
+glsl_type_is_uint_8_16_32(const glsl_type *t)
+{
+   return t->base_type == GLSL_TYPE_UINT8 ||
+          t->base_type == GLSL_TYPE_UINT16 ||
+          t->base_type == GLSL_TYPE_UINT;
 }
 
 static inline bool

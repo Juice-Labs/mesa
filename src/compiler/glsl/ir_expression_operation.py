@@ -84,15 +84,22 @@ uint_type = type("unsigned", "u", "GLSL_TYPE_UINT")
 int_type = type("int", "i", "GLSL_TYPE_INT")
 uint64_type = type("uint64_t", "u64", "GLSL_TYPE_UINT64")
 int64_type = type("int64_t", "i64", "GLSL_TYPE_INT64")
+uint16_type = type("uint16_t", "u16", "GLSL_TYPE_UINT16")
+int16_type = type("int16_t", "i16", "GLSL_TYPE_INT16")
+uint8_type = type("uint8_t", "u8", "GLSL_TYPE_UINT8")
+int8_type = type("int8_t", "i8", "GLSL_TYPE_INT8")
 float_type = type("float", "f", "GLSL_TYPE_FLOAT")
+float16_type = type("float16_t", "f16", "GLSL_TYPE_FLOAT16")
 double_type = type("double", "d", "GLSL_TYPE_DOUBLE")
 bool_type = type("bool", "b", "GLSL_TYPE_BOOL")
 
-all_types = (uint_type, int_type, float_type, double_type, uint64_type, int64_type, bool_type)
-numeric_types = (uint_type, int_type, float_type, double_type, uint64_type, int64_type)
-signed_numeric_types = (int_type, float_type, double_type, int64_type)
-integer_types = (uint_type, int_type, uint64_type, int64_type)
-real_types = (float_type, double_type)
+all_types = (uint_type, int_type, float_type, double_type, uint64_type, int64_type, uint16_type, int16_type, uint8_type, int8_type, float16_type, bool_type)
+numeric_types = (uint_type, int_type, float_type, double_type, uint64_type, int64_type, uint16_type, int16_type, uint8_type, int8_type, float16_type)
+signed_numeric_types = (int_type, float_type, double_type, int64_type, int16_type, int8_type, float16_type)
+integer_types = (uint_type, int_type, uint64_type, int64_type, uint16_type, int16_type, uint8_type, int8_type)
+signed_integer_types = (int_type, int64_type, int16_type, int8_type)
+unsigned_integer_types = (uint_type, uint64_type, uint16_type, uint8_type)
+real_types = (float_type, double_type, float16_type)
 
 # This template is for operations that can have operands of a several
 # different types, and each type may or may not has a different C expression.
@@ -446,12 +453,12 @@ class operation(object):
 ir_expression_operation = [
    operation("bit_not", 1, printable_name="~", source_types=integer_types, c_expression="~ {src0}"),
    operation("logic_not", 1, printable_name="!", source_types=(bool_type,), c_expression="!{src0}"),
-   operation("neg", 1, source_types=numeric_types, c_expression={'u': "-((int) {src0})", 'u64': "-((int64_t) {src0})", 'default': "-{src0}"}),
-   operation("abs", 1, source_types=signed_numeric_types, c_expression={'i': "{src0} < 0 ? -{src0} : {src0}", 'f': "fabsf({src0})", 'd': "fabs({src0})", 'i64': "{src0} < 0 ? -{src0} : {src0}"}),
-   operation("sign", 1, source_types=signed_numeric_types, c_expression={'i': "({src0} > 0) - ({src0} < 0)", 'f': "float(({src0} > 0.0F) - ({src0} < 0.0F))", 'd': "double(({src0} > 0.0) - ({src0} < 0.0))", 'i64': "({src0} > 0) - ({src0} < 0)"}),
-   operation("rcp", 1, source_types=real_types, c_expression={'f': "1.0F / {src0}", 'd': "1.0 / {src0}"}),
-   operation("rsq", 1, source_types=real_types, c_expression={'f': "1.0F / sqrtf({src0})", 'd': "1.0 / sqrt({src0})"}),
-   operation("sqrt", 1, source_types=real_types, c_expression={'f': "sqrtf({src0})", 'd': "sqrt({src0})"}),
+   operation("neg", 1, source_types=numeric_types, c_expression={'u8': "-((int8_t) {src0})", 'u16': "-((int16_t) {src0})", 'u': "-((int) {src0})", 'u64': "-((int64_t) {src0})", 'f16': "_mesa_float_to_half(-_mesa_half_to_float({src0}))", 'default': "-{src0}"}),
+   operation("abs", 1, source_types=signed_numeric_types, c_expression={'i8': "{src0} < 0 ? -{src0} : {src0}", 'i16': "{src0} < 0 ? -{src0} : {src0}", 'i': "{src0} < 0 ? -{src0} : {src0}", 'f': "fabsf({src0})", 'd': "fabs({src0})", 'f16': "_mesa_float_to_half(fabsf(_mesa_half_to_float({src0})))", 'i64': "{src0} < 0 ? -{src0} : {src0}"}),
+   operation("sign", 1, source_types=signed_numeric_types, c_expression={'i8': "({src0} > 0) - ({src0} < 0)", 'i16': "({src0} > 0) - ({src0} < 0)", 'i': "({src0} > 0) - ({src0} < 0)", 'f': "float(({src0} > 0.0F) - ({src0} < 0.0F))", 'd': "double(({src0} > 0.0) - ({src0} < 0.0))", 'f16': "_mesa_float_to_half(float(((_mesa_half_to_float({src0}) > 0.0F) - (_mesa_half_to_float({src0}) < 0.0F))))", 'i64': "({src0} > 0) - ({src0} < 0)"}),
+   operation("rcp", 1, source_types=real_types, c_expression={'f': "1.0F / {src0}", 'd': "1.0 / {src0}", 'f16': "_mesa_float_to_half(1.0F / _mesa_half_to_float({src0}))"}),
+   operation("rsq", 1, source_types=real_types, c_expression={'f': "1.0F / sqrtf({src0})", 'd': "1.0 / sqrt({src0})", 'f16': "_mesa_float_to_half(1.0F / sqrtf(_mesa_half_to_float({src0})))"}),
+   operation("sqrt", 1, source_types=real_types, c_expression={'f': "sqrtf({src0})", 'd': "sqrt({src0})", 'f16': "_mesa_float_to_half(sqrtf(_mesa_half_to_float({src0})))"}),
    operation("exp", 1, source_types=(float_type,), c_expression="expf({src0})"),         # Log base e on gentype
    operation("log", 1, source_types=(float_type,), c_expression="logf({src0})"),         # Natural log on gentype
    operation("exp2", 1, source_types=(float_type,), c_expression="exp2f({src0})"),
@@ -468,7 +475,7 @@ ir_expression_operation = [
    # Boolean-to-float conversion
    operation("b2f", 1, source_types=(bool_type,), dest_type=float_type, c_expression="{src0} ? 1.0F : 0.0F"),
    # Boolean-to-float16 conversion
-   operation("b2f16", 1, source_types=(bool_type,), dest_type=float_type, c_expression="{src0} ? 1.0F : 0.0F"),
+   operation("b2f16", 1, source_types=(bool_type,), dest_type=float16_type, c_expression="{src0} ? _mesa_float_to_half(1.0F) : _mesa_float_to_half(0.0F)"),
    # int-to-boolean conversion
    operation("i2b", 1, source_types=(uint_type, int_type), dest_type=bool_type, c_expression="{src0} ? true : false"),
    # Boolean-to-int conversion
@@ -476,34 +483,30 @@ ir_expression_operation = [
    # Unsigned-to-float conversion.
    operation("u2f", 1, source_types=(uint_type,), dest_type=float_type, c_expression="(float) {src0}"),
    # Integer-to-unsigned conversion.
-   operation("i2u", 1, source_types=(int_type,), dest_type=uint_type, c_expression="{src0}"),
+   operation("i2u", 1, source_types=(int_type, int8_type, int16_type), dest_type=uint_type, c_expression="{src0}"),
    # Unsigned-to-integer conversion.
-   operation("u2i", 1, source_types=(uint_type,), dest_type=int_type, c_expression="{src0}"),
+   operation("u2i", 1, source_types=(uint_type, uint8_type, uint16_type), dest_type=int_type, c_expression="{src0}"),
    # Double-to-float conversion.
    operation("d2f", 1, source_types=(double_type,), dest_type=float_type, c_expression="{src0}"),
    # Float-to-double conversion.
    operation("f2d", 1, source_types=(float_type,), dest_type=double_type, c_expression="{src0}"),
-   # Half-float conversions. These all operate on and return float types,
-   # since the framework expands half to full float before calling in.  We
-   # still have to handle them here so that we can constant propagate through
-   # them, but they are no-ops.
-   operation("f2f16", 1, source_types=(float_type,), dest_type=float_type, c_expression="{src0}"),
+   # Half-float conversions for GL_NV_gpu_shader5
+   operation("f2f16", 1, source_types=(float_type,), dest_type=float16_type, c_expression="_mesa_float_to_half({src0})"),
    operation("f2fmp", 1, source_types=(float_type,), dest_type=float_type, c_expression="{src0}"),
-   operation("f162f", 1, source_types=(float_type,), dest_type=float_type, c_expression="{src0}"),
+   operation("f162f", 1, source_types=(float16_type, float_type), dest_type=float_type, c_expression={'f16': "_mesa_half_to_float({src0})", 'f': "{src0}"}),
    operation("u2f16", 1, source_types=(uint_type,), dest_type=float_type, c_expression="{src0}"),
    operation("f162u", 1, source_types=(float_type,), dest_type=uint_type, c_expression="{src0}"),
    operation("i2f16", 1, source_types=(int_type,), dest_type=float_type, c_expression="{src0}"),
    operation("f162i", 1, source_types=(float_type,), dest_type=int_type, c_expression="{src0}"),
    operation("d2f16", 1, source_types=(double_type,), dest_type=float_type, c_expression="{src0}"),
-   operation("f162d", 1, source_types=(float_type,), dest_type=double_type, c_expression="{src0}"),
    operation("u642f16", 1, source_types=(uint64_type,), dest_type=float_type, c_expression="{src0}"),
    operation("f162u64", 1, source_types=(float_type,), dest_type=uint64_type, c_expression="{src0}"),
    operation("i642f16", 1, source_types=(int64_type,), dest_type=float_type, c_expression="{src0}"),
    operation("f162i64", 1, source_types=(float_type,), dest_type=int64_type, c_expression="{src0}"),
-   # int16<->int32 conversion.
-   operation("i2i", 1, source_types=(int_type,), dest_type=int_type, c_expression="{src0}"),
+   # int8<->int16<->int32<->int64 conversion.
+   operation("i2i", 1, source_types=signed_integer_types, c_expression="{src0}"),
    operation("i2imp", 1, source_types=(int_type,), dest_type=int_type, c_expression="{src0}"),
-   operation("u2u", 1, source_types=(uint_type,), dest_type=uint_type, c_expression="{src0}"),
+   operation("u2u", 1, source_types=unsigned_integer_types, c_expression="{src0}"),
    operation("u2ump", 1, source_types=(uint_type,), dest_type=uint_type, c_expression="{src0}"),
    # Double-to-integer conversion.
    operation("d2i", 1, source_types=(double_type,), dest_type=int_type, c_expression="{src0}"),
@@ -556,13 +559,58 @@ ir_expression_operation = [
    operation("u642i64", 1, source_types=(uint64_type,), dest_type=int64_type, c_expression="{src0}"),
    operation("i642u64", 1, source_types=(int64_type,), dest_type=uint64_type, c_expression="{src0}"),
 
+   # NV_gpu_shader5 8-bit and 16-bit type conversions
+   # Note: These operations must handle implicit conversions per NV_gpu_shader5 spec:
+   # int8_t/int16_t can be implicitly converted to int, uint8_t/uint16_t to uint, etc.
+   
+   # 8-bit to float conversions (may receive int due to int8_t→int implicit conversion)
+   operation("i82f", 1, source_types=(int8_type, int_type), dest_type=float_type, c_expression="(float) {src0}"),
+   operation("u82f", 1, source_types=(uint8_type, uint_type), dest_type=float_type, c_expression="(float) {src0}"),
+   # 16-bit to float conversions (may receive int due to int16_t→int implicit conversion)
+   operation("i162f", 1, source_types=(int16_type, int_type), dest_type=float_type, c_expression="(float) {src0}"),
+   operation("u162f", 1, source_types=(uint16_type, uint_type), dest_type=float_type, c_expression="(float) {src0}"),
+   # 8-bit to uint conversions (may receive int/uint due to implicit conversions)
+   operation("i82u", 1, source_types=(int8_type, int_type), dest_type=uint_type, c_expression="(unsigned) {src0}"),
+   operation("u82u", 1, source_types=(uint8_type, uint_type), dest_type=uint_type, c_expression="(unsigned) {src0}"),
+   # 16-bit to uint conversions (may receive int/uint due to implicit conversions)
+   operation("i162u", 1, source_types=(int16_type, int_type), dest_type=uint_type, c_expression="(unsigned) {src0}"),
+   operation("u162u", 1, source_types=(uint16_type, uint_type), dest_type=uint_type, c_expression="(unsigned) {src0}"),
+   # 8-bit to double conversions (may receive int/uint due to implicit conversions)
+   operation("i82d", 1, source_types=(int8_type, int_type), dest_type=double_type, c_expression="(double) {src0}"),
+   operation("u82d", 1, source_types=(uint8_type, uint_type), dest_type=double_type, c_expression="(double) {src0}"),
+   # 16-bit to double conversions (may receive int/uint due to implicit conversions)
+   operation("i162d", 1, source_types=(int16_type, int_type), dest_type=double_type, c_expression="(double) {src0}"),
+   operation("u162d", 1, source_types=(uint16_type, uint_type), dest_type=double_type, c_expression="(double) {src0}"),
+   # float16 to double conversion (may receive float due to float16_t→float implicit conversion)
+   operation("f162d", 1, source_types=(float16_type, float_type), dest_type=double_type, c_expression={'f16': "(double) _mesa_half_to_float({src0})", 'f': "(double) {src0}"}),
+   # 8-bit to uint64 conversions (may receive int/uint due to implicit conversions)
+   operation("i82u64", 1, source_types=(int8_type, int_type), dest_type=uint64_type, c_expression="(uint64_t) {src0}"),
+   operation("u82u64", 1, source_types=(uint8_type, uint_type), dest_type=uint64_type, c_expression="(uint64_t) {src0}"),
+   # 16-bit to uint64 conversions (may receive int/uint due to implicit conversions)
+   operation("i162u64", 1, source_types=(int16_type, int_type), dest_type=uint64_type, c_expression="(uint64_t) {src0}"),
+   operation("u162u64", 1, source_types=(uint16_type, uint_type), dest_type=uint64_type, c_expression="(uint64_t) {src0}"),
+   # 8-bit to int64 conversions (may receive int due to int8_t→int implicit conversion)
+   operation("i82i64", 1, source_types=(int8_type, int_type), dest_type=int64_type, c_expression="(int64_t) {src0}"),
+   # 16-bit to int64 conversions (may receive int due to int16_t→int implicit conversion)
+   operation("i162i64", 1, source_types=(int16_type, int_type), dest_type=int64_type, c_expression="(int64_t) {src0}"),
+   # 8-bit to int conversions (may receive int due to int8_t→int implicit conversion)
+   operation("i82i", 1, source_types=(int8_type, int_type), dest_type=int_type, c_expression="(int) {src0}"),
+   # 16-bit to int conversions (may receive int due to int16_t→int implicit conversion)
+   operation("i162i", 1, source_types=(int16_type, int_type), dest_type=int_type, c_expression="(int) {src0}"),
+   
+   # 8-bit to float16 conversions (may receive int/uint due to implicit conversions)
+   operation("i82f16", 1, source_types=(int8_type, int_type), dest_type=float16_type, c_expression="_mesa_float_to_half((float) {src0})"),
+   operation("u82f16", 1, source_types=(uint8_type, uint_type), dest_type=float16_type, c_expression="_mesa_float_to_half((float) {src0})"),
+   # 16-bit to float16 conversions (may receive int/uint due to implicit conversions)
+   operation("i162f16", 1, source_types=(int16_type, int_type), dest_type=float16_type, c_expression="_mesa_float_to_half((float) {src0})"),
+   operation("u162f16", 1, source_types=(uint16_type, uint_type), dest_type=float16_type, c_expression="_mesa_float_to_half((float) {src0})"),
 
    # Unary floating-point rounding operations.
-   operation("trunc", 1, source_types=real_types, c_expression={'f': "truncf({src0})", 'd': "trunc({src0})"}),
-   operation("ceil", 1, source_types=real_types, c_expression={'f': "ceilf({src0})", 'd': "ceil({src0})"}),
-   operation("floor", 1, source_types=real_types, c_expression={'f': "floorf({src0})", 'd': "floor({src0})"}),
-   operation("fract", 1, source_types=real_types, c_expression={'f': "{src0} - floorf({src0})", 'd': "{src0} - floor({src0})"}),
-   operation("round_even", 1, source_types=real_types, c_expression={'f': "_mesa_roundevenf({src0})", 'd': "_mesa_roundeven({src0})"}),
+   operation("trunc", 1, source_types=real_types, c_expression={'f': "truncf({src0})", 'd': "trunc({src0})", 'f16': "_mesa_float_to_half(truncf(_mesa_half_to_float({src0})))"}),
+   operation("ceil", 1, source_types=real_types, c_expression={'f': "ceilf({src0})", 'd': "ceil({src0})", 'f16': "_mesa_float_to_half(ceilf(_mesa_half_to_float({src0})))"}),
+   operation("floor", 1, source_types=real_types, c_expression={'f': "floorf({src0})", 'd': "floor({src0})", 'f16': "_mesa_float_to_half(floorf(_mesa_half_to_float({src0})))"}),
+   operation("fract", 1, source_types=real_types, c_expression={'f': "{src0} - floorf({src0})", 'd': "{src0} - floor({src0})", 'f16': "_mesa_float_to_half(_mesa_half_to_float({src0}) - floorf(_mesa_half_to_float({src0})))"}),
+   operation("round_even", 1, source_types=real_types, c_expression={'f': "_mesa_roundevenf({src0})", 'd': "_mesa_roundeven({src0})", 'f16': "_mesa_float_to_half(_mesa_roundevenf(_mesa_half_to_float({src0})))"}),
 
    # Trigonometric operations.
    operation("sin", 1, source_types=(float_type,), c_expression="sinf({src0})"),
@@ -643,21 +691,42 @@ ir_expression_operation = [
    operation("unpack_int_2x32", 1, printable_name="unpackInt2x32", source_types=(int64_type,), dest_type=int_type, c_expression="unpack_2x32(op[0]->value.u64[0], &data.u[0], &data.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
    operation("unpack_uint_2x32", 1, printable_name="unpackUint2x32", source_types=(uint64_type,), dest_type=uint_type, c_expression="unpack_2x32(op[0]->value.u64[0], &data.u[0], &data.u[1])", flags=frozenset((horizontal_operation, non_assign_operation))),
 
+   # NV_gpu_shader5 ops
+   operation("pack_float_2x16", 1, printable_name="packFloat2x16", source_types=(float16_type,), dest_type=uint_type, c_expression="data.u[0] = (uint32_t(op[0]->value.f16[1]) << 16) | uint32_t(op[0]->value.f16[0])", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("unpack_float_2x16", 1, printable_name="unpackFloat2x16", source_types=(uint_type,), dest_type=float16_type, c_expression="data.f[0] = _mesa_half_to_float(uint16_t(op[0]->value.u[0] & 0xFFFF)); data.f[1] = _mesa_half_to_float(uint16_t((op[0]->value.u[0] >> 16) & 0xFFFF))", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("double_bits_to_int64", 1, printable_name="doubleBitsToInt64", source_types=(double_type,), dest_type=int64_type, c_expression="data.i64[0] = *(int64_t*)&op[0]->value.d[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("int64_bits_to_double", 1, printable_name="int64BitsToDouble", source_types=(int64_type,), dest_type=double_type, c_expression="data.d[0] = *(double*)&op[0]->value.i64[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("any_thread_nv", 1, printable_name="anyThreadNV", source_types=(bool_type,), dest_type=bool_type, c_expression="data.b[0] = op[0]->value.b[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("all_threads_nv", 1, printable_name="allThreadsNV", source_types=(bool_type,), dest_type=bool_type, c_expression="data.b[0] = op[0]->value.b[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("all_threads_equal_nv", 1, printable_name="allThreadsEqualNV", source_types=(bool_type,), dest_type=bool_type, c_expression="data.b[0] = true", flags=frozenset((horizontal_operation, non_assign_operation))),
+
    operation("add", 2, printable_name="+", source_types=numeric_types, c_expression="{src0} + {src1}", flags=vector_scalar_operation),
    operation("sub", 2, printable_name="-", source_types=numeric_types, c_expression="{src0} - {src1}", flags=vector_scalar_operation),
    operation("add_sat", 2, printable_name="add_sat", source_types=integer_types, c_expression={
+      'u8': "({src0} + {src1}) < {src0} ? UINT8_MAX : ({src0} + {src1})",
+      'i8': "iadd8_saturate({src0}, {src1})",
+      'u16': "({src0} + {src1}) < {src0} ? UINT16_MAX : ({src0} + {src1})",
+      'i16': "iadd16_saturate({src0}, {src1})",
       'u': "({src0} + {src1}) < {src0} ? UINT32_MAX : ({src0} + {src1})",
       'i': "iadd_saturate({src0}, {src1})",
       'u64': "({src0} + {src1}) < {src0} ? UINT64_MAX : ({src0} + {src1})",
       'i64': "iadd64_saturate({src0}, {src1})"
    }),
    operation("sub_sat", 2, printable_name="sub_sat", source_types=integer_types, c_expression={
+      'u8': "({src1} > {src0}) ? 0 : {src0} - {src1}",
+      'i8': "isub8_saturate({src0}, {src1})",
+      'u16': "({src1} > {src0}) ? 0 : {src0} - {src1}",
+      'i16': "isub16_saturate({src0}, {src1})",
       'u': "({src1} > {src0}) ? 0 : {src0} - {src1}",
       'i': "isub_saturate({src0}, {src1})",
       'u64': "({src1} > {src0}) ? 0 : {src0} - {src1}",
       'i64': "isub64_saturate({src0}, {src1})"
    }),
    operation("abs_sub", 2, printable_name="abs_sub", source_types=integer_types, c_expression={
+      'u8': "({src1} > {src0}) ? {src1} - {src0} : {src0} - {src1}",
+      'i8': "({src1} > {src0}) ? (uint8_t){src1} - (uint8_t){src0} : (uint8_t){src0} - (uint8_t){src1}",
+      'u16': "({src1} > {src0}) ? {src1} - {src0} : {src0} - {src1}",
+      'i16': "({src1} > {src0}) ? (uint16_t){src1} - (uint16_t){src0} : (uint16_t){src0} - (uint16_t){src1}",
       'u': "({src1} > {src0}) ? {src1} - {src0} : {src0} - {src1}",
       'i': "({src1} > {src0}) ? (unsigned){src1} - (unsigned){src0} : (unsigned){src0} - (unsigned){src1}",
       'u64': "({src1} > {src0}) ? {src1} - {src0} : {src0} - {src1}",
@@ -686,7 +755,7 @@ ir_expression_operation = [
    #
    # We don't use fmod because it rounds toward zero; GLSL specifies the use
    # of floor.
-   operation("mod", 2, printable_name="%", source_types=numeric_types, c_expression={'u': "{src1} == 0 ? 0 : {src0} % {src1}", 'i': "{src1} == 0 ? 0 : {src0} % {src1}", 'f': "{src0} - {src1} * floorf({src0} / {src1})", 'd': "{src0} - {src1} * floor({src0} / {src1})", 'u64': "{src1} == 0 ? 0 : {src0} % {src1}", 'i64': "{src1} == 0 ? 0 : {src0} % {src1}"}, flags=vector_scalar_operation),
+   operation("mod", 2, printable_name="%", source_types=numeric_types, c_expression={'u8': "{src1} == 0 ? 0 : {src0} % {src1}", 'i8': "{src1} == 0 ? 0 : {src0} % {src1}", 'u16': "{src1} == 0 ? 0 : {src0} % {src1}", 'i16': "{src1} == 0 ? 0 : {src0} % {src1}", 'u': "{src1} == 0 ? 0 : {src0} % {src1}", 'i': "{src1} == 0 ? 0 : {src0} % {src1}", 'f': "{src0} - {src1} * floorf({src0} / {src1})", 'f16': "_mesa_float_to_half(_mesa_half_to_float({src0}) - _mesa_half_to_float({src1}) * floorf(_mesa_half_to_float({src0}) / _mesa_half_to_float({src1})))", 'd': "{src0} - {src1} * floor({src0} / {src1})", 'u64': "{src1} == 0 ? 0 : {src0} % {src1}", 'i64': "{src1} == 0 ? 0 : {src0} % {src1}"}, flags=vector_scalar_operation),
 
    # Binary comparison operators which return a boolean vector.
    # The type of both operands must be equal.
@@ -718,7 +787,7 @@ ir_expression_operation = [
    operation("logic_xor", 2, printable_name="^^", source_types=(bool_type,), c_expression="{src0} != {src1}"),
    operation("logic_or", 2, printable_name="||", source_types=(bool_type,), c_expression="{src0} || {src1}"),
 
-   operation("dot", 2, source_types=real_types, c_expression={'f': "dot_f(op[0], op[1])", 'd': "dot_d(op[0], op[1])"}, flags=horizontal_operation),
+   operation("dot", 2, source_types=real_types, c_expression={'f': "dot_f(op[0], op[1])", 'f16': "dot_f16(op[0], op[1])", 'd': "dot_d(op[0], op[1])"}, flags=horizontal_operation),
    operation("min", 2, source_types=numeric_types, c_expression="MIN2({src0}, {src1})", flags=vector_scalar_operation),
    operation("max", 2, source_types=numeric_types, c_expression="MAX2({src0}, {src1})", flags=vector_scalar_operation),
 
@@ -754,7 +823,7 @@ ir_expression_operation = [
    # Fused floating-point multiply-add, part of ARB_gpu_shader5.
    operation("fma", 3, source_types=real_types, c_expression="{src0} * {src1} + {src2}"),
 
-   operation("lrp", 3, source_types=real_types, c_expression={'f': "{src0} * (1.0f - {src2}) + ({src1} * {src2})", 'd': "{src0} * (1.0 - {src2}) + ({src1} * {src2})"}),
+   operation("lrp", 3, source_types=real_types, c_expression={'f': "{src0} * (1.0f - {src2}) + ({src1} * {src2})", 'd': "{src0} * (1.0 - {src2}) + ({src1} * {src2})", 'f16': "_mesa_float_to_half(_mesa_half_to_float({src0}) * (1.0f - _mesa_half_to_float({src2})) + (_mesa_half_to_float({src1}) * _mesa_half_to_float({src2})))"}),
 
    # Conditional Select
    #
@@ -851,6 +920,58 @@ ${op.get_template()}
       return NULL;
    }
 """)
+
+   def validate_operation_type_coverage():
+      """Validate that all operations have complete type coverage for their source_types"""
+      missing_coverage = []
+      
+      for op in ir_expression_operation:
+         if hasattr(op, 'c_expression') and isinstance(op.c_expression, dict):
+               # Get all union fields for this operation's source types
+               all_union_fields = set()
+               for src_type_tuple in op.source_types:
+                  if hasattr(src_type_tuple, '__iter__') and not isinstance(src_type_tuple, str):
+                     # Multiple types in tuple
+                     for src_type in src_type_tuple:
+                           all_union_fields.add(src_type.union_field)
+                  else:
+                     # Single type
+                     all_union_fields.add(src_type_tuple.union_field)
+               
+               # Check which union fields are missing from c_expression
+               available_keys = set(op.c_expression.keys())
+               missing_fields = all_union_fields - available_keys
+               
+               # Remove 'default' from missing if it exists in available_keys
+               if 'default' in available_keys:
+                  # Has default, so missing fields are not a problem
+                  pass
+               elif missing_fields:
+                  missing_coverage.append({
+                     'operation': op.name,
+                     'missing_fields': sorted(missing_fields),
+                     'available_keys': sorted(available_keys),
+                     'all_required_fields': sorted(all_union_fields)
+                  })
+      
+      if missing_coverage:
+         print("ERROR: Operations with incomplete type coverage:", file=sys.stderr)
+         for item in missing_coverage:
+               print(f"  Operation '{item['operation']}':", file=sys.stderr)
+               print(f"    Missing coverage for union fields: {item['missing_fields']}", file=sys.stderr)
+               print(f"    Available keys: {item['available_keys']}", file=sys.stderr)
+               print(f"    Required for all source types: {item['all_required_fields']}", file=sys.stderr)
+               print("", file=sys.stderr)
+         
+         print(f"\nTotal operations with missing coverage: {len(missing_coverage)}", file=sys.stderr)
+         print("Either add missing keys to c_expression or add 'default' key as fallback", file=sys.stderr)
+         return False
+      
+      return True
+
+   # Validate type coverage before template rendering
+   if not validate_operation_type_coverage():
+      sys.exit(1)
 
    if sys.argv[1] == "enum":
       lasts = [None, None, None, None]

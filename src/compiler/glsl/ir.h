@@ -2211,6 +2211,8 @@ union ir_constant_data {
       uint16_t f16[16];
       uint16_t u16[16];
       int16_t i16[16];
+      uint8_t u8[16];
+      int8_t i8[16];
       uint64_t u64[16];
       int64_t i64[16];
 };
@@ -2220,6 +2222,8 @@ class ir_constant : public ir_rvalue {
 public:
    ir_constant(const struct glsl_type *type, const ir_constant_data *data);
    ir_constant(bool b, unsigned vector_elements=1);
+   ir_constant(int8_t i8, unsigned vector_elements=1);
+   ir_constant(uint8_t u8, unsigned vector_elements=1);
    ir_constant(int16_t i16, unsigned vector_elements=1);
    ir_constant(uint16_t u16, unsigned vector_elements=1);
    ir_constant(unsigned int u, unsigned vector_elements=1);
@@ -2276,6 +2280,8 @@ public:
    float get_float_component(unsigned i) const;
    uint16_t get_float16_component(unsigned i) const;
    double get_double_component(unsigned i) const;
+   int8_t get_int8_component(unsigned i) const;
+   uint8_t get_uint8_component(unsigned i) const;
    int16_t get_int16_component(unsigned i) const;
    uint16_t get_uint16_component(unsigned i) const;
    int get_int_component(unsigned i) const;

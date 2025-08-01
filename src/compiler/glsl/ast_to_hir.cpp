@@ -266,6 +266,10 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
       switch (from->base_type) {
       case GLSL_TYPE_INT: return ir_unop_i2f;
       case GLSL_TYPE_UINT: return ir_unop_u2f;
+      case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82f : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT8: return state->NV_gpu_shader5_enable ? ir_unop_u82f : (ir_expression_operation)0;
+      case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162f : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT16: return state->NV_gpu_shader5_enable ? ir_unop_u162f : (ir_expression_operation)0;
       case GLSL_TYPE_FLOAT16: return ir_unop_f162f;
       default: return (ir_expression_operation)0;
       }
@@ -275,6 +279,10 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
          return (ir_expression_operation)0;
       switch (from->base_type) {
          case GLSL_TYPE_INT: return ir_unop_i2u;
+         case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82u : (ir_expression_operation)0;
+         case GLSL_TYPE_UINT8: return state->NV_gpu_shader5_enable ? ir_unop_u82u : (ir_expression_operation)0;
+         case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162u : (ir_expression_operation)0;
+         case GLSL_TYPE_UINT16: return state->NV_gpu_shader5_enable ? ir_unop_u162u : (ir_expression_operation)0;
          default: return (ir_expression_operation)0;
       }
 
@@ -288,6 +296,11 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
       case GLSL_TYPE_FLOAT: return ir_unop_f2d;
       case GLSL_TYPE_INT64: return ir_unop_i642d;
       case GLSL_TYPE_UINT64: return ir_unop_u642d;
+      case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82d : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT8: return state->NV_gpu_shader5_enable ? ir_unop_u82d : (ir_expression_operation)0;
+      case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162d : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT16: return state->NV_gpu_shader5_enable ? ir_unop_u162d : (ir_expression_operation)0;
+      case GLSL_TYPE_FLOAT16: return state->NV_gpu_shader5_enable ? ir_unop_f162d : (ir_expression_operation)0;
       default: return (ir_expression_operation)0;
       }
 
@@ -298,6 +311,10 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
       case GLSL_TYPE_INT: return ir_unop_i2u64;
       case GLSL_TYPE_UINT: return ir_unop_u2u64;
       case GLSL_TYPE_INT64: return ir_unop_i642u64;
+      case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82u64 : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT8: return state->NV_gpu_shader5_enable ? ir_unop_u82u64 : (ir_expression_operation)0;
+      case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162u64 : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT16: return state->NV_gpu_shader5_enable ? ir_unop_u162u64 : (ir_expression_operation)0;
       default: return (ir_expression_operation)0;
       }
 
@@ -306,8 +323,30 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
          return (ir_expression_operation)0;
       switch (from->base_type) {
       case GLSL_TYPE_INT: return ir_unop_i2i64;
+      case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82i64 : (ir_expression_operation)0;
+      case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162i64 : (ir_expression_operation)0;
       default: return (ir_expression_operation)0;
       }
+
+   case GLSL_TYPE_INT:
+      switch (from->base_type) {
+      case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82i : (ir_expression_operation)0;
+      case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162i : (ir_expression_operation)0;
+      default: return (ir_expression_operation)0;
+      }
+
+   case GLSL_TYPE_FLOAT16:
+      if (!state->NV_gpu_shader5_enable)
+         return (ir_expression_operation)0;
+      switch (from->base_type) {
+      /* GL_NV_gpu_shader5: only smaller types promote to float16 (little->big pattern) */
+      case GLSL_TYPE_INT8: return ir_unop_i82f16;
+      case GLSL_TYPE_UINT8: return ir_unop_u82f16;
+      case GLSL_TYPE_INT16: return ir_unop_i162f16;
+      case GLSL_TYPE_UINT16: return ir_unop_u162f16;
+      /* float->float16 requires explicit cast (not implicit conversion) */
+      default: return (ir_expression_operation)0;
+      }      
 
    default: return (ir_expression_operation)0;
    }

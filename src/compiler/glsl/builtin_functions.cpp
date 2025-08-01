@@ -446,6 +446,12 @@ es31_not_gs5(const _mesa_glsl_parse_state *state)
 }
 
 static bool
+nv_gpu_shader5(const _mesa_glsl_parse_state *state)
+{
+   return state->NV_gpu_shader5_enable;
+}
+
+static bool
 gpu_shader5_or_es31(const _mesa_glsl_parse_state *state)
 {
    return state->is_version(400, 310) || state->ARB_gpu_shader5_enable;
@@ -1345,6 +1351,15 @@ private:
    ir_function_signature *_unpackInt2x32(builtin_available_predicate avail);
    ir_function_signature *_packUint2x32(builtin_available_predicate avail);
    ir_function_signature *_unpackUint2x32(builtin_available_predicate avail);
+
+   /* NV_gpu_shader5 functions */
+   ir_function_signature *_packFloat2x16(builtin_available_predicate avail);
+   ir_function_signature *_unpackFloat2x16(builtin_available_predicate avail);
+   ir_function_signature *_doubleBitsToInt64(builtin_available_predicate avail);
+   ir_function_signature *_int64BitsToDouble(builtin_available_predicate avail);
+   ir_function_signature *_anyThreadNV(builtin_available_predicate avail);
+   ir_function_signature *_allThreadsNV(builtin_available_predicate avail);
+   ir_function_signature *_allThreadsEqualNV(builtin_available_predicate avail);
 
    BA1(length)
    BA1(distance);
@@ -2258,6 +2273,22 @@ builtin_builder::create_builtins()
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec2),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec3),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec4),  \
+                                                                  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i8vec2),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i8vec3),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i8vec4),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u8vec2),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u8vec3),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u8vec4),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i16vec2), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i16vec3), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i16vec4), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u16vec2), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u16vec3), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u16vec4), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_f16vec2), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_f16vec3), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_f16vec4), \
                 NULL);
 
 #define IU(NAME)                                \
@@ -2305,6 +2336,22 @@ builtin_builder::create_builtins()
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec2),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec3),  \
                 _##NAME(gpu_shader_half_float, &glsl_type_builtin_f16vec4),  \
+                                                               \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i8vec2),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i8vec3),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i8vec4),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u8vec2),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u8vec3),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u8vec4),  \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i16vec2), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i16vec3), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_i16vec4), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u16vec2), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u16vec3), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_u16vec4), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_f16vec2), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_f16vec3), \
+                _##NAME(nv_gpu_shader5, &glsl_type_builtin_f16vec4), \
                 NULL);
 
 #define FIUDHF2_MIXED(NAME)                                                                           \
@@ -2651,6 +2698,15 @@ builtin_builder::create_builtins()
    add_function("unpackInt2x32",   _unpackInt2x32(int64_avail),                  NULL);
    add_function("packUint2x32",    _packUint2x32(int64_avail),                   NULL);
    add_function("unpackUint2x32",  _unpackUint2x32(int64_avail),                 NULL);
+
+   /* NV_gpu_shader5 functions */
+   add_function("packFloat2x16",   _packFloat2x16(nv_gpu_shader5),              NULL);
+   add_function("unpackFloat2x16", _unpackFloat2x16(nv_gpu_shader5),            NULL);
+   add_function("doubleBitsToInt64", _doubleBitsToInt64(nv_gpu_shader5),        NULL);
+   add_function("int64BitsToDouble", _int64BitsToDouble(nv_gpu_shader5),        NULL);
+   add_function("anyThreadNV",     _anyThreadNV(nv_gpu_shader5),               NULL);
+   add_function("allThreadsNV",    _allThreadsNV(nv_gpu_shader5),              NULL);
+   add_function("allThreadsEqualNV", _allThreadsEqualNV(nv_gpu_shader5),       NULL);
 
    FDHF(length)
    FDHF(distance)
@@ -3041,6 +3097,38 @@ builtin_builder::create_builtins()
                 NULL);
 
    add_function("textureOffset",
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_vec4,  &glsl_type_builtin_sampler1D,  &glsl_type_builtin_float, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_ivec4, &glsl_type_builtin_isampler1D, &glsl_type_builtin_float, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_uvec4, &glsl_type_builtin_usampler1D, &glsl_type_builtin_float, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_vec4,  &glsl_type_builtin_sampler2D,  &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_ivec4, &glsl_type_builtin_isampler2D, &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_uvec4, &glsl_type_builtin_usampler2D, &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_vec4,  &glsl_type_builtin_sampler3D,  &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_ivec4, &glsl_type_builtin_isampler3D, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_uvec4, &glsl_type_builtin_usampler3D, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_vec4,  &glsl_type_builtin_sampler2DRect,  &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_ivec4, &glsl_type_builtin_isampler2DRect, &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_uvec4, &glsl_type_builtin_usampler2DRect, &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_float, &glsl_type_builtin_sampler2DRectShadow, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_float, &glsl_type_builtin_sampler1DShadow, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_float, &glsl_type_builtin_sampler2DShadow, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_vec4,  &glsl_type_builtin_sampler1DArray,  &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_ivec4, &glsl_type_builtin_isampler1DArray, &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_uvec4, &glsl_type_builtin_usampler1DArray, &glsl_type_builtin_vec2, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_vec4,  &glsl_type_builtin_sampler2DArray,  &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_ivec4, &glsl_type_builtin_isampler2DArray, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_uvec4, &glsl_type_builtin_usampler2DArray, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_float, &glsl_type_builtin_sampler1DArrayShadow, &glsl_type_builtin_vec3, TEX_OFFSET_NONCONST),
+                _texture(ir_tex, nv_gpu_shader5, &glsl_type_builtin_float, &glsl_type_builtin_sampler2DArrayShadow, &glsl_type_builtin_vec4, TEX_OFFSET_NONCONST),
+
                 _texture(ir_tex, v130, &glsl_type_builtin_vec4,  &glsl_type_builtin_sampler1D,  &glsl_type_builtin_float, TEX_OFFSET),
                 _texture(ir_tex, v130, &glsl_type_builtin_ivec4, &glsl_type_builtin_isampler1D, &glsl_type_builtin_float, TEX_OFFSET),
                 _texture(ir_tex, v130, &glsl_type_builtin_uvec4, &glsl_type_builtin_usampler1D, &glsl_type_builtin_float, TEX_OFFSET),
@@ -7114,6 +7202,70 @@ builtin_builder::_unpackUint2x32(builtin_available_predicate avail)
    ir_variable *p = in_var(&glsl_type_builtin_uint64_t, "p");
    MAKE_SIG(&glsl_type_builtin_uvec2, avail, 1, p);
    body.emit(ret(expr(ir_unop_unpack_uint_2x32, p)));
+   return sig;
+}
+
+/* NV_gpu_shader5 functions */
+ir_function_signature *
+builtin_builder::_packFloat2x16(builtin_available_predicate avail)
+{
+   ir_variable *v = in_var(&glsl_type_builtin_f16vec2, "v");
+   MAKE_SIG(&glsl_type_builtin_uint, avail, 1, v);
+   body.emit(ret(expr(ir_unop_pack_float_2x16, v)));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_unpackFloat2x16(builtin_available_predicate avail)
+{
+   ir_variable *p = in_var(&glsl_type_builtin_uint, "p");
+   MAKE_SIG(&glsl_type_builtin_f16vec2, avail, 1, p);
+   body.emit(ret(expr(ir_unop_unpack_float_2x16, p)));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_doubleBitsToInt64(builtin_available_predicate avail)
+{
+   ir_variable *d = in_var(&glsl_type_builtin_double, "d");
+   MAKE_SIG(&glsl_type_builtin_int64_t, avail, 1, d);
+   body.emit(ret(expr(ir_unop_double_bits_to_int64, d)));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_int64BitsToDouble(builtin_available_predicate avail)
+{
+   ir_variable *i = in_var(&glsl_type_builtin_int64_t, "i");
+   MAKE_SIG(&glsl_type_builtin_double, avail, 1, i);
+   body.emit(ret(expr(ir_unop_int64_bits_to_double, i)));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_anyThreadNV(builtin_available_predicate avail)
+{
+   ir_variable *value = in_var(&glsl_type_builtin_bool, "value");
+   MAKE_SIG(&glsl_type_builtin_bool, avail, 1, value);
+   body.emit(ret(expr(ir_unop_any_thread_nv, value)));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_allThreadsNV(builtin_available_predicate avail)
+{
+   ir_variable *value = in_var(&glsl_type_builtin_bool, "value");
+   MAKE_SIG(&glsl_type_builtin_bool, avail, 1, value);
+   body.emit(ret(expr(ir_unop_all_threads_nv, value)));
+   return sig;
+}
+
+ir_function_signature *
+builtin_builder::_allThreadsEqualNV(builtin_available_predicate avail)
+{
+   ir_variable *value = in_var(&glsl_type_builtin_bool, "value");
+   MAKE_SIG(&glsl_type_builtin_bool, avail, 1, value);
+   body.emit(ret(expr(ir_unop_all_threads_equal_nv, value)));
    return sig;
 }
 

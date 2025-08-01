@@ -516,6 +516,8 @@ void ir_print_visitor::visit(ir_constant *ir)
 	 if (i != 0)
 	    fprintf(f, " ");
 	 switch (ir->type->base_type) {
+         case GLSL_TYPE_UINT8: fprintf(f, "%u", ir->value.u8[i]); break;
+         case GLSL_TYPE_INT8:  fprintf(f, "%d", ir->value.i8[i]); break;
          case GLSL_TYPE_UINT16:fprintf(f, "%u", ir->value.u16[i]); break;
 	 case GLSL_TYPE_INT16: fprintf(f, "%d", ir->value.i16[i]); break;
 	 case GLSL_TYPE_UINT:  fprintf(f, "%u", ir->value.u[i]); break;

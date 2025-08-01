@@ -940,6 +940,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_IMAGE:
          result = new(linalloc) ir_expression(ir_unop_unpack_image_2x32, src);
          break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u82u, src);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i82u, src);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u162u, src);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i162u, src);
+         break;
       }
       break;
    case GLSL_TYPE_INT:
@@ -990,6 +1002,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_INT64:
          result = new(linalloc) ir_expression(ir_unop_i642f16, desired_type, src, NULL);
          break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2i, src);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i82i, src);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2i, src);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i162i, src);
+         break;
       }
       break;
    case GLSL_TYPE_FLOAT:
@@ -1014,6 +1038,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          break;
       case GLSL_TYPE_INT64:
          result = new(linalloc) ir_expression(ir_unop_i642f, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2f, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2f, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2f, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2f, desired_type, src, NULL);
          break;
       }
       break;
@@ -1044,6 +1080,20 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_INT64:
          result = new(linalloc) ir_expression(ir_unop_i642b, desired_type, src, NULL);
          break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_i2b,
+                                        new(linalloc) ir_expression(ir_unop_u2i, src));
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2b, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_i2b,
+                                        new(linalloc) ir_expression(ir_unop_u2i, src));
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2b, desired_type, src, NULL);
+         break;
       }
       break;
    case GLSL_TYPE_DOUBLE:
@@ -1070,6 +1120,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          break;
       case GLSL_TYPE_INT64:
          result = new(linalloc) ir_expression(ir_unop_i642d, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2d, src);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2d, src);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2d, src);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2d, src);
          break;
       }
       break;
@@ -1098,6 +1160,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_INT64:
          result = new(linalloc) ir_expression(ir_unop_i642u64, src);
          break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2u64, src);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2u64, src);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2u64, src);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2u64, src);
+         break;
       }
       break;
    case GLSL_TYPE_INT64:
@@ -1123,6 +1197,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_UINT64:
          result = new(linalloc) ir_expression(ir_unop_u642i64, src);
          break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2i64, src);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2i64, src);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2i64, src);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2i64, src);
+         break;
       }
       break;
    case GLSL_TYPE_SAMPLER:
@@ -1141,6 +1227,114 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          break;
       }
       break;
+   
+   /* NV_gpu_shader5 types - basic conversions */
+   case GLSL_TYPE_UINT8:
+      switch (b) {
+      case GLSL_TYPE_INT:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT:
+         result = new(linalloc) ir_expression(ir_unop_u2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_FLOAT:
+         result = new(linalloc) ir_expression(ir_unop_f2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_BOOL:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type,
+                                        new(linalloc) ir_expression(ir_unop_b2i, src), NULL);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
+         break;
+      }
+      break;
+   
+   case GLSL_TYPE_INT8:
+      switch (b) {
+      case GLSL_TYPE_UINT:
+         result = new(linalloc) ir_expression(ir_unop_u2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT:
+         result = new(linalloc) ir_expression(ir_unop_i2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_FLOAT:
+         result = new(linalloc) ir_expression(ir_unop_f2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_BOOL:
+         result = new(linalloc) ir_expression(ir_unop_b2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2i, desired_type, src, NULL);
+         break;
+      }
+      break;
+   
+   case GLSL_TYPE_UINT16:
+      switch (b) {
+      case GLSL_TYPE_INT:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT:
+         result = new(linalloc) ir_expression(ir_unop_u2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_FLOAT:
+         result = new(linalloc) ir_expression(ir_unop_f2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_BOOL:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type,
+                                        new(linalloc) ir_expression(ir_unop_b2i, src), NULL);
+         break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
+         break;
+      }
+      break;
+   
+   case GLSL_TYPE_INT16:
+      switch (b) {
+      case GLSL_TYPE_UINT:
+         result = new(linalloc) ir_expression(ir_unop_u2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT:
+         result = new(linalloc) ir_expression(ir_unop_i2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_FLOAT:
+         result = new(linalloc) ir_expression(ir_unop_f2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_BOOL:
+         result = new(linalloc) ir_expression(ir_unop_b2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2i, desired_type, src, NULL);
+         break;
+      }
+      break;
+   
    }
 
    assert(result != NULL);
@@ -1568,6 +1762,21 @@ emit_inline_vector_constructor(const glsl_type *type,
                   break;
                case GLSL_TYPE_INT64:
                   data.i64[i + base_component] = c->get_int64_component(i);
+                  break;
+               case GLSL_TYPE_INT8:
+                  data.i8[i + base_component] = c->get_int8_component(i);
+                  break;
+               case GLSL_TYPE_UINT8:
+                  data.u8[i + base_component] = c->get_uint8_component(i);
+                  break;
+               case GLSL_TYPE_INT16:
+                  data.i16[i + base_component] = c->get_int16_component(i);
+                  break;
+               case GLSL_TYPE_UINT16:
+                  data.u16[i + base_component] = c->get_uint16_component(i);
+                  break;
+               case GLSL_TYPE_FLOAT16:
+                  data.f16[i + base_component] = c->get_float16_component(i);
                   break;
                default:
                   assert(!"Should not get here.");

@@ -230,6 +230,28 @@ static const struct builtin_type_versions {
    T(uimage2DMSArray,                 420, 999)
 
    T(atomic_uint,                     420, 310)
+
+   /* NV_gpu_shader5 types - only available with extension */
+   T(int8_t,                          999, 999)
+   T(i8vec2,                          999, 999)
+   T(i8vec3,                          999, 999)
+   T(i8vec4,                          999, 999)
+   T(uint8_t,                         999, 999)
+   T(u8vec2,                          999, 999)
+   T(u8vec3,                          999, 999)
+   T(u8vec4,                          999, 999)
+   T(int16_t,                         999, 999)
+   T(i16vec2,                         999, 999)
+   T(i16vec3,                         999, 999)
+   T(i16vec4,                         999, 999)
+   T(uint16_t,                        999, 999)
+   T(u16vec2,                         999, 999)
+   T(u16vec3,                         999, 999)
+   T(u16vec4,                         999, 999)
+   T(float16_t,                       999, 999)
+   T(f16vec2,                         999, 999)
+   T(f16vec3,                         999, 999)
+   T(f16vec4,                         999, 999)
 };
 
 #undef T
@@ -445,7 +467,8 @@ _mesa_glsl_initialize_types(struct _mesa_glsl_parse_state *state)
    }
 
    if (state->ARB_gpu_shader_int64_enable ||
-       state->AMD_gpu_shader_int64_enable) {
+       state->AMD_gpu_shader_int64_enable ||
+       state->NV_gpu_shader5_enable) {
       add_type(symbols, &glsl_type_builtin_int64_t);
       add_type(symbols, &glsl_type_builtin_i64vec2);
       add_type(symbols, &glsl_type_builtin_i64vec3);
@@ -455,6 +478,37 @@ _mesa_glsl_initialize_types(struct _mesa_glsl_parse_state *state)
       add_type(symbols, &glsl_type_builtin_u64vec2);
       add_type(symbols, &glsl_type_builtin_u64vec3);
       add_type(symbols, &glsl_type_builtin_u64vec4);
+   }
+
+   if (state->NV_gpu_shader5_enable) {
+      /* 8-bit integer types */
+      add_type(symbols, &glsl_type_builtin_int8_t);
+      add_type(symbols, &glsl_type_builtin_i8vec2);
+      add_type(symbols, &glsl_type_builtin_i8vec3);
+      add_type(symbols, &glsl_type_builtin_i8vec4);
+      add_type(symbols, &glsl_type_builtin_uint8_t);
+      add_type(symbols, &glsl_type_builtin_u8vec2);
+      add_type(symbols, &glsl_type_builtin_u8vec3);
+      add_type(symbols, &glsl_type_builtin_u8vec4);
+
+      /* 16-bit integer types */
+      add_type(symbols, &glsl_type_builtin_int16_t);
+      add_type(symbols, &glsl_type_builtin_i16vec2);
+      add_type(symbols, &glsl_type_builtin_i16vec3);
+      add_type(symbols, &glsl_type_builtin_i16vec4);
+      add_type(symbols, &glsl_type_builtin_uint16_t);
+      add_type(symbols, &glsl_type_builtin_u16vec2);
+      add_type(symbols, &glsl_type_builtin_u16vec3);
+      add_type(symbols, &glsl_type_builtin_u16vec4);
+
+      /* 16-bit float types */
+      add_type(symbols, &glsl_type_builtin_float16_t);
+      add_type(symbols, &glsl_type_builtin_f16vec2);
+      add_type(symbols, &glsl_type_builtin_f16vec3);
+      add_type(symbols, &glsl_type_builtin_f16vec4);
+
+      /* NOTE: Sized aliases (int32_t, uint32_t, float32_t, float64_t) 
+       * are handled by lexer mapping to existing types */
    }
 }
 /** @} */

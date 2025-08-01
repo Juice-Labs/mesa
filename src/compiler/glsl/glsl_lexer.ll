@@ -699,8 +699,32 @@ double		TYPE_WITH_ALT(130, 100, 130, 300, yyextra->ARB_gpu_shader_fp64_enable, &
 half		KEYWORD(110, 100, 0, 0, HALF);
 fixed		KEYWORD(110, 100, 0, 0, FIXED_TOK);
 unsigned	KEYWORD_WITH_ALT(110, 100, 0, 0, yyextra->EXT_gpu_shader4_enable, UNSIGNED);
-input		KEYWORD(110, 100, 0, 0, INPUT_TOK);
-output		KEYWORD(110, 100, 0, 0, OUTPUT);
+input		{
+		    /* NV_gpu_shader5 allows 'input' to be used as an identifier */
+		    if (yyextra->NV_gpu_shader5_enable) {
+			return classify_identifier(yyextra, yytext, yyleng, yylval);
+		    }
+		    if (yyextra->is_version(110, 100)) {
+			_mesa_glsl_error(yylloc, yyextra,
+					"illegal use of reserved word `%s'", yytext);
+			return ERROR_TOK;
+		    } else {
+			return classify_identifier(yyextra, yytext, yyleng, yylval);
+		    }
+		}
+output		{
+		    /* NV_gpu_shader5 allows 'output' to be used as an identifier */
+		    if (yyextra->NV_gpu_shader5_enable) {
+			return classify_identifier(yyextra, yytext, yyleng, yylval);
+		    }
+		    if (yyextra->is_version(110, 100)) {
+			_mesa_glsl_error(yylloc, yyextra,
+					"illegal use of reserved word `%s'", yytext);
+			return ERROR_TOK;
+		    } else {
+			return classify_identifier(yyextra, yytext, yyleng, yylval);
+		    }
+		}
 hvec2		KEYWORD(110, 100, 0, 0, HVEC2);
 hvec3		KEYWORD(110, 100, 0, 0, HVEC3);
 hvec4		KEYWORD(110, 100, 0, 0, HVEC4);
@@ -758,21 +782,43 @@ sample		KEYWORD_WITH_ALT(400, 300, 400, 320, yyextra->ARB_gpu_shader5_enable || 
 subroutine	KEYWORD_WITH_ALT(400, 300, 400, 0, yyextra->ARB_shader_subroutine_enable, SUBROUTINE);
 
     /* Additional words for ARB_gpu_shader_int64 */
-int64_t		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_int64_t);
-i64vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_i64vec2);
-i64vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_i64vec3);
-i64vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_i64vec4);
+int64_t		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_int64_t);
+i64vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i64vec2);
+i64vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i64vec3);
+i64vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i64vec4);
 
-uint64_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_uint64_t);
-u64vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_u64vec2);
-u64vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_u64vec3);
-u64vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable, &glsl_type_builtin_u64vec4);
+uint64_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_uint64_t);
+u64vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u64vec2);
+u64vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u64vec3);
+u64vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->ARB_gpu_shader_int64_enable || yyextra->AMD_gpu_shader_int64_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u64vec4);
+
+
+    /* Additional sized types for NV_gpu_shader5 */
+int8_t		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_int8_t);
+int16_t		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_int16_t);
+int32_t		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_int);
+i8vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i8vec2);
+i8vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i8vec3);
+i8vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i8vec4);
+i16vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i16vec2);
+i16vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i16vec3);
+i16vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_i16vec4);
+
+uint8_t		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_uint8_t);
+uint16_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_uint16_t);
+uint32_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_uint);
+u8vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u8vec2);
+u8vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u8vec3);
+u8vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u8vec4);
+u16vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u16vec2);
+u16vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u16vec3);
+u16vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_u16vec4);
 
     /* Additional words for AMD_gpu_shader_half_float */
-float16_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_float16_t);
-f16vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16vec2);
-f16vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16vec3);
-f16vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16vec4);
+float16_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_float16_t);
+f16vec2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_f16vec2);
+f16vec3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_f16vec3);
+f16vec4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable || yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_f16vec4);
 f16mat2		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16mat2);
 f16mat3		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16mat3);
 f16mat4		TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16mat4);
@@ -785,6 +831,10 @@ f16mat3x4	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &
 f16mat4x2	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16mat4x2);
 f16mat4x3	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16mat4x3);
 f16mat4x4	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->AMD_gpu_shader_half_float_enable, &glsl_type_builtin_f16mat4);
+
+float32_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_float);
+float64_t	TYPE_WITH_ALT(0, 0, 0, 0, yyextra->NV_gpu_shader5_enable, &glsl_type_builtin_double);
+
 
 [_a-zA-Z][_a-zA-Z0-9]*	{
 			    struct _mesa_glsl_parse_state *state = yyextra;

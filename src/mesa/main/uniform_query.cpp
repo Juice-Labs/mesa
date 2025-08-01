@@ -1118,6 +1118,16 @@ glsl_type_name(enum glsl_base_type type)
       return "uint64";
    case GLSL_TYPE_INT64:
       return "int64";
+   case GLSL_TYPE_INT8:
+      return "int8_t";
+   case GLSL_TYPE_UINT8:
+      return "uint8_t";
+   case GLSL_TYPE_INT16:
+      return "int16_t";
+   case GLSL_TYPE_UINT16:
+      return "uint16_t";
+   case GLSL_TYPE_FLOAT16:
+      return "float16_t";
    case GLSL_TYPE_BOOL:
       return "bool";
    case GLSL_TYPE_SAMPLER:
@@ -1187,6 +1197,15 @@ validate_uniform(GLint location, GLsizei count, const GLvoid *values,
       break;
    case GLSL_TYPE_FLOAT16:
       match = basicType == GLSL_TYPE_FLOAT;
+      break;
+   /* GL_NV_gpu_shader5: Allow standard uniform functions for new types */
+   case GLSL_TYPE_INT8:
+   case GLSL_TYPE_INT16:
+      match = (basicType == GLSL_TYPE_INT);
+      break;
+   case GLSL_TYPE_UINT8:
+   case GLSL_TYPE_UINT16:
+      match = (basicType == GLSL_TYPE_UINT);
       break;
    default:
       match = (basicType == uni->type->base_type);

@@ -895,6 +895,13 @@ void _mesa_glsl_extension::set_flags(_mesa_glsl_parse_state *state,
     */
    state->*(this->enable_flag) = (behavior != extension_disable);
    state->*(this->warn_flag)   = (behavior == extension_warn);
+
+   /* NV_gpu_shader5 is a superset of ARB_gpu_shader5 and should 
+    * implicitly enable it when enabled, as per the spec */
+   if (strcmp(this->name, "GL_NV_gpu_shader5") == 0 && 
+       behavior != extension_disable) {
+      state->ARB_gpu_shader5_enable = true;
+   }   
 }
 
 /**

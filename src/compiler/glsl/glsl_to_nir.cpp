@@ -306,6 +306,22 @@ nir_visitor::constant_copy(ir_constant *ir, void *mem_ctx)
          ret->values[r].i16 = ir->value.i16[r];
       break;
 
+   case GLSL_TYPE_UINT8:
+      /* Only float base types can be matrices. */
+      assert(cols == 1);
+
+      for (unsigned r = 0; r < rows; r++)
+         ret->values[r].u8 = ir->value.u8[r];
+      break;
+
+   case GLSL_TYPE_INT8:
+      /* Only float base types can be matrices. */
+      assert(cols == 1);
+
+      for (unsigned r = 0; r < rows; r++)
+         ret->values[r].i8 = ir->value.i8[r];
+      break;
+
    case GLSL_TYPE_FLOAT:
    case GLSL_TYPE_FLOAT16:
    case GLSL_TYPE_DOUBLE:
@@ -2229,6 +2245,12 @@ nir_visitor::visit(ir_expression *ir)
    case ir_unop_d2u64:
    case ir_unop_i2u:
    case ir_unop_u2i:
+   case ir_unop_i82i:
+   case ir_unop_i162i:
+   case ir_unop_i82f16:
+   case ir_unop_u82f16:
+   case ir_unop_i162f16:
+   case ir_unop_u162f16:
    case ir_unop_i642u64:
    case ir_unop_u642i64: {
       nir_alu_type src_type = nir_get_nir_type_for_glsl_base_type(types[0]);
@@ -2267,6 +2289,11 @@ nir_visitor::visit(ir_expression *ir)
    case ir_unop_bitcast_d2u64:
    case ir_unop_subroutine_to_int:
       /* no-op */
+      result = nir_mov(&b, srcs[0]);
+      break;
+   case ir_unop_double_bits_to_int64:
+   case ir_unop_int64_bits_to_double:
+      /* no-op bitcast */
       result = nir_mov(&b, srcs[0]);
       break;
    case ir_unop_trunc: result = nir_ftrunc(&b, srcs[0]); break;
@@ -2312,6 +2339,12 @@ nir_visitor::visit(ir_expression *ir)
       result = nir_unpack_unorm_4x8(&b, srcs[0]);
       break;
    case ir_unop_unpack_half_2x16:
+      result = nir_unpack_half_2x16(&b, srcs[0]);
+      break;
+   case ir_unop_pack_float_2x16:
+      result = nir_pack_half_2x16(&b, srcs[0]);
+      break;
+   case ir_unop_unpack_float_2x16:
       result = nir_unpack_half_2x16(&b, srcs[0]);
       break;
    case ir_unop_pack_sampler_2x32:
@@ -2605,6 +2638,17 @@ nir_visitor::visit(ir_expression *ir)
       break;
    case ir_quadop_vector:
       result = nir_vec(&b, srcs, ir->type->vector_elements);
+      break;
+
+   /* GL_NV_gpu_shader5 thread voting operations */
+   case ir_unop_any_thread_nv:
+      result = srcs[0]; /* For constant evaluation, just pass through */
+      break;
+   case ir_unop_all_threads_nv:
+      result = srcs[0]; /* For constant evaluation, just pass through */
+      break;
+   case ir_unop_all_threads_equal_nv:
+      result = nir_imm_true(&b); /* For constant evaluation, assume all equal */
       break;
 
    default:

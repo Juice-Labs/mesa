@@ -1254,11 +1254,12 @@ void st_init_extensions(struct pipe_screen *screen,
       extensions->ARB_gpu_shader5 = GL_TRUE;
 
    if (GLSLVersion >= 400 && !options->disable_arb_gpu_shader5)
+   {
       extensions->ARB_gpu_shader5 = GL_TRUE;
-
-   /* NV_gpu_shader5 is a superset of ARB_gpu_shader5 */
-   if (extensions->ARB_gpu_shader5 && extensions->ARB_gpu_shader_int64)
+      /* NV_gpu_shader5 is a superset of ARB_gpu_shader5 and implicitly enables it when enabled, as per the spec */
       extensions->NV_gpu_shader5 = GL_TRUE;
+   }
+
    if (GLSLVersion >= 410)
       extensions->ARB_shader_precision = GL_TRUE;
 

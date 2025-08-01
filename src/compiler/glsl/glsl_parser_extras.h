@@ -262,7 +262,8 @@ struct _mesa_glsl_parse_state {
    bool has_int64() const
    {
       return ARB_gpu_shader_int64_enable ||
-             AMD_gpu_shader_int64_enable;
+             AMD_gpu_shader_int64_enable ||
+             NV_gpu_shader5_enable;
    }
 
    bool has_420pack() const

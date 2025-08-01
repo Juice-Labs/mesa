@@ -65,6 +65,21 @@ dot_d(ir_constant *op0, ir_constant *op1)
    return result;
 }
 
+static float
+dot_f16(ir_constant *op0, ir_constant *op1)
+{
+   assert(op0->type->base_type == GLSL_TYPE_FLOAT16 && op1->type->base_type == GLSL_TYPE_FLOAT16);
+
+   float result = 0;
+   for (unsigned c = 0; c < glsl_get_components(op0->type); c++) {
+      float a = _mesa_half_to_float(op0->value.f16[c]);
+      float b = _mesa_half_to_float(op1->value.f16[c]);
+      result += a * b;
+   }
+
+   return result;
+}
+
 /* This method is the only one supported by gcc.  Unions in particular
  * are iffy, and read-through-converted-pointer is killed by strict
  * aliasing.  OTOH, the compiler sees through the memcpy, so the
@@ -450,6 +465,30 @@ isub64_saturate(int64_t a, int64_t b)
       return INT64_MAX;
 
    return a - b;
+}
+
+static int8_t
+iadd8_saturate(int8_t a, int8_t b)
+{
+   return CLAMP(int16_t(a) + int16_t(b), INT8_MIN, INT8_MAX);
+}
+
+static int16_t
+iadd16_saturate(int16_t a, int16_t b)
+{
+   return CLAMP(int32_t(a) + int32_t(b), INT16_MIN, INT16_MAX);
+}
+
+static int8_t
+isub8_saturate(int8_t a, int8_t b)
+{
+   return CLAMP(int16_t(a) - int16_t(b), INT8_MIN, INT8_MAX);
+}
+
+static int16_t
+isub16_saturate(int16_t a, int16_t b)
+{
+   return CLAMP(int32_t(a) - int32_t(b), INT16_MIN, INT16_MAX);
 }
 
 static uint64_t
@@ -896,8 +935,10 @@ ir_swizzle::constant_expression_value(linear_ctx *linalloc,
 
       for (unsigned i = 0; i < this->mask.num_components; i++) {
          switch (v->type->base_type) {
-         case GLSL_TYPE_UINT16:
-         case GLSL_TYPE_INT16: data.u16[i] = v->value.u16[swiz_idx[i]]; break;
+         case GLSL_TYPE_UINT8:  data.u8[i] = v->value.u8[swiz_idx[i]]; break;
+         case GLSL_TYPE_INT8:   data.i8[i] = v->value.i8[swiz_idx[i]]; break;
+         case GLSL_TYPE_UINT16: data.u16[i] = v->value.u16[swiz_idx[i]]; break;
+         case GLSL_TYPE_INT16:  data.i16[i] = v->value.i16[swiz_idx[i]]; break;
          case GLSL_TYPE_UINT:
          case GLSL_TYPE_INT:   data.u[i] = v->value.u[swiz_idx[i]]; break;
          case GLSL_TYPE_FLOAT: data.f[i] = v->value.f[swiz_idx[i]]; break;

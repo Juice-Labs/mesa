@@ -40,6 +40,7 @@
 #include "stw_nopfuncs.h"
 
 #include "util/u_debug.h"
+#include "util/log.h"
 #include "pipe/p_screen.h"
 #include "pipe/p_context.h"
 #include "main/context.h"
@@ -59,7 +60,7 @@ static struct gl_context*
 stw_get_gl_context_from_hglrc(HGLRC hglrc)
 {
    if (!stw_dev) {
-      debug_printf("wglCopyImageSubDataNV: No STW device available\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No STW device available");
       return NULL;
    }
    
@@ -74,27 +75,27 @@ stw_get_gl_context_from_hglrc(HGLRC hglrc)
    /* Look up the stw_context */
    struct stw_context *stw_ctx = stw_lookup_context(dhglrc);
    if (!stw_ctx) {
-      debug_printf("wglCopyImageSubDataNV: Invalid HGLRC handle: %p\n", hglrc);
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Invalid HGLRC handle: %p", hglrc);
       return NULL;
    }
    
    /* Get the state tracker interface */
    struct st_context_iface *st = stw_ctx->st;
    if (!st) {
-      debug_printf("wglCopyImageSubDataNV: No state tracker interface in context\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No state tracker interface in context");
       return NULL;
    }
    
    /* The Mesa GL context is stored in the state tracker context */
    struct st_context *st_ctx = (struct st_context*)st;
    if (!st_ctx) {
-      debug_printf("wglCopyImageSubDataNV: No state tracker context\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No state tracker context");
       return NULL;
    }
    
    struct gl_context *gl_ctx = st_ctx->ctx;
    if (!gl_ctx) {
-      debug_printf("wglCopyImageSubDataNV: No Mesa GL context in state tracker\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No Mesa GL context in state tracker");
       return NULL;
    }
    
@@ -114,10 +115,10 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
    struct gl_context *current_ctx = NULL;
    BOOL result = FALSE;
    
-   debug_printf("wglCopyImageSubDataNV called (src=%p, dst=%p)\n", hSrcRC, hDstRC);
+   mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV called (src=%p, dst=%p)", hSrcRC, hDstRC);
    
    if (!stw_dev) {
-      debug_printf("wglCopyImageSubDataNV: No STW device\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No STW device");
       return FALSE;
    }
 
@@ -130,30 +131,30 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
    
    /* Validate that we have contexts */
    if (!src_ctx) {
-      debug_printf("wglCopyImageSubDataNV: Invalid or missing source GL context\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Invalid or missing source GL context");
       return FALSE;
    }
    
    if (!dst_ctx) {
-      debug_printf("wglCopyImageSubDataNV: Invalid or missing destination GL context\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Invalid or missing destination GL context");
       return FALSE;
    }
    
    /* Validate parameters */
    if (width <= 0 || height <= 0 || depth <= 0) {
-      debug_printf("wglCopyImageSubDataNV: Invalid dimensions\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Invalid dimensions");
       return FALSE;
    }
    
    /* Check if the NV_copy_image extension is supported in source context */
    if (!src_ctx->Extensions.NV_copy_image) {
-      debug_printf("wglCopyImageSubDataNV: NV_copy_image extension not available in source context\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: NV_copy_image extension not available in source context");
       return FALSE;
    }
    
    /* For cross-context copying, we need to ensure both contexts support the operation */
    if (src_ctx != dst_ctx && !dst_ctx->Extensions.NV_copy_image) {
-      debug_printf("wglCopyImageSubDataNV: NV_copy_image extension not available in destination context\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: NV_copy_image extension not available in destination context");
       return FALSE;
    }
    
@@ -172,7 +173,7 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
    bool context_switched = false;
    
    if (src_ctx != current_ctx) {
-      debug_printf("wglCopyImageSubDataNV: Cross-context copy detected, switching to source context\n");
+      mesa_log(MESA_LOG_DEBUG, "WGL", "wglCopyImageSubDataNV: Cross-context copy detected, switching to source context");
       /* Note: This is a simplified approach. In a full implementation, 
        * we would need proper context switching via WGL functions */
       context_switched = true;
@@ -189,7 +190,7 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
       (PFNGLCOPYIMAGESUBDATANVPROC)_glapi_get_proc_address("glCopyImageSubDataNV");
    
    if (!glCopyImageSubDataNV) {
-      debug_printf("wglCopyImageSubDataNV: glCopyImageSubDataNV function not available\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: glCopyImageSubDataNV function not available");
       return FALSE;
    }
    
@@ -200,16 +201,16 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
    /* Check if any error occurred */
    if (src_ctx->ErrorValue == GL_NO_ERROR) {
       result = TRUE;
-      debug_printf("wglCopyImageSubDataNV: Copy operation completed successfully\n");
+      mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV: Copy operation completed successfully");
    } else {
-      debug_printf("wglCopyImageSubDataNV: Copy operation failed with GL error: 0x%x\n", src_ctx->ErrorValue);
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Copy operation failed with GL error: 0x%x", src_ctx->ErrorValue);
       /* Restore the previous error state */
       src_ctx->ErrorValue = saved_error;
    }
    
    /* Restore context if we switched */
    if (context_switched && current_ctx) {
-      debug_printf("wglCopyImageSubDataNV: Restoring original context\n");
+      mesa_log(MESA_LOG_DEBUG, "WGL", "wglCopyImageSubDataNV: Restoring original context");
       /* In a full implementation, we would restore the context via WGL */
    }
    
@@ -221,18 +222,18 @@ HDC WINAPI
 wglCreateAffinityDCNV(const HGPUNV *phGpuList)
 {
    if (!stw_dev) {
-      debug_printf("wglCreateAffinityDCNV: No STW device\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCreateAffinityDCNV: No STW device");
       return NULL;
    }
 
    /* Only support affinity DC creation when using Zink */
    if (!stw_dev->zink) {
-      debug_printf("wglCreateAffinityDCNV: Not using Zink driver\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCreateAffinityDCNV: Not using Zink driver");
       return NULL;
    }
 
    if (!phGpuList) {
-      debug_printf("wglCreateAffinityDCNV: NULL GPU list\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCreateAffinityDCNV: NULL GPU list");
       return NULL;
    }
 
@@ -241,9 +242,9 @@ wglCreateAffinityDCNV(const HGPUNV *phGpuList)
    HDC result = zink_misc_create_affinity_dc(phGpuList);
    
    if (result) {
-      debug_printf("wglCreateAffinityDCNV: Created affinity DC %p\n", result);
+      mesa_log(MESA_LOG_INFO, "WGL", "wglCreateAffinityDCNV: Created affinity DC %p", result);
    } else {
-      debug_printf("wglCreateAffinityDCNV: Failed to create affinity DC\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCreateAffinityDCNV: Failed to create affinity DC");
    }
    
    return result;
@@ -253,18 +254,18 @@ BOOL WINAPI
 wglDeleteDCNV(HDC hdc)
 {
    if (!stw_dev) {
-      debug_printf("wglDeleteDCNV: No STW device\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglDeleteDCNV: No STW device");
       return FALSE;
    }
 
    /* Only support affinity DC deletion when using Zink */
    if (!stw_dev->zink) {
-      debug_printf("wglDeleteDCNV: Not using Zink driver\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglDeleteDCNV: Not using Zink driver");
       return FALSE;
    }
 
    if (!hdc) {
-      debug_printf("wglDeleteDCNV: NULL HDC\n");
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglDeleteDCNV: NULL HDC");
       return FALSE;
    }
 

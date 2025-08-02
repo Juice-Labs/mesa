@@ -2217,6 +2217,12 @@ builtin_builder::create_builtins()
    add_function("unpackFloat2x16", _unpackFloat2x16(nv_gpu_shader5),            NULL);
    add_function("doubleBitsToInt64", _doubleBitsToInt64(nv_gpu_shader5),        NULL);
    add_function("int64BitsToDouble", _int64BitsToDouble(nv_gpu_shader5),        NULL);
+   add_function("uint64BitsToDouble",
+      _uint64BitsToDouble(nv_gpu_shader5, glsl_type::uint64_t_type),
+      _uint64BitsToDouble(nv_gpu_shader5, glsl_type::u64vec2_type),
+      _uint64BitsToDouble(nv_gpu_shader5, glsl_type::u64vec3_type),
+      _uint64BitsToDouble(nv_gpu_shader5, glsl_type::u64vec4_type),
+      NULL);
    add_function("anyThreadNV",     _anyThreadNV(nv_gpu_shader5),               NULL);
    add_function("allThreadsNV",    _allThreadsNV(nv_gpu_shader5),              NULL);
    add_function("allThreadsEqualNV", _allThreadsEqualNV(nv_gpu_shader5),       NULL);

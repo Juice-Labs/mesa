@@ -584,7 +584,7 @@ function_identifier:
    // analysis recognized most of them as keywords. They are now
    // recognized through "type_specifier".
 
-   // Grammar Note: No traditional style type casts.
+   // Grammar Note: C-style type casts added for bindless texture compatibility.
 unary_expression:
    postfix_expression
    | INC_OP unary_expression
@@ -604,6 +604,13 @@ unary_expression:
       void *ctx = state->linalloc;
       $$ = new(ctx) ast_expression($1, $2, NULL, NULL);
       $$->set_location_range(@1, @2);
+   }
+   | '(' type_specifier ')' unary_expression
+   {
+      void *ctx = state->linalloc;
+      $$ = new(ctx) ast_function_expression($2);
+      $$->set_location(@1);
+      $$->expressions.push_tail(& $4->link);
    }
    ;
 

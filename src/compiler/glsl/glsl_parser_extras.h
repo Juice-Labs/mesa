@@ -32,6 +32,7 @@
 
 #include <stdlib.h>
 #include "glsl_symbol_table.h"
+#include "util/log.h"
 
 /* THIS is a macro defined somewhere deep in the Windows MSVC header files.
  * Undefine it here to avoid collision with the lexer's THIS token.
@@ -254,7 +255,9 @@ struct _mesa_glsl_parse_state {
 
    bool has_double() const
    {
-      return ARB_gpu_shader_fp64_enable || is_version(400, 0);
+      return ARB_gpu_shader_fp64_enable || 
+             is_version(400, 0) ||
+             NV_gpu_shader5_enable;
    }
 
    bool has_int64() const
@@ -352,7 +355,9 @@ struct _mesa_glsl_parse_state {
 
    bool has_bindless() const
    {
-      return ARB_bindless_texture_enable;
+      bool result = ARB_bindless_texture_enable;
+      mesa_logi("HAS_BINDLESS DEBUG: ARB_bindless_texture_enable = %d, returning = %d", ARB_bindless_texture_enable, result);
+      return result;
    }
 
    bool has_image_load_formatted() const

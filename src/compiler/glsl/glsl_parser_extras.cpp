@@ -33,6 +33,7 @@
 #include "util/u_atomic.h" /* for p_atomic_cmpxchg */
 #include "util/ralloc.h"
 #include "util/disk_cache.h"
+#include "util/log.h"
 #include "util/mesa-sha1.h"
 #include "ast.h"
 #include "glsl_parser_extras.h"
@@ -93,6 +94,11 @@ _mesa_glsl_parse_state::_mesa_glsl_parse_state(struct gl_context *_ctx,
    this->compat_shader = true;
    this->es_shader = false;
    this->ARB_texture_rectangle_enable = true;
+   
+   /* Force enable ARB_bindless_texture for compatibility with applications expecting it */
+   mesa_logi("PARSER STATE DEBUG: State ARB_bindless_texture_enable = %d", this->ARB_bindless_texture_enable);
+   this->ARB_bindless_texture_enable = true;
+   mesa_logi("PARSER STATE DEBUG: Force-enabled ARB_bindless_texture_enable = %d", this->ARB_bindless_texture_enable);
 
    /* OpenGL ES 2.0 has different defaults from desktop GL. */
    if (ctx->API == API_OPENGLES2) {

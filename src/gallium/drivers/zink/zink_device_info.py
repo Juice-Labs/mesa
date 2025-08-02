@@ -475,6 +475,12 @@ zink_get_physical_device_info(struct zink_screen *screen)
       screen->vk.GetPhysicalDeviceFeatures(screen->pdev, &info->feats.features);
    }
 
+   // Debug descriptor indexing features after getting device features
+   mesa_logi("ZINK BINDLESS DEBUG: VK_EXT_descriptor_indexing features:");
+   mesa_logi("  descriptorBindingPartiallyBound = %d", info->desc_indexing_feats.descriptorBindingPartiallyBound);
+   mesa_logi("  descriptorBindingStorageBufferUpdateAfterBind = %d", info->desc_indexing_feats.descriptorBindingStorageBufferUpdateAfterBind);
+   mesa_logi("  descriptorBindingUniformBufferUpdateAfterBind = %d", info->desc_indexing_feats.descriptorBindingUniformBufferUpdateAfterBind);   
+
    // check for device properties
    if (screen->vk.GetPhysicalDeviceProperties2) {
       VkPhysicalDeviceProperties2 props = {0};

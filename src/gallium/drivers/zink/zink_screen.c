@@ -733,8 +733,11 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_PRIMITIVE_RESTART:
       return 1;
 
-   case PIPE_CAP_BINDLESS_TEXTURE:
+   case PIPE_CAP_BINDLESS_TEXTURE: {
+      mesa_logi("ZINK BINDLESS DEBUG: PIPE_CAP_BINDLESS_TEXTURE queried, have_EXT_descriptor_indexing=%d", 
+         screen->info.have_EXT_descriptor_indexing);
       return screen->info.have_EXT_descriptor_indexing;
+   }
 
    case PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT:
       return screen->info.props.limits.minTexelBufferOffsetAlignment;

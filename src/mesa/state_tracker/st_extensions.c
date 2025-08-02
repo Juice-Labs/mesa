@@ -1127,6 +1127,11 @@ void st_init_extensions(struct pipe_screen *screen,
       }
    }
 
+   bool had_bindless = extensions->ARB_bindless_texture;
+   extensions->ARB_bindless_texture = GL_TRUE;
+   mesa_logi("MESA BINDLESS DEBUG: ARB_bindless_texture was=%d, now=%d (force enabled)", 
+             had_bindless, extensions->ARB_bindless_texture);
+
    /* EXT implies ARB here */
    if (extensions->EXT_texture_filter_minmax)
       extensions->ARB_texture_filter_minmax = GL_TRUE;

@@ -2529,21 +2529,32 @@ nir_visitor::visit(ir_texture *ir)
    instr->dest_type = nir_get_nir_type_for_glsl_type(dest_type);
    instr->is_sparse = ir->is_sparse;
 
-   nir_deref_instr *sampler_deref = evaluate_deref(ir->sampler);
-
-   /* check for bindless handles */
-   if (!nir_deref_mode_is(sampler_deref, nir_var_uniform) ||
-       nir_deref_instr_get_variable(sampler_deref)->data.bindless) {
-      nir_ssa_def *load = nir_load_deref(&b, sampler_deref);
-      instr->src[0].src = nir_src_for_ssa(load);
+   /* Handle bindless sampler expressions (from casts) vs variable dereferences */
+   if (ir->sampler->ir_type == ir_type_expression) {
+      /* Bindless sampler expression (e.g., from (sampler2D)((uint64_t)(handle))) */
+      nir_ssa_def *handle = evaluate_rvalue(ir->sampler);
+      instr->src[0].src = nir_src_for_ssa(handle);
       instr->src[0].src_type = nir_tex_src_texture_handle;
-      instr->src[1].src = nir_src_for_ssa(load);
+      instr->src[1].src = nir_src_for_ssa(handle);
       instr->src[1].src_type = nir_tex_src_sampler_handle;
    } else {
-      instr->src[0].src = nir_src_for_ssa(&sampler_deref->dest.ssa);
-      instr->src[0].src_type = nir_tex_src_texture_deref;
-      instr->src[1].src = nir_src_for_ssa(&sampler_deref->dest.ssa);
-      instr->src[1].src_type = nir_tex_src_sampler_deref;
+      /* Traditional sampler variable dereference */
+      nir_deref_instr *sampler_deref = evaluate_deref(ir->sampler);
+
+      /* check for bindless handles */
+      if (!nir_deref_mode_is(sampler_deref, nir_var_uniform) ||
+          nir_deref_instr_get_variable(sampler_deref)->data.bindless) {
+         nir_ssa_def *load = nir_load_deref(&b, sampler_deref);
+         instr->src[0].src = nir_src_for_ssa(load);
+         instr->src[0].src_type = nir_tex_src_texture_handle;
+         instr->src[1].src = nir_src_for_ssa(load);
+         instr->src[1].src_type = nir_tex_src_sampler_handle;
+      } else {
+         instr->src[0].src = nir_src_for_ssa(&sampler_deref->dest.ssa);
+         instr->src[0].src_type = nir_tex_src_texture_deref;
+         instr->src[1].src = nir_src_for_ssa(&sampler_deref->dest.ssa);
+         instr->src[1].src_type = nir_tex_src_sampler_deref;
+      }
    }
 
    unsigned src_number = 2;

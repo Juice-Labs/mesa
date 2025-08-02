@@ -30,6 +30,8 @@
 #include "main/shaderobj.h"
 #include "builtin_functions.h"
 
+#include "log.h"
+
 static ir_rvalue *
 convert_component(ir_rvalue *src, const glsl_type *desired_type);
 
@@ -885,82 +887,88 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
    case GLSL_TYPE_UINT:
       switch (b) {
       case GLSL_TYPE_INT:
-         result = new(ctx) ir_expression(ir_unop_i2u, src);
+         result = new(ctx) ir_expression(ir_unop_i2u, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT:
-         result = new(ctx) ir_expression(ir_unop_f2u, src);
+         result = new(ctx) ir_expression(ir_unop_f2u, desired_type, src);
          break;
       case GLSL_TYPE_BOOL:
-         result = new(ctx) ir_expression(ir_unop_i2u,
-                                         new(ctx) ir_expression(ir_unop_b2i,
-                                                                src));
+         result = new(ctx) ir_expression(ir_unop_i2u, desired_type,
+                                         new(ctx) ir_expression(ir_unop_b2i, 
+                                                                glsl_type::int_type, src));
          break;
       case GLSL_TYPE_DOUBLE:
-         result = new(ctx) ir_expression(ir_unop_d2u, src);
+         result = new(ctx) ir_expression(ir_unop_d2u, desired_type, src);
          break;
       case GLSL_TYPE_UINT64:
-         result = new(ctx) ir_expression(ir_unop_u642u, src);
+         if (desired_type->vector_elements == 2) {
+            /* Convert uint64_t to uvec2 using unpack operation */
+            result = new(ctx) ir_expression(ir_unop_unpack_uint_2x32, glsl_type::uvec2_type, src);
+         } else {
+            /* Convert uint64_t to uint using standard conversion */
+            result = new(ctx) ir_expression(ir_unop_u642u, desired_type, src);
+         }
          break;
       case GLSL_TYPE_INT64:
-         result = new(ctx) ir_expression(ir_unop_i642u, src);
+         result = new(ctx) ir_expression(ir_unop_i642u, desired_type, src);
          break;
       case GLSL_TYPE_SAMPLER:
-         result = new(ctx) ir_expression(ir_unop_unpack_sampler_2x32, src);
+         result = new(ctx) ir_expression(ir_unop_unpack_sampler_2x32, glsl_type::uvec2_type, src);
          break;
       case GLSL_TYPE_IMAGE:
-         result = new(ctx) ir_expression(ir_unop_unpack_image_2x32, src);
+         result = new(ctx) ir_expression(ir_unop_unpack_image_2x32, glsl_type::uvec2_type, src);
          break;
       case GLSL_TYPE_UINT8:
-         result = new(ctx) ir_expression(ir_unop_u82u, src);
+         result = new(ctx) ir_expression(ir_unop_u82u, desired_type, src);
          break;
       case GLSL_TYPE_INT8:
-         result = new(ctx) ir_expression(ir_unop_i82u, src);
+         result = new(ctx) ir_expression(ir_unop_i82u, desired_type, src);
          break;
       case GLSL_TYPE_UINT16:
-         result = new(ctx) ir_expression(ir_unop_u162u, src);
+         result = new(ctx) ir_expression(ir_unop_u162u, desired_type, src);
          break;
       case GLSL_TYPE_INT16:
-         result = new(ctx) ir_expression(ir_unop_i162u, src);
+         result = new(ctx) ir_expression(ir_unop_i162u, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT16:
-         result = new(ctx) ir_expression(ir_unop_f2u, src);
+         result = new(ctx) ir_expression(ir_unop_f2u, desired_type, src);
          break;
       }
       break;
    case GLSL_TYPE_INT:
       switch (b) {
       case GLSL_TYPE_UINT:
-         result = new(ctx) ir_expression(ir_unop_u2i, src);
+         result = new(ctx) ir_expression(ir_unop_u2i, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT:
-         result = new(ctx) ir_expression(ir_unop_f2i, src);
+         result = new(ctx) ir_expression(ir_unop_f2i, desired_type, src);
          break;
       case GLSL_TYPE_BOOL:
-         result = new(ctx) ir_expression(ir_unop_b2i, src);
+         result = new(ctx) ir_expression(ir_unop_b2i, desired_type, src);
          break;
       case GLSL_TYPE_DOUBLE:
-         result = new(ctx) ir_expression(ir_unop_d2i, src);
+         result = new(ctx) ir_expression(ir_unop_d2i, desired_type, src);
          break;
       case GLSL_TYPE_UINT64:
-         result = new(ctx) ir_expression(ir_unop_u642i, src);
+         result = new(ctx) ir_expression(ir_unop_u642i, desired_type, src);
          break;
       case GLSL_TYPE_INT64:
-         result = new(ctx) ir_expression(ir_unop_i642i, src);
+         result = new(ctx) ir_expression(ir_unop_i642i, desired_type, src);
          break;
       case GLSL_TYPE_UINT8:
-         result = new(ctx) ir_expression(ir_unop_u2i, src);
+         result = new(ctx) ir_expression(ir_unop_u2i, desired_type, src);
          break;
       case GLSL_TYPE_INT8:
-         result = new(ctx) ir_expression(ir_unop_i82i, src);
+         result = new(ctx) ir_expression(ir_unop_i82i, desired_type, src);
          break;
       case GLSL_TYPE_UINT16:
-         result = new(ctx) ir_expression(ir_unop_u2i, src);
+         result = new(ctx) ir_expression(ir_unop_u2i, desired_type, src);
          break;
       case GLSL_TYPE_INT16:
-         result = new(ctx) ir_expression(ir_unop_i162i, src);
+         result = new(ctx) ir_expression(ir_unop_i162i, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT16:
-         result = new(ctx) ir_expression(ir_unop_f2i, src);
+         result = new(ctx) ir_expression(ir_unop_f2i, desired_type, src);
          break;
       }
       break;
@@ -1047,15 +1055,15 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
    case GLSL_TYPE_DOUBLE:
       switch (b) {
       case GLSL_TYPE_INT:
-         result = new(ctx) ir_expression(ir_unop_i2d, src);
+         result = new(ctx) ir_expression(ir_unop_i2d, desired_type, src);
          break;
       case GLSL_TYPE_UINT:
-         result = new(ctx) ir_expression(ir_unop_u2d, src);
+         result = new(ctx) ir_expression(ir_unop_u2d, desired_type, src);
          break;
       case GLSL_TYPE_BOOL:
-         result = new(ctx) ir_expression(ir_unop_f2d,
+         result = new(ctx) ir_expression(ir_unop_f2d, desired_type,
                                          new(ctx) ir_expression(ir_unop_b2f,
-                                                                src));
+                                                                glsl_type::float_type, src));
          break;
       case GLSL_TYPE_FLOAT:
          result = new(ctx) ir_expression(ir_unop_f2d, desired_type, src, NULL);
@@ -1067,16 +1075,16 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          result = new(ctx) ir_expression(ir_unop_i642d, desired_type, src, NULL);
          break;
       case GLSL_TYPE_UINT8:
-         result = new(ctx) ir_expression(ir_unop_u2d, src);
+         result = new(ctx) ir_expression(ir_unop_u2d, desired_type, src);
          break;
       case GLSL_TYPE_INT8:
-         result = new(ctx) ir_expression(ir_unop_i2d, src);
+         result = new(ctx) ir_expression(ir_unop_i2d, desired_type, src);
          break;
       case GLSL_TYPE_UINT16:
-         result = new(ctx) ir_expression(ir_unop_u2d, src);
+         result = new(ctx) ir_expression(ir_unop_u2d, desired_type, src);
          break;
       case GLSL_TYPE_INT16:
-         result = new(ctx) ir_expression(ir_unop_i2d, src);
+         result = new(ctx) ir_expression(ir_unop_i2d, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT16:
          result = new(ctx) ir_expression(ir_unop_f2d, desired_type,
@@ -1087,78 +1095,84 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
    case GLSL_TYPE_UINT64:
       switch (b) {
       case GLSL_TYPE_INT:
-         result = new(ctx) ir_expression(ir_unop_i2u64, src);
+         result = new(ctx) ir_expression(ir_unop_i2u64, desired_type, src);
          break;
       case GLSL_TYPE_UINT:
-         result = new(ctx) ir_expression(ir_unop_u2u64, src);
+         if (src->type->vector_elements == 2 && desired_type->vector_elements == 1) {
+            /* Convert uvec2 to scalar uint64_t using pack operation */
+            result = new(ctx) ir_expression(ir_unop_pack_uint_2x32, glsl_type::uint64_t_type, src);
+         } else {
+            /* Convert uint to uint64_t using standard conversion (handles vectors component-wise) */
+            result = new(ctx) ir_expression(ir_unop_u2u64, desired_type, src);
+         }
          break;
       case GLSL_TYPE_BOOL:
-         result = new(ctx) ir_expression(ir_unop_i642u64,
-                                         new(ctx) ir_expression(ir_unop_b2i64,
-                                                                src));
+         result = new(ctx) ir_expression(ir_unop_i642u64, desired_type,
+                                         new(ctx) ir_expression(ir_unop_b2i64, 
+                                                                glsl_type::int64_t_type, src));
          break;
       case GLSL_TYPE_FLOAT:
-         result = new(ctx) ir_expression(ir_unop_f2u64, src);
+         result = new(ctx) ir_expression(ir_unop_f2u64, desired_type, src);
          break;
       case GLSL_TYPE_DOUBLE:
-         result = new(ctx) ir_expression(ir_unop_d2u64, src);
+         result = new(ctx) ir_expression(ir_unop_d2u64, desired_type, src);
          break;
       case GLSL_TYPE_INT64:
-         result = new(ctx) ir_expression(ir_unop_i642u64, src);
+         result = new(ctx) ir_expression(ir_unop_i642u64, desired_type, src);
          break;
       case GLSL_TYPE_UINT8:
-         result = new(ctx) ir_expression(ir_unop_u2u64, src);
+         result = new(ctx) ir_expression(ir_unop_u2u64, desired_type, src);
          break;
       case GLSL_TYPE_INT8:
-         result = new(ctx) ir_expression(ir_unop_i2u64, src);
+         result = new(ctx) ir_expression(ir_unop_i2u64, desired_type, src);
          break;
       case GLSL_TYPE_UINT16:
-         result = new(ctx) ir_expression(ir_unop_u2u64, src);
+         result = new(ctx) ir_expression(ir_unop_u2u64, desired_type, src);
          break;
       case GLSL_TYPE_INT16:
-         result = new(ctx) ir_expression(ir_unop_i2u64, src);
+         result = new(ctx) ir_expression(ir_unop_i2u64, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT16:
-         result = new(ctx) ir_expression(ir_unop_f2u64,
-                                        new(ctx) ir_expression(ir_unop_f162f, src));
+         result = new(ctx) ir_expression(ir_unop_f2u64, desired_type,
+                                        new(ctx) ir_expression(ir_unop_f162f, glsl_type::float_type, src));
          break;
       }
       break;
    case GLSL_TYPE_INT64:
       switch (b) {
       case GLSL_TYPE_INT:
-         result = new(ctx) ir_expression(ir_unop_i2i64, src);
+         result = new(ctx) ir_expression(ir_unop_i2i64, desired_type, src);
          break;
       case GLSL_TYPE_UINT:
-         result = new(ctx) ir_expression(ir_unop_u2i64, src);
+         result = new(ctx) ir_expression(ir_unop_u2i64, desired_type, src);
          break;
       case GLSL_TYPE_BOOL:
-         result = new(ctx) ir_expression(ir_unop_b2i64, src);
+         result = new(ctx) ir_expression(ir_unop_b2i64, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT:
-         result = new(ctx) ir_expression(ir_unop_f2i64, src);
+         result = new(ctx) ir_expression(ir_unop_f2i64, desired_type, src);
          break;
       case GLSL_TYPE_DOUBLE:
-         result = new(ctx) ir_expression(ir_unop_d2i64, src);
+         result = new(ctx) ir_expression(ir_unop_d2i64, desired_type, src);
          break;
       case GLSL_TYPE_UINT64:
-         result = new(ctx) ir_expression(ir_unop_u642i64, src);
+         result = new(ctx) ir_expression(ir_unop_u642i64, desired_type, src);
          break;
       case GLSL_TYPE_UINT8:
-         result = new(ctx) ir_expression(ir_unop_u2i64, src);
+         result = new(ctx) ir_expression(ir_unop_u2i64, desired_type, src);
          break;
       case GLSL_TYPE_INT8:
-         result = new(ctx) ir_expression(ir_unop_i2i64, src);
+         result = new(ctx) ir_expression(ir_unop_i2i64, desired_type, src);
          break;
       case GLSL_TYPE_UINT16:
-         result = new(ctx) ir_expression(ir_unop_u2i64, src);
+         result = new(ctx) ir_expression(ir_unop_u2i64, desired_type, src);
          break;
       case GLSL_TYPE_INT16:
-         result = new(ctx) ir_expression(ir_unop_i2i64, src);
+         result = new(ctx) ir_expression(ir_unop_i2i64, desired_type, src);
          break;
       case GLSL_TYPE_FLOAT16:
-         result = new(ctx) ir_expression(ir_unop_f2i64,
-                                        new(ctx) ir_expression(ir_unop_f162f, src));
+         result = new(ctx) ir_expression(ir_unop_f2i64, desired_type,
+                                        new(ctx) ir_expression(ir_unop_f162f, glsl_type::float_type, src));
          break;
       }
       break;
@@ -1168,6 +1182,12 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          result = new(ctx)
             ir_expression(ir_unop_pack_sampler_2x32, desired_type, src);
          break;
+      case GLSL_TYPE_UINT64:
+         /* Convert uint64_t to sampler for bindless texture support */
+         result = new(ctx)
+            ir_expression(ir_unop_pack_sampler_2x32, desired_type, 
+                         new(ctx) ir_expression(ir_unop_unpack_uint_2x32, glsl_type::uvec2_type, src));
+         break;
       }
       break;
    case GLSL_TYPE_IMAGE:
@@ -1175,6 +1195,12 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_UINT:
          result = new(ctx)
             ir_expression(ir_unop_pack_image_2x32, desired_type, src);
+         break;
+      case GLSL_TYPE_UINT64:
+         /* Convert uint64_t to image for bindless texture support */
+         result = new(ctx)
+            ir_expression(ir_unop_pack_image_2x32, desired_type, 
+                         new(ctx) ir_expression(ir_unop_unpack_uint_2x32, glsl_type::uvec2_type, src));
          break;
       }
       break;
@@ -1333,6 +1359,8 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
    }
 
    assert(result != NULL);
+   mesa_logi("CONVERT DEBUG: src type = %s (base %d), desired type = %s (base %d), result type = %s (base %d)", 
+             src->type->name, b, desired_type->name, a, result->type->name, result->type->base_type);
    assert(result->type == desired_type);
 
    /* Try constant folding; it may fold in the conversion we just added. */
@@ -2420,6 +2448,13 @@ ast_function_expression::hir(exec_list *instructions,
        * "Images are represented using 64-bit integer handles, and may be
        *  converted to and from 64-bit integers using constructors."
        */
+      /* Debug: Log type information for bindless texture debugging */
+      mesa_logi("CONSTRUCTOR DEBUG: Attempting to construct type '%s'", constructor_type->name);
+      mesa_logi("  base_type = %d, contains_atomic = %d, contains_opaque = %d", 
+                constructor_type->base_type, constructor_type->contains_atomic(), constructor_type->contains_opaque());
+      mesa_logi("  atomic_size = %d, has_bindless = %d", 
+                constructor_type->atomic_size(), state->has_bindless());
+      
       if (constructor_type->contains_atomic() ||
           (!state->has_bindless() && constructor_type->contains_opaque())) {
          _mesa_glsl_error(& loc, state, "cannot construct %s type `%s'",
@@ -2617,13 +2652,13 @@ ast_function_expression::hir(exec_list *instructions,
             desired_type = glsl_type::uvec2_type;
          } else if (constructor_type->is_sampler() ||
                     constructor_type->is_image()) {
-            /* Convert a pair of 32-bit unsigned integers to a sampler or image
-             * type as defined by ARB_bindless_texture.
+            /* Convert a pair of 32-bit unsigned integers or a 64-bit unsigned 
+             * integer to a sampler or image type as defined by ARB_bindless_texture.
              */
-            if (ir->type != glsl_type::uvec2_type) {
+            if (ir->type != glsl_type::uvec2_type && ir->type != glsl_type::uint64_t_type) {
                _mesa_glsl_error(&loc, state, "sampler and image types can only "
                                 "be converted from a pair of 32-bit unsigned "
-                                "integers");
+                                "integers or a 64-bit unsigned integer");
             }
             desired_type = constructor_type;
          } else {

@@ -1359,8 +1359,6 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
    }
 
    assert(result != NULL);
-   mesa_logi("CONVERT DEBUG: src type = %s (base %d), desired type = %s (base %d), result type = %s (base %d)", 
-             src->type->name, b, desired_type->name, a, result->type->name, result->type->base_type);
    assert(result->type == desired_type);
 
    /* Try constant folding; it may fold in the conversion we just added. */
@@ -2449,11 +2447,6 @@ ast_function_expression::hir(exec_list *instructions,
        *  converted to and from 64-bit integers using constructors."
        */
       /* Debug: Log type information for bindless texture debugging */
-      mesa_logi("CONSTRUCTOR DEBUG: Attempting to construct type '%s'", constructor_type->name);
-      mesa_logi("  base_type = %d, contains_atomic = %d, contains_opaque = %d", 
-                constructor_type->base_type, constructor_type->contains_atomic(), constructor_type->contains_opaque());
-      mesa_logi("  atomic_size = %d, has_bindless = %d", 
-                constructor_type->atomic_size(), state->has_bindless());
       
       if (constructor_type->contains_atomic() ||
           (!state->has_bindless() && constructor_type->contains_opaque())) {

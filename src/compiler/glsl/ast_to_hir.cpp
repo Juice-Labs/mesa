@@ -1845,8 +1845,17 @@ ast_expression::do_hir(ir_exec_list *instructions,
       if (error_emitted) {
          result = new(linalloc) ir_constant(false);
       } else {
-         result = do_comparison(state->linalloc, operations[this->oper], op[0], op[1]);
-         assert(result->type == &glsl_type_builtin_bool);
+         /* For vector operands, use component-wise comparison operations that
+          * return vector results, matching native hardware behavior.
+          * For scalar operands, use the traditional all_equal/any_nequal.
+          */
+         if (glsl_type_is_vector(op[0]->type)) {
+            int vector_op = (this->oper == ast_equal) ? ir_binop_equal : ir_binop_nequal;
+            result = new(state->linalloc) ir_expression(vector_op, op[0], op[1]);
+         } else {
+            result = do_comparison(state->linalloc, operations[this->oper], op[0], op[1]);
+            assert(result->type == &glsl_type_builtin_bool);
+         }
       }
       break;
 

@@ -113,7 +113,8 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
    struct gl_context *current_ctx = NULL;
    BOOL result = FALSE;
    
-   mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV called (src=%p, dst=%p)", hSrcRC, hDstRC);
+   mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV called (srcRC=%p, srcName=%u, srcTarget=0x%x, dstRC=%p, dstName=%u, dstTarget=0x%x, size=%dx%dx%d)", 
+         hSrcRC, srcName, srcTarget, hDstRC, dstName, dstTarget, width, height, depth);
    
    if (!stw_dev) {
       mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No STW device");
@@ -175,6 +176,52 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
       /* Note: This is a simplified approach. In a full implementation, 
        * we would need proper context switching via WGL functions */
       context_switched = true;
+   }
+   
+   /* DEBUGGING: Dump source texture to disk */
+   if (srcTarget == GL_TEXTURE_2D && srcLevel == 0) {
+      /* Make sure we're working with the source context */
+      if (src_ctx == _mesa_get_current_context()) {
+         GLint prev_tex;
+         glGetIntegerv(GL_TEXTURE_BINDING_2D, &prev_tex);
+         
+         glBindTexture(GL_TEXTURE_2D, srcName);
+         
+         /* Get texture dimensions */
+         GLint tex_width, tex_height;
+         glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &tex_width);
+         glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &tex_height);
+         
+         if (tex_width > 0 && tex_height > 0 && tex_width < 4096 && tex_height < 4096) {
+            /* Allocate buffer for RGBA data */
+            size_t data_size = tex_width * tex_height * 4 * sizeof(float);
+            float *pixel_data = malloc(data_size);
+            
+            if (pixel_data) {
+               /* Read texture as RGBA float */
+               glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, pixel_data);
+               
+               /* Generate filename with texture info */
+               char filename[256];
+               snprintf(filename, sizeof(filename), "C:\\temp\\texture_dump_src%u_%dx%d.raw", 
+                        srcName, tex_width, tex_height);
+               
+               /* Write to disk */
+               FILE *f = fopen(filename, "wb");
+               if (f) {
+                  fwrite(pixel_data, 1, data_size, f);
+                  fclose(f);
+                  mesa_log(MESA_LOG_INFO, "WGL", "DUMPED source texture %u (%dx%d) to %s", 
+                           srcName, tex_width, tex_height, filename);
+               }
+               
+               free(pixel_data);
+            }
+         }
+         
+         /* Restore previous texture binding */
+         glBindTexture(GL_TEXTURE_2D, prev_tex);
+      }
    }
    
    /* Call the Mesa implementation through the dispatch table */

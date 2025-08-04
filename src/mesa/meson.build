@@ -190,6 +190,8 @@ files_libmesa = files(
   'main/shader_query.cpp',
   'main/shaderapi.c',
   'main/shaderapi.h',
+  'main/shader_dump.c',
+  'main/shader_dump.h',
   'main/shaderimage.c',
   'main/shaderimage.h',
   'main/shaderobj.c',

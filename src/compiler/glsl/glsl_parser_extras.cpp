@@ -30,6 +30,7 @@
 #include "main/debug_output.h"
 #include "main/formats.h"
 #include "main/shaderobj.h"
+#include "main/shader_dump.h"
 #include "util/u_atomic.h" /* for p_atomic_cmpxchg */
 #include "util/ralloc.h"
 #include "util/disk_cache.h"
@@ -2259,6 +2260,11 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
    if (!source_has_shader_include || !force_recompile) {
       state->error = glcpp_preprocess(state, &source, &state->info_log,
                                       add_builtin_defines, state, ctx);
+   }
+
+   /* Dump preprocessed shader source (always enabled for debugging) */
+   if (!state->error && source) {
+      _mesa_dump_preprocessed_shader(ctx, shader, source);
    }
 
    /* Now that we have run the preprocessor we can check the shader cache and

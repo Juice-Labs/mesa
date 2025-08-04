@@ -66,6 +66,7 @@
 #include "util/u_process.h"
 #include "util/u_string.h"
 #include "api_exec_decl.h"
+#include "shader_dump.h"
 
 #include "state_tracker/st_context.h"
 #include "state_tracker/st_program.h"
@@ -1410,6 +1411,9 @@ link_program(struct gl_context *ctx, struct gl_shader_program *shProg,
       ralloc_free(filename);
    }
 #endif
+
+   /* Dump pipeline JSON (always enabled for debugging) */
+   _mesa_dump_pipeline_json(ctx, shProg);
 
    if (shProg->data->LinkStatus == LINKING_FAILURE &&
        (ctx->_Shader->Flags & GLSL_REPORT_ERRORS)) {

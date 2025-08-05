@@ -1200,7 +1200,7 @@ private:
    BA1(equal);
    BA1(notEqual);
    B1(any);
-   B1(all);
+   BA1(all);
    B1(not);
    BA2(textureSize);
    BA1(textureSamples);
@@ -2325,9 +2325,10 @@ builtin_builder::create_builtins()
                 NULL);
 
    add_function("all",
-                _all(glsl_type::bvec2_type),
-                _all(glsl_type::bvec3_type),
-                _all(glsl_type::bvec4_type),
+                _all(nv_gpu_shader5, glsl_type::bool_type),
+                _all(always_available, glsl_type::bvec2_type),
+                _all(always_available, glsl_type::bvec3_type),
+                _all(always_available, glsl_type::bvec4_type),
                 NULL);
 
    add_function("not",
@@ -7185,10 +7186,10 @@ builtin_builder::_any(const glsl_type *type)
 }
 
 ir_function_signature *
-builtin_builder::_all(const glsl_type *type)
+builtin_builder::_all(builtin_available_predicate avail, const glsl_type *type)
 {
    ir_variable *v = in_var(type, "v");
-   MAKE_SIG(glsl_type::bool_type, always_available, 1, v);
+   MAKE_SIG(glsl_type::bool_type, avail, 1, v);
 
    const unsigned vec_elem = v->type->vector_elements;
    body.emit(ret(expr(ir_binop_all_equal, v, imm(true, vec_elem))));

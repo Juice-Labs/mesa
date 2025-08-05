@@ -6,6 +6,7 @@
 #include "shader_dump.h"
 #include "shaderapi.h"
 #include "context.h"
+#include "errors.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,11 +44,18 @@ _mesa_init_shader_dump(void)
       return;
       
    /* Create c:\shader directory if it doesn't exist */
-   if (mkdir(dump_dir, 0755) == -1 && errno != EEXIST) {
-      /* Failed to create directory, but continue anyway */
+   if (mkdir(dump_dir, 0755) == 0) {
+      /* Successfully created directory */
+      _mesa_log("MESA SHADER DUMP: Created shader dump directory %s\n", dump_dir);
+   } else if (errno != EEXIST) {
+      /* Failed to create directory for reason other than already exists */
+      _mesa_log("MESA SHADER DUMP: Warning - failed to create shader dump directory %s\n", dump_dir);
    }
    
    dump_initialized = true;
+   
+   /* Log that shader dump is active */
+   _mesa_log("MESA SHADER DUMP: System initialized and active. Shaders will be dumped to %s\n", dump_dir);
 }
 
 void
@@ -109,6 +117,10 @@ _mesa_dump_preprocessed_shader(struct gl_context *ctx,
    
    fclose(file);
    free(complete_content);
+   
+   /* Log successful shader dump */
+   _mesa_log("MESA SHADER DUMP: Dumped %s shader %u to %s\n", 
+             stage_name, shader->Name, filename);
 }
 
 void
@@ -201,4 +213,7 @@ _mesa_dump_pipeline_json(struct gl_context *ctx,
    fprintf(file, "}\n");
    
    fclose(file);
+   
+   /* Log successful pipeline dump */
+   _mesa_log("MESA SHADER DUMP: Dumped pipeline %u to %s\n", shProg->Name, filename);
 }

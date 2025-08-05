@@ -92,6 +92,7 @@ float_type = type("float", "f", "GLSL_TYPE_FLOAT")
 float16_type = type("float16_t", "f16", "GLSL_TYPE_FLOAT16")
 double_type = type("double", "d", "GLSL_TYPE_DOUBLE")
 bool_type = type("bool", "b", "GLSL_TYPE_BOOL")
+sampler_type = type("sampler", "s", "GLSL_TYPE_SAMPLER")
 
 all_types = (uint_type, int_type, float_type, double_type, uint64_type, int64_type, uint16_type, int16_type, uint8_type, int8_type, float16_type, bool_type)
 numeric_types = (uint_type, int_type, float_type, double_type, uint64_type, int64_type, uint16_type, int16_type, uint8_type, int8_type, float16_type)
@@ -699,6 +700,10 @@ ir_expression_operation = [
    operation("any_thread_nv", 1, printable_name="anyThreadNV", source_types=(bool_type,), dest_type=bool_type, c_expression="data.b[0] = op[0]->value.b[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
    operation("all_threads_nv", 1, printable_name="allThreadsNV", source_types=(bool_type,), dest_type=bool_type, c_expression="data.b[0] = op[0]->value.b[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
    operation("all_threads_equal_nv", 1, printable_name="allThreadsEqualNV", source_types=(bool_type,), dest_type=bool_type, c_expression="data.b[0] = true", flags=frozenset((horizontal_operation, non_assign_operation))),
+   # Direct sampler bitcasting for bindless textures (GL_NV_gpu_shader5)
+   operation("bitcast_sampler_to_uint64", 1, printable_name="bitcastSamplerToUint64", source_types=(sampler_type,), dest_type=uint64_type, c_expression="data.u64[0] = op[0]->value.u64[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
+   operation("bitcast_uint64_to_sampler", 1, printable_name="bitcastUint64ToSampler", source_types=(uint64_type,), dest_type=sampler_type, c_expression="data.u64[0] = op[0]->value.u64[0]", flags=frozenset((horizontal_operation, non_assign_operation))),
+
 
    operation("add", 2, printable_name="+", source_types=numeric_types, c_expression="{src0} + {src1}", flags=vector_scalar_operation),
    operation("sub", 2, printable_name="-", source_types=numeric_types, c_expression="{src0} - {src1}", flags=vector_scalar_operation),

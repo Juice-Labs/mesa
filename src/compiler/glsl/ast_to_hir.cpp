@@ -330,6 +330,7 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
 
    case GLSL_TYPE_INT:
       switch (from->base_type) {
+      case GLSL_TYPE_UINT: return state->NV_gpu_shader5_enable ? ir_unop_u2i : (ir_expression_operation)0;
       case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82i : (ir_expression_operation)0;
       case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162i : (ir_expression_operation)0;
       default: return (ir_expression_operation)0;
@@ -1189,6 +1190,182 @@ ast_function_expression::hir_no_rvalue(ir_exec_list *instructions,
 void
 ast_aggregate_initializer::hir_no_rvalue(ir_exec_list *instructions,
                                          struct _mesa_glsl_parse_state *state)
+{
+   (void)hir(instructions, state);
+}
+
+ir_rvalue *
+ast_cstyle_cast_expression::hir(exec_list *instructions,
+                                struct _mesa_glsl_parse_state *state)
+{
+   void *ctx = state;
+   YYLTYPE loc = this->get_location();
+   const char *name;
+
+   /* Get the target type for the cast */
+   const glsl_type *target_type = cast_type->glsl_type(&name, state);
+   if (target_type == NULL) {
+      _mesa_glsl_error(&loc, state, "unknown type `%s' in C-style cast", name);
+      return ir_rvalue::error_value(ctx);
+   }
+
+   /* Get the expression to be cast */
+   ir_rvalue *expr = subexpressions[0]->hir(instructions, state);
+   if (expr == NULL || expr->type->is_error()) {
+      return ir_rvalue::error_value(ctx);
+   }
+
+   /* C-style casting is only supported with NV_gpu_shader5 */
+   if (!state->NV_gpu_shader5_enable) {
+      _mesa_glsl_error(&loc, state, "C-style cast from `%s' to `%s' requires GL_NV_gpu_shader5",
+                       expr->type->name, target_type->name);
+      return ir_rvalue::error_value(ctx);
+   }
+
+   /* Handle bindless texture samplers (uint64_t <-> sampler2D) */
+   if (target_type->is_sampler() && expr->type->is_integer_64()) {
+      /* uint64_t -> sampler2D */
+      return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
+                                   target_type, expr, NULL);
+   } else if (expr->type->is_sampler() && target_type->is_integer_64()) {
+      /* sampler2D -> uint64_t */
+      return new(ctx) ir_expression(ir_unop_bitcast_sampler_to_uint64,
+                                   target_type, expr, NULL);
+   }
+   
+   /* Handle vector types to sampler casts for bindless textures */
+   if (target_type->is_sampler() && expr->type->is_vector() && 
+       expr->type->is_integer_64()) {
+      /* u64vec2/u64vec3/u64vec4 -> sampler2D: use first component */
+      /* For bindless textures, we typically use the first component as the handle */
+      ir_rvalue *first_component = new(ctx) ir_swizzle(expr, 0, 0, 0, 0, 1);
+      return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
+                                   target_type, first_component, NULL);
+   } else if (target_type->is_sampler() && expr->type->is_vector() && 
+              expr->type->is_integer_32()) {
+      /* uvec2/uvec3/uvec4 -> sampler2D: pack to uint64_t first, then cast */
+      /* For bindless textures, we pack the vector components into a uint64_t handle */
+      if (expr->type->vector_elements == 2) {
+         /* uvec2 -> uint64_t -> sampler2D */
+         ir_rvalue *packed = new(ctx) ir_expression(ir_unop_pack_uint_2x32,
+                                                    glsl_type::uint64_t_type, expr, NULL);
+         return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
+                                      target_type, packed, NULL);
+      } else {
+         /* For uvec3/uvec4, use first two components */
+         ir_rvalue *first_two = new(ctx) ir_swizzle(expr, 0, 1, 0, 0, 2);
+         ir_rvalue *packed = new(ctx) ir_expression(ir_unop_pack_uint_2x32,
+                                                   glsl_type::uint64_t_type, first_two, NULL);
+         return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
+                                      target_type, packed, NULL);
+      }
+   } else if (expr->type->is_sampler() && target_type->is_vector() &&
+              target_type->is_integer_64()) {
+      /* sampler2D -> u64vec2/u64vec3/u64vec4: expand to vector */
+      ir_rvalue *handle = new(ctx) ir_expression(ir_unop_bitcast_sampler_to_uint64,
+                                                target_type->get_base_type(), expr, NULL);
+      /* For now, just return the handle as a scalar - the vector construction
+       * would need more complex logic to create a proper vector */
+      return handle;
+      }
+
+   /* Handle primitive type conversions */
+   if (target_type->is_numeric() && expr->type->is_numeric()) {
+      /* For numeric types, we can use implicit conversion */
+      if (apply_implicit_conversion(target_type, expr, state)) {
+         return expr;
+      }
+   }
+
+   /* Handle bitcasting for same-size types */
+   if (target_type->bit_size() == expr->type->bit_size()) {
+      /* For same-size types, we can use bitcasting */
+      if (target_type->is_integer_64() && expr->type->is_double()) {
+         return new(ctx) ir_expression(ir_unop_double_bits_to_int64,
+                                      target_type, expr, NULL);
+      } else if (target_type->is_double() && expr->type->is_integer_64()) {
+         return new(ctx) ir_expression(ir_unop_int64_bits_to_double,
+                                      target_type, expr, NULL);
+      } else if (target_type->is_integer_32() && expr->type->is_float()) {
+         return new(ctx) ir_expression(ir_unop_bitcast_f2i,
+                                      target_type, expr, NULL);
+      } else if (target_type->is_float() && expr->type->is_integer_32()) {
+         return new(ctx) ir_expression(ir_unop_bitcast_i2f,
+                                      target_type, expr, NULL);
+      }
+   }
+
+   /* Handle vector to uint64_t casts for bindless textures */
+   if (target_type->is_integer_64() && expr->type->is_vector() && 
+       expr->type->vector_elements == 2 && expr->type->is_float()) {
+      /* vec2 -> uint64_t: pack the two float components into uint64 */
+      /* This is commonly used for bindless texture handles */
+      return new(ctx) ir_expression(ir_unop_pack_double_2x32,
+                                   target_type, expr, NULL);
+   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
+              target_type->vector_elements == 2 && target_type->is_float()) {
+      /* uint64_t -> vec2: unpack uint64 into two float components */
+      return new(ctx) ir_expression(ir_unop_unpack_double_2x32,
+                                   target_type, expr, NULL);
+   } else if (target_type->is_integer_64() && expr->type->is_vector() &&
+              expr->type->vector_elements == 3 && expr->type->is_float()) {
+      /* vec3 -> uint64_t: pack three float components into uint64 */
+      /* Note: This packs the first two components, the third is truncated */
+      return new(ctx) ir_expression(ir_unop_pack_double_2x32,
+                                   target_type, expr, NULL);
+   } else if (target_type->is_integer_64() && expr->type->is_vector() &&
+              expr->type->vector_elements == 4 && expr->type->is_float()) {
+      /* vec4 -> uint64_t: pack four float components into uint64 */
+      /* Note: This packs the first two components, the last two are truncated */
+      return new(ctx) ir_expression(ir_unop_pack_double_2x32,
+                                   target_type, expr, NULL);
+   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
+              target_type->vector_elements == 3 && target_type->is_float()) {
+      /* uint64_t -> vec3: unpack uint64 into three float components */
+      /* The third component will be zero */
+      return new(ctx) ir_expression(ir_unop_unpack_double_2x32,
+                                   target_type, expr, NULL);
+   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
+              target_type->vector_elements == 4 && target_type->is_float()) {
+      /* uint64_t -> vec4: unpack uint64 into four float components */
+      /* The last two components will be zero */
+      return new(ctx) ir_expression(ir_unop_unpack_double_2x32,
+                                   target_type, expr, NULL);
+   } else if (target_type->is_integer_64() && expr->type->is_vector() &&
+              expr->type->vector_elements == 2 && expr->type->is_integer_32()) {
+      /* ivec2/uvec2 -> uint64_t: pack two integer components into uint64 */
+      if (expr->type->get_base_type()->base_type == GLSL_TYPE_UINT) {
+         /* uvec2 -> uint64_t */
+         return new(ctx) ir_expression(ir_unop_pack_uint_2x32,
+                                      target_type, expr, NULL);
+      } else {
+         /* ivec2 -> uint64_t */
+         return new(ctx) ir_expression(ir_unop_pack_int_2x32,
+                                      target_type, expr, NULL);
+      }
+   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
+              target_type->vector_elements == 2 && target_type->is_integer_32()) {
+      /* uint64_t -> ivec2/uvec2: unpack uint64 into two integer components */
+      if (target_type->get_base_type()->base_type == GLSL_TYPE_UINT) {
+         /* uint64_t -> uvec2 */
+         return new(ctx) ir_expression(ir_unop_unpack_uint_2x32,
+                                      target_type, expr, NULL);
+      } else {
+         /* uint64_t -> ivec2 */
+         return new(ctx) ir_expression(ir_unop_unpack_int_2x32,
+                                      target_type, expr, NULL);
+      }
+   }
+
+   /* If we get here, the cast is not supported */
+   _mesa_glsl_error(&loc, state, "C-style cast from `%s' to `%s' is not supported",
+                    expr->type->name, target_type->name);
+   return ir_rvalue::error_value(ctx);
+}
+
+void
+ast_cstyle_cast_expression::hir_no_rvalue(exec_list *instructions,
+                                          struct _mesa_glsl_parse_state *state)
 {
    (void)hir(instructions, state);
 }

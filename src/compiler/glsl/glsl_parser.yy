@@ -595,7 +595,7 @@ function_identifier:
    // analysis recognized most of them as keywords. They are now
    // recognized through "type_specifier".
 
-   // Grammar Note: No traditional style type casts.
+   // Grammar Note: C-style casts are only allowed with GL_NV_gpu_shader5 extension.
 unary_expression:
    postfix_expression
    | INC_OP unary_expression
@@ -615,6 +615,17 @@ unary_expression:
       linear_ctx *ctx = state->linalloc;
       $$ = new(ctx) ast_expression($1, $2, NULL, NULL);
       $$->set_location_range(@1, @2);
+   }
+   | '(' type_specifier ')' unary_expression
+   {
+      linear_ctx *ctx = state->linalloc;
+      if (state->NV_gpu_shader5_enable) {
+         $$ = new(ctx) ast_cstyle_cast_expression($2, $4);
+         $$->set_location_range(@1, @4);
+      } else {
+         _mesa_glsl_error(&@1, state, "C-style casts require GL_NV_gpu_shader5 extension");
+         $$ = $4;
+      }
    }
    ;
 

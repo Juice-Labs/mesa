@@ -70,6 +70,20 @@ ast_expression::operator_string(enum ast_operators op)
       "++",
       "--",
       ".",
+      "[]",
+      "[]",
+      "()",
+      "identifier",
+      "int_constant",
+      "uint_constant",
+      "float_constant",
+      "bool_constant",
+      "double_constant",
+      "int64_constant",
+      "uint64_constant",
+      "sequence",
+      "aggregate",
+      "cstyle_cast"
    };
 
    assert((unsigned int)op < sizeof(operators) / sizeof(operators[0]));

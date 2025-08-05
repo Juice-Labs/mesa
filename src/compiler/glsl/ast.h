@@ -205,16 +205,17 @@ enum ast_operators {
    ast_uint64_constant,
 
    ast_sequence,
-   ast_aggregate
+   ast_aggregate,
+   ast_cstyle_cast
 
    /**
     * Number of possible operators for an ast_expression
     *
     * This is done as a define instead of as an additional value in the enum so
     * that the compiler won't generate spurious messages like "warning:
-    * enumeration value ‘ast_num_operators’ not handled in switch"
+    * enumeration value 'ast_num_operators' not handled in switch"
     */
-   #define AST_NUM_OPERATORS (ast_aggregate + 1)
+   #define AST_NUM_OPERATORS (ast_cstyle_cast + 1)
 };
 
 /**
@@ -342,6 +343,33 @@ private:
    ir_rvalue *
    handle_method(ir_exec_list *instructions,
                  struct _mesa_glsl_parse_state *state);
+};
+
+/**
+ * C-style cast expression class
+ *
+ * Represents C-style type casts like (vec3)value. This is only allowed
+ * when using the GL_NV_gpu_shader5 extension.
+ */
+class ast_cstyle_cast_expression : public ast_expression {
+public:
+   ast_cstyle_cast_expression(ast_type_specifier *type, ast_expression *expr)
+      : ast_expression(ast_cstyle_cast, expr, NULL, NULL),
+        cast_type(type)
+   {
+      /* empty */
+   }
+
+   /**
+    * Type specifier for the cast target type
+    */
+   ast_type_specifier *cast_type;
+
+   virtual ir_rvalue *hir(ir_exec_list *instructions,
+                          struct _mesa_glsl_parse_state *state);
+
+   virtual void hir_no_rvalue(ir_exec_list *instructions,
+                              struct _mesa_glsl_parse_state *state);
 };
 
 class ast_subroutine_list : public ast_node

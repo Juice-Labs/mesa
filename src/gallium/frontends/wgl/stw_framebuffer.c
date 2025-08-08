@@ -140,6 +140,18 @@ stw_framebuffer_get_size(struct stw_framebuffer *fb)
    RECT window_rect;
    POINT client_pos;
 
+   if (!fb->hWnd) {
+      fb->client_rect.left = 0;
+      fb->client_rect.top = 0;
+      fb->client_rect.right = 1;
+      fb->client_rect.bottom = 1;
+      fb->width = 1;
+      fb->height = 1;
+      fb->minimized = FALSE;
+      fb->must_resize = FALSE;
+      return;
+   }
+
    /*
     * Sanity checking.
     */

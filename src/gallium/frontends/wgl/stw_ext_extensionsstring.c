@@ -48,7 +48,9 @@ static const char *stw_extension_string =
    "WGL_EXT_create_context_es_profile "
    "WGL_EXT_create_context_es2_profile "
    "WGL_EXT_extensions_string "
-   "WGL_EXT_swap_control";
+   "WGL_EXT_swap_control " 
+   "WGL_NV_copy_image "
+   "WGL_NV_gpu_affinity";
 
 
 WINGDIAPI const char * APIENTRY

@@ -517,6 +517,7 @@ DrvSetPixelFormat(HDC hdc, LONG iPixelFormat)
 
    stw_framebuffer_unlock( fb );
 
+#if 0
    /* Some applications mistakenly use the undocumented wglSetPixelFormat
     * function instead of SetPixelFormat, so we call SetPixelFormat here to
     * avoid opengl32.dll's wglCreateContext to fail */
@@ -526,6 +527,7 @@ DrvSetPixelFormat(HDC hdc, LONG iPixelFormat)
 	  debug_printf("SetPixelFormat failed\n");
       }
    }
+#endif
 
    return TRUE;
 }

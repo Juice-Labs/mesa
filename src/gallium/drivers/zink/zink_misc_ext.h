@@ -62,7 +62,8 @@ bool zink_misc_enum_gpu_devices(HGPUNV gpu_handle, uint32_t device_index, PGPU_D
 
 /* Affinity DC management */
 struct zink_affinity_dc {
-   HDC handle;
+   HDC handle;           // Real HDC from GetDC()
+   HWND hwnd;           // Hidden window backing the HDC
    uint32_t gpu_count;
    HGPUNV *gpu_list;
 };

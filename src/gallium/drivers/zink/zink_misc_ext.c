@@ -228,7 +228,7 @@ HDC zink_misc_create_affinity_dc(const HGPUNV *gpu_list)
       return NULL;
    }
 
-   /* Count GPUs in the list (NULL-terminated) */
+   /* Count GPUs */
    uint32_t count = 0;
    while (gpu_list[count] != NULL) {
       count++;
@@ -239,50 +239,70 @@ HDC zink_misc_create_affinity_dc(const HGPUNV *gpu_list)
       return NULL;
    }
 
+   /* Create hidden window for the affinity DC */
+   HWND hwnd = CreateWindowExA(
+      0,                           // Extended style
+      "STATIC",                    // Window class (built-in)
+      "Zink Affinity DC",          // Window title
+      WS_POPUP,                    // Hidden popup window
+      0, 0, 1, 1,                 // Position and size (minimal)
+      NULL,                        // Parent window
+      NULL,                        // Menu
+      GetModuleHandle(NULL),       // Instance
+      NULL                         // Creation params
+   );
+
+   if (!hwnd) {
+      debug_printf("ZINK: Failed to create affinity window: %lu\n", GetLastError());
+      return NULL;
+   }
+
+   /* Get real HDC from the window */
+   HDC hdc = GetDC(hwnd);
+   if (!hdc) {
+      debug_printf("ZINK: Failed to get HDC from affinity window: %lu\n", GetLastError());
+      DestroyWindow(hwnd);
+      return NULL;
+   }
+
    /* Allocate and copy GPU list */
    HGPUNV *gpu_copy = CALLOC(count, sizeof(HGPUNV));
    if (!gpu_copy) {
       debug_printf("ZINK: Failed to allocate GPU list copy\n");
+      ReleaseDC(hwnd, hdc);
+      DestroyWindow(hwnd);
       return NULL;
    }
 
    memcpy(gpu_copy, gpu_list, count * sizeof(HGPUNV));
 
-   /* Generate unique handle */
-   HDC handle = (HDC)(uintptr_t)(0x1000 + next_affinity_dc_handle++);
-
-   /* Store affinity DC */
-   affinity_dcs[free_slot].handle = handle;
+   /* Store affinity DC with real HDC and window */
+   affinity_dcs[free_slot].handle = hdc;        // Real HDC!
+   affinity_dcs[free_slot].hwnd = hwnd;         // Window backing it
    affinity_dcs[free_slot].gpu_count = count;
    affinity_dcs[free_slot].gpu_list = gpu_copy;
 
-   debug_printf("ZINK: Created affinity DC %p with %u GPUs\n", handle, count);
-   return handle;
+   debug_printf("ZINK: Created affinity DC %p with real window %p and %u GPUs\n", 
+                hdc, hwnd, count);
+   return hdc;
 }
 
 bool zink_misc_delete_affinity_dc(HDC hdc)
 {
-   if (!hdc) {
-      return false;
-   }
-
-   /* Find the affinity DC */
    for (int i = 0; i < MAX_AFFINITY_DCS; i++) {
       if (affinity_dcs[i].handle == hdc) {
-         /* Free the GPU list */
+         /* Clean up GPU list */
          FREE(affinity_dcs[i].gpu_list);
          
-         /* Clear the slot */
-         affinity_dcs[i].handle = NULL;
-         affinity_dcs[i].gpu_count = 0;
-         affinity_dcs[i].gpu_list = NULL;
+         /* Release and destroy the real HDC/window */
+         ReleaseDC(affinity_dcs[i].hwnd, hdc);
+         DestroyWindow(affinity_dcs[i].hwnd);
          
-         debug_printf("ZINK: Deleted affinity DC %p\n", hdc);
+         /* Clear slot */
+         memset(&affinity_dcs[i], 0, sizeof(affinity_dcs[i]));
          return true;
       }
    }
-
-   debug_printf("ZINK: Affinity DC %p not found\n", hdc);
    return false;
 }
 

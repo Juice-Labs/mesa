@@ -216,22 +216,15 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
          return FALSE;
       }
 
-      struct st_context *src_st = (struct st_context*)src_ctx->st;
-      struct st_context *dst_st = (struct st_context*)dst_ctx->st;
-      if (!src_st || !dst_st || !src_st->pipe || !dst_st->pipe) {
-         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Missing state tracker or pipe contexts");
-         return FALSE;
-      }
-
-      extern bool zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
-                                                           struct pipe_screen *dst_screen,
+      extern bool zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
+                                                           struct gl_context *dst_ctx,
                                                            uint32_t srcName, uint32_t srcTarget,
                                                            int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
                                                            uint32_t dstName, uint32_t dstTarget,
                                                            int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
                                                            int32_t width, int32_t height, int32_t depth);
 
-      bool ok = zink_copy_image_subdata_nv_cross_context(src_st->pipe->screen, dst_st->pipe->screen,
+      bool ok = zink_copy_image_subdata_nv_cross_context(src_ctx, dst_ctx,
                                                          srcName, srcTarget,
                                                          srcLevel, srcX, srcY, srcZ,
                                                          dstName, dstTarget,

@@ -37,6 +37,11 @@
 #include "zink_state.h"
 #include "zink_surface.h"
 
+#include "main/context.h"
+#include "main/texobj.h"
+#include "main/format_utils.h"
+#include "state_tracker/st_context.h"
+#include "state_tracker/st_texture.h"
 
 #include "nir/pipe_nir.h"
 #include "util/u_blitter.h"
@@ -5543,6 +5548,98 @@ zink_resource_copy_region(struct pipe_context *pctx,
    }
    if (ctx->oom_flush && !ctx->in_rp && !ctx->unordered_blitting)
       flush_batch(ctx, false);
+}
+
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
+                                         struct pipe_screen *dst_screen,
+                                         uint32_t srcName, uint32_t srcTarget,
+                                         int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
+                                         uint32_t dstName, uint32_t dstTarget,
+                                         int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
+                                         int32_t width, int32_t height, int32_t depth)
+{
+   /* For now: just verify devices match and log; no actual copy yet */
+   if (!src_screen || !dst_screen) {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: invalid screens");
+      return false;
+   }
+
+   struct zink_screen *src = zink_screen(src_screen);
+   struct zink_screen *dst = zink_screen(dst_screen);
+   if (!src || !dst) {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: failed to resolve zink screens");
+      return false;
+   }
+
+   if (src->dev == dst->dev) {
+      mesa_log(MESA_LOG_INFO, "ZINK", "Cross-context copy: VkDevices match; performing Vulkan image copy");
+      
+      /* Since devices match, we can perform a VkImage to VkImage copy directly.
+       * First, we need to get the current GL contexts to lookup the texture objects. */
+      
+      /* Get current GL context - we'll use this to look up textures from both contexts.
+       * Note: This is a cross-context operation, so we'll need to be careful about 
+       * context switching, but since VkDevices match we can use the same command buffer. */
+      struct gl_context *current_gl_ctx = _mesa_get_current_context();
+      if (!current_gl_ctx) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No current GL context");
+         return false;
+      }
+
+      /* Get the state tracker context from current GL context */
+      struct st_context *current_st_ctx = (struct st_context*)current_gl_ctx->st;
+      if (!current_st_ctx) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No Mesa state tracker context");
+         return false;
+      }
+
+      /* Get zink context for command buffer operations */
+      struct pipe_context *pipe_ctx = current_st_ctx->pipe;
+      struct zink_context *ctx = zink_context(pipe_ctx);
+      if (!ctx) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No zink context");
+         return false;
+      }
+
+      /* Look up source texture object */
+      struct gl_texture_object *src_tex_obj = _mesa_lookup_texture(current_gl_ctx, srcName);
+      if (!src_tex_obj) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Source GL texture %u not found", srcName);
+         return false;
+      }
+
+      /* Look up destination texture object */
+      struct gl_texture_object *dst_tex_obj = _mesa_lookup_texture(current_gl_ctx, dstName);
+      if (!dst_tex_obj) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Destination GL texture %u not found", dstName);
+         return false;
+      }
+
+      /* Get pipe resources from texture objects */
+      struct pipe_resource *src_pipe_res = st_get_texobj_resource(src_tex_obj);
+      struct pipe_resource *dst_pipe_res = st_get_texobj_resource(dst_tex_obj);
+      
+      if (!src_pipe_res || !dst_pipe_res) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Failed to get pipe resources");
+         return false;
+      }
+         
+      struct pipe_box src_box = {
+         srcX, srcY, srcZ,
+         width, height, depth
+      };
+
+      zink_resource_copy_region(pipe_ctx, dst_pipe_res, dstLevel, dstX, dstY, dstZ, src_pipe_res, srcLevel, &src_box);
+      return true;      
+
+   } else {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: VkDevices differ; cross-device copy not supported yet");
+      return false;
+   }
 }
 
 static bool

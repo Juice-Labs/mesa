@@ -5554,14 +5554,29 @@ zink_resource_copy_region(struct pipe_context *pctx,
 __declspec(dllexport)
 #endif
 bool
-zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
-                                         struct pipe_screen *dst_screen,
+zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
+                                         struct gl_context *dst_ctx,
                                          uint32_t srcName, uint32_t srcTarget,
                                          int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
                                          uint32_t dstName, uint32_t dstTarget,
                                          int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
                                          int32_t width, int32_t height, int32_t depth)
 {
+   if(!src_ctx || !dst_ctx) {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: invalid contexts");
+      return false;
+   }
+   
+   struct st_context *src_st = (struct st_context*)src_ctx->st;
+   struct st_context *dst_st = (struct st_context*)dst_ctx->st;
+   if (!src_st || !dst_st || !src_st->pipe || !dst_st->pipe) {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Missing state tracker or pipe contexts");
+      return FALSE;
+   }
+
+   struct pipe_screen *src_screen = src_st->pipe->screen;
+   struct pipe_screen *dst_screen = dst_st->pipe->screen;
+
    /* For now: just verify devices match and log; no actual copy yet */
    if (!src_screen || !dst_screen) {
       mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: invalid screens");
@@ -5579,41 +5594,19 @@ zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
       mesa_log(MESA_LOG_INFO, "ZINK", "Cross-context copy: VkDevices match; performing Vulkan image copy");
       
       /* Since devices match, we can perform a VkImage to VkImage copy directly.
-       * First, we need to get the current GL contexts to lookup the texture objects. */
-      
-      /* Get current GL context - we'll use this to look up textures from both contexts.
-       * Note: This is a cross-context operation, so we'll need to be careful about 
-       * context switching, but since VkDevices match we can use the same command buffer. */
-      struct gl_context *current_gl_ctx = _mesa_get_current_context();
-      if (!current_gl_ctx) {
-         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No current GL context");
-         return false;
-      }
-
-      /* Get the state tracker context from current GL context */
-      struct st_context *current_st_ctx = (struct st_context*)current_gl_ctx->st;
-      if (!current_st_ctx) {
-         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No Mesa state tracker context");
-         return false;
-      }
 
       /* Get zink context for command buffer operations */
-      struct pipe_context *pipe_ctx = current_st_ctx->pipe;
-      struct zink_context *ctx = zink_context(pipe_ctx);
-      if (!ctx) {
-         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No zink context");
-         return false;
-      }
+      struct pipe_context *pipe_ctx = src_st->pipe;
 
       /* Look up source texture object */
-      struct gl_texture_object *src_tex_obj = _mesa_lookup_texture(current_gl_ctx, srcName);
+      struct gl_texture_object *src_tex_obj = _mesa_lookup_texture(src_ctx, srcName);
       if (!src_tex_obj) {
          mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Source GL texture %u not found", srcName);
          return false;
       }
 
       /* Look up destination texture object */
-      struct gl_texture_object *dst_tex_obj = _mesa_lookup_texture(current_gl_ctx, dstName);
+      struct gl_texture_object *dst_tex_obj = _mesa_lookup_texture(dst_ctx, dstName);
       if (!dst_tex_obj) {
          mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Destination GL texture %u not found", dstName);
          return false;

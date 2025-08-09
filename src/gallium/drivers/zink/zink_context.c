@@ -5562,6 +5562,9 @@ zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
                                          int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
                                          int32_t width, int32_t height, int32_t depth)
 {
+   struct gl_context *current_ctx = _mesa_get_current_context();
+   struct gl_context *use_ctx = NULL;
+
    if(!src_ctx || !dst_ctx) {
       mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: invalid contexts");
       return false;
@@ -5574,6 +5577,15 @@ zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
       return FALSE;
    }
 
+   if(src_ctx == current_ctx) {
+      use_ctx = src_ctx;
+   } else if(dst_ctx == current_ctx) {
+      use_ctx = dst_ctx;
+   } else {
+      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No current context");
+      return FALSE;
+   }
+   
    struct pipe_screen *src_screen = src_st->pipe->screen;
    struct pipe_screen *dst_screen = dst_st->pipe->screen;
 
@@ -5593,10 +5605,12 @@ zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
    if (src->dev == dst->dev) {
       mesa_log(MESA_LOG_INFO, "ZINK", "Cross-context copy: VkDevices match; performing Vulkan image copy");
       
-      /* Since devices match, we can perform a VkImage to VkImage copy directly.
+      /* Since devices match, we can perform a VkImage to VkImage copy directly. */
 
-      /* Get zink context for command buffer operations */
-      struct pipe_context *pipe_ctx = src_st->pipe;
+      /* Unwrap to the real zink_context to ensure we have a valid, recording batch */
+      struct st_context *use_st = (struct st_context*)use_ctx->st;
+      struct zink_context *zctx_unwrapped = zink_tc_context_unwrap(use_st->pipe, true);
+      struct pipe_context *pipe_ctx = &zctx_unwrapped->base;
 
       /* Look up source texture object */
       struct gl_texture_object *src_tex_obj = _mesa_lookup_texture(src_ctx, srcName);
@@ -5626,7 +5640,11 @@ zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
          width, height, depth
       };
 
+      struct zink_context *ctx = zink_context(pipe_ctx);
+      zink_flush_queue(ctx);
+
       zink_resource_copy_region(pipe_ctx, dst_pipe_res, dstLevel, dstX, dstY, dstZ, src_pipe_res, srcLevel, &src_box);
+
       return true;      
 
    } else {

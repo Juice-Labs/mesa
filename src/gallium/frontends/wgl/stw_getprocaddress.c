@@ -112,7 +112,6 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
 {
    struct gl_context *src_ctx = NULL;
    struct gl_context *dst_ctx = NULL;
-   struct gl_context *current_ctx = NULL;
    BOOL result = FALSE;
    
    mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV called (src=%p, dst=%p)", hSrcRC, hDstRC);
@@ -121,9 +120,6 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
       mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: No STW device");
       return FALSE;
    }
-
-   /* Get the current context */
-   current_ctx = _mesa_get_current_context();
    
    /* Convert HGLRC handles to Mesa GL contexts */
    src_ctx = stw_get_gl_context_from_hglrc(hSrcRC);
@@ -158,87 +154,26 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
       return FALSE;
    }
    
-   /* 
-    * According to the NV_copy_image spec:
-    * - If source and destination are the same context, operate normally
-    * - If they are different contexts, they must share objects
-    * - For now, we'll support same-context copies and attempt cross-context
-    */
-   
    /* Set up an error handler to catch Mesa errors */
    GLenum saved_error = src_ctx->ErrorValue;
    src_ctx->ErrorValue = GL_NO_ERROR;
-   
-   /* For cross-context copying, we need to make the source context current temporarily */
-   bool context_switched = false;
-   
-   if (src_ctx != current_ctx) {
-      mesa_log(MESA_LOG_DEBUG, "WGL", "wglCopyImageSubDataNV: Cross-context copy detected, switching to source context");
-      /* Note: This is a simplified approach. In a full implementation, 
-       * we would need proper context switching via WGL functions */
-      context_switched = true;
-   }
 
-   if (src_ctx == dst_ctx) {      
-      /* Call the Mesa implementation through the dispatch table */
-      typedef void (GLAPIENTRY *PFNGLCOPYIMAGESUBDATAPROC)(GLuint srcName, GLenum srcTarget, GLint srcLevel,
-                                                            GLint srcX, GLint srcY, GLint srcZ,
-                                                            GLuint dstName, GLenum dstTarget, GLint dstLevel,
-                                                            GLint dstX, GLint dstY, GLint dstZ,
-                                                            GLsizei width, GLsizei height, GLsizei depth);
-      
-      PFNGLCOPYIMAGESUBDATAPROC glCopyImageSubData = 
-         (PFNGLCOPYIMAGESUBDATAPROC)_glapi_get_proc_address("glCopyImageSubData");
-      
-      if (!glCopyImageSubData) {
-         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: glCopyImageSubDataNV function not available");
-         return FALSE;
-      }
-      
-      glCopyImageSubData(srcName, srcTarget, srcLevel, srcX, srcY, srcZ,
-                        dstName, dstTarget, dstLevel, dstX, dstY, dstZ,
-                        width, height, depth);
-      
-      /* Check if any error occurred */
-      if (src_ctx->ErrorValue == GL_NO_ERROR) {
-         result = TRUE;
-         mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV: Copy operation completed successfully");
-      } else {
-         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Copy operation failed with GL error: 0x%x", src_ctx->ErrorValue);
-         /* Restore the previous error state */
-         src_ctx->ErrorValue = saved_error;
-      }
-   }
-   else {
-      /* Cross-context copy path: call into zink for now to verify VkDevice match and log */
-      if (!stw_dev->zink) {
-         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Cross-context copy requires Zink");
-         return FALSE;
-      }
+   extern bool zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
+                                                         struct gl_context *dst_ctx,
+                                                         uint32_t srcName, uint32_t srcTarget,
+                                                         int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
+                                                         uint32_t dstName, uint32_t dstTarget,
+                                                         int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
+                                                         int32_t width, int32_t height, int32_t depth);
 
-      extern bool zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
-                                                           struct gl_context *dst_ctx,
-                                                           uint32_t srcName, uint32_t srcTarget,
-                                                           int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
-                                                           uint32_t dstName, uint32_t dstTarget,
-                                                           int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
-                                                           int32_t width, int32_t height, int32_t depth);
-
-      bool ok = zink_copy_image_subdata_nv_cross_context(src_ctx, dst_ctx,
-                                                         srcName, srcTarget,
-                                                         srcLevel, srcX, srcY, srcZ,
-                                                         dstName, dstTarget,
-                                                         dstLevel, dstX, dstY, dstZ,
-                                                         width, height, depth);
-      result = ok ? TRUE : FALSE;
-   }
-   
-   /* Restore context if we switched */
-   if (context_switched && current_ctx) {
-      mesa_log(MESA_LOG_DEBUG, "WGL", "wglCopyImageSubDataNV: Restoring original context");
-      /* In a full implementation, we would restore the context via WGL */
-   }
-   
+   bool ok = zink_copy_image_subdata_nv_cross_context(src_ctx, dst_ctx,
+                                                      srcName, srcTarget,
+                                                      srcLevel, srcX, srcY, srcZ,
+                                                      dstName, dstTarget,
+                                                      dstLevel, dstX, dstY, dstZ,
+                                                      width, height, depth);
+   result = ok ? TRUE : FALSE;
+  
    return result;
 }
 

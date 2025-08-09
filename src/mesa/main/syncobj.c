@@ -66,6 +66,7 @@
 #include "util/set.h"
 #include "util/u_memory.h"
 #include "util/perf/cpu_trace.h"
+#include "util/u_call_once.h"
 
 #include "syncobj.h"
 
@@ -74,6 +75,26 @@
 #include "pipe/p_context.h"
 #include "pipe/p_screen.h"
 
+/* Global registry so any context can validate a GLsync handle.
+ * Heavy-handed locking is acceptable; we use call-once initialization.
+ */
+static util_once_flag g_sync_registry_once = UTIL_ONCE_FLAG_INIT;
+static simple_mtx_t g_sync_registry_mutex;
+static struct set *g_sync_registry;
+
+static void
+sync_registry_init_once(void)
+{
+   simple_mtx_init(&g_sync_registry_mutex, mtx_plain);
+   g_sync_registry = _mesa_set_create(NULL, _mesa_hash_pointer,
+                                      _mesa_key_pointer_equal);
+}
+
+static ALWAYS_INLINE void
+ensure_sync_registry_initialized(void)
+{
+   util_call_once(&g_sync_registry_once, sync_registry_init_once);
+}
 /**
  * Allocate/init the context state related to sync objects.
  */
@@ -81,6 +102,7 @@ void
 _mesa_init_sync(struct gl_context *ctx)
 {
    (void) ctx;
+   ensure_sync_registry_initialized();
 }
 
 
@@ -103,6 +125,11 @@ new_sync_object(struct gl_context *ctx)
     * context that references this share group.
     */
    so->OwnerShared = ctx->Shared;
+   /* Register globally */
+   ensure_sync_registry_initialized();
+   simple_mtx_lock(&g_sync_registry_mutex);
+   _mesa_set_add(g_sync_registry, so);
+   simple_mtx_unlock(&g_sync_registry_mutex);
    return so;
 }
 
@@ -180,19 +207,20 @@ __client_wait_sync(struct gl_context *ctx,
 struct gl_sync_object *
 _mesa_get_and_ref_sync(struct gl_context *ctx, GLsync sync, bool incRefCount)
 {
+   (void) ctx; /* Context is not required for lookup. */
    struct gl_sync_object *syncObj = (struct gl_sync_object *) sync;
-   struct gl_shared_state *owner = syncObj ? syncObj->OwnerShared : NULL;
-   if (!owner)
+   if (!syncObj)
       return NULL;
-   simple_mtx_lock(&owner->Mutex);
-   if (_mesa_set_search(owner->SyncObjects, syncObj) != NULL &&
+   ensure_sync_registry_initialized();
+   simple_mtx_lock(&g_sync_registry_mutex);
+   if (_mesa_set_search(g_sync_registry, syncObj) != NULL &&
        !syncObj->DeletePending) {
       if (incRefCount)
          syncObj->RefCount++;
    } else {
       syncObj = NULL;
    }
-   simple_mtx_unlock(&owner->Mutex);
+   simple_mtx_unlock(&g_sync_registry_mutex);
    return syncObj;
 }
 
@@ -202,21 +230,27 @@ _mesa_unref_sync_object(struct gl_context *ctx, struct gl_sync_object *syncObj,
                         int amount)
 {
    struct set_entry *entry;
+   ensure_sync_registry_initialized();
    struct gl_shared_state *owner = syncObj->OwnerShared;
-   if (!owner) {
-      delete_sync_object(ctx, syncObj);
-      return;
-   }
-   simple_mtx_lock(&owner->Mutex);
+   /* Lock order: global, then owner to avoid cycles. */
+   simple_mtx_lock(&g_sync_registry_mutex);
+   if (owner) simple_mtx_lock(&owner->Mutex);
    syncObj->RefCount -= amount;
    if (syncObj->RefCount == 0) {
-      entry = _mesa_set_search(owner->SyncObjects, syncObj);
-      assert(entry != NULL);
-      _mesa_set_remove(owner->SyncObjects, entry);
-      simple_mtx_unlock(&owner->Mutex);
+      if (owner) {
+         entry = _mesa_set_search(owner->SyncObjects, syncObj);
+         if (entry)
+            _mesa_set_remove(owner->SyncObjects, entry);
+      }
+      entry = _mesa_set_search(g_sync_registry, syncObj);
+      if (entry)
+         _mesa_set_remove(g_sync_registry, entry);
+      if (owner) simple_mtx_unlock(&owner->Mutex);
+      simple_mtx_unlock(&g_sync_registry_mutex);
       delete_sync_object(ctx, syncObj);
    } else {
-      simple_mtx_unlock(&owner->Mutex);
+      if (owner) simple_mtx_unlock(&owner->Mutex);
+      simple_mtx_unlock(&g_sync_registry_mutex);
    }
 }
 

@@ -178,34 +178,66 @@ wglCopyImageSubDataNV(HGLRC hSrcRC, GLuint srcName, GLenum srcTarget,
        * we would need proper context switching via WGL functions */
       context_switched = true;
    }
-   
-   /* Call the Mesa implementation through the dispatch table */
-   typedef void (GLAPIENTRY *PFNGLCOPYIMAGESUBDATANVPROC)(GLuint srcName, GLenum srcTarget, GLint srcLevel,
-                                                          GLint srcX, GLint srcY, GLint srcZ,
-                                                          GLuint dstName, GLenum dstTarget, GLint dstLevel,
-                                                          GLint dstX, GLint dstY, GLint dstZ,
-                                                          GLsizei width, GLsizei height, GLsizei depth);
-   
-   PFNGLCOPYIMAGESUBDATANVPROC glCopyImageSubDataNV = 
-      (PFNGLCOPYIMAGESUBDATANVPROC)_glapi_get_proc_address("glCopyImageSubDataNV");
-   
-   if (!glCopyImageSubDataNV) {
-      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: glCopyImageSubDataNV function not available");
-      return FALSE;
+
+   if (src_ctx == dst_ctx) {      
+      /* Call the Mesa implementation through the dispatch table */
+      typedef void (GLAPIENTRY *PFNGLCOPYIMAGESUBDATAPROC)(GLuint srcName, GLenum srcTarget, GLint srcLevel,
+                                                            GLint srcX, GLint srcY, GLint srcZ,
+                                                            GLuint dstName, GLenum dstTarget, GLint dstLevel,
+                                                            GLint dstX, GLint dstY, GLint dstZ,
+                                                            GLsizei width, GLsizei height, GLsizei depth);
+      
+      PFNGLCOPYIMAGESUBDATAPROC glCopyImageSubData = 
+         (PFNGLCOPYIMAGESUBDATAPROC)_glapi_get_proc_address("glCopyImageSubData");
+      
+      if (!glCopyImageSubData) {
+         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: glCopyImageSubDataNV function not available");
+         return FALSE;
+      }
+      
+      glCopyImageSubData(srcName, srcTarget, srcLevel, srcX, srcY, srcZ,
+                        dstName, dstTarget, dstLevel, dstX, dstY, dstZ,
+                        width, height, depth);
+      
+      /* Check if any error occurred */
+      if (src_ctx->ErrorValue == GL_NO_ERROR) {
+         result = TRUE;
+         mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV: Copy operation completed successfully");
+      } else {
+         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Copy operation failed with GL error: 0x%x", src_ctx->ErrorValue);
+         /* Restore the previous error state */
+         src_ctx->ErrorValue = saved_error;
+      }
    }
-   
-   glCopyImageSubDataNV(srcName, srcTarget, srcLevel, srcX, srcY, srcZ,
-                       dstName, dstTarget, dstLevel, dstX, dstY, dstZ,
-                       width, height, depth);
-   
-   /* Check if any error occurred */
-   if (src_ctx->ErrorValue == GL_NO_ERROR) {
-      result = TRUE;
-      mesa_log(MESA_LOG_INFO, "WGL", "wglCopyImageSubDataNV: Copy operation completed successfully");
-   } else {
-      mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Copy operation failed with GL error: 0x%x", src_ctx->ErrorValue);
-      /* Restore the previous error state */
-      src_ctx->ErrorValue = saved_error;
+   else {
+      /* Cross-context copy path: call into zink for now to verify VkDevice match and log */
+      if (!stw_dev->zink) {
+         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Cross-context copy requires Zink");
+         return FALSE;
+      }
+
+      struct st_context *src_st = (struct st_context*)src_ctx->st;
+      struct st_context *dst_st = (struct st_context*)dst_ctx->st;
+      if (!src_st || !dst_st || !src_st->pipe || !dst_st->pipe) {
+         mesa_log(MESA_LOG_ERROR, "WGL", "wglCopyImageSubDataNV: Missing state tracker or pipe contexts");
+         return FALSE;
+      }
+
+      extern bool zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
+                                                           struct pipe_screen *dst_screen,
+                                                           uint32_t srcName, uint32_t srcTarget,
+                                                           int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
+                                                           uint32_t dstName, uint32_t dstTarget,
+                                                           int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
+                                                           int32_t width, int32_t height, int32_t depth);
+
+      bool ok = zink_copy_image_subdata_nv_cross_context(src_st->pipe->screen, dst_st->pipe->screen,
+                                                         srcName, srcTarget,
+                                                         srcLevel, srcX, srcY, srcZ,
+                                                         dstName, dstTarget,
+                                                         dstLevel, dstX, dstY, dstZ,
+                                                         width, height, depth);
+      result = ok ? TRUE : FALSE;
    }
    
    /* Restore context if we switched */

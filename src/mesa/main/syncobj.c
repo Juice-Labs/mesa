@@ -99,6 +99,10 @@ new_sync_object(struct gl_context *ctx)
    struct gl_sync_object *so = CALLOC_STRUCT(gl_sync_object);
 
    simple_mtx_init(&so->mutex, mtx_plain);
+   /* Record the owning share group so the sync can be managed from any
+    * context that references this share group.
+    */
+   so->OwnerShared = ctx->Shared;
    return so;
 }
 
@@ -177,17 +181,18 @@ struct gl_sync_object *
 _mesa_get_and_ref_sync(struct gl_context *ctx, GLsync sync, bool incRefCount)
 {
    struct gl_sync_object *syncObj = (struct gl_sync_object *) sync;
-   simple_mtx_lock(&ctx->Shared->Mutex);
-   if (syncObj != NULL
-      && _mesa_set_search(ctx->Shared->SyncObjects, syncObj) != NULL
-      && !syncObj->DeletePending) {
-     if (incRefCount) {
-       syncObj->RefCount++;
-     }
+   struct gl_shared_state *owner = syncObj ? syncObj->OwnerShared : NULL;
+   if (!owner)
+      return NULL;
+   simple_mtx_lock(&owner->Mutex);
+   if (_mesa_set_search(owner->SyncObjects, syncObj) != NULL &&
+       !syncObj->DeletePending) {
+      if (incRefCount)
+         syncObj->RefCount++;
    } else {
-     syncObj = NULL;
+      syncObj = NULL;
    }
-   simple_mtx_unlock(&ctx->Shared->Mutex);
+   simple_mtx_unlock(&owner->Mutex);
    return syncObj;
 }
 
@@ -197,18 +202,21 @@ _mesa_unref_sync_object(struct gl_context *ctx, struct gl_sync_object *syncObj,
                         int amount)
 {
    struct set_entry *entry;
-
-   simple_mtx_lock(&ctx->Shared->Mutex);
+   struct gl_shared_state *owner = syncObj->OwnerShared;
+   if (!owner) {
+      delete_sync_object(ctx, syncObj);
+      return;
+   }
+   simple_mtx_lock(&owner->Mutex);
    syncObj->RefCount -= amount;
    if (syncObj->RefCount == 0) {
-      entry = _mesa_set_search(ctx->Shared->SyncObjects, syncObj);
-      assert (entry != NULL);
-      _mesa_set_remove(ctx->Shared->SyncObjects, entry);
-      simple_mtx_unlock(&ctx->Shared->Mutex);
-
+      entry = _mesa_set_search(owner->SyncObjects, syncObj);
+      assert(entry != NULL);
+      _mesa_set_remove(owner->SyncObjects, entry);
+      simple_mtx_unlock(&owner->Mutex);
       delete_sync_object(ctx, syncObj);
    } else {
-      simple_mtx_unlock(&ctx->Shared->Mutex);
+      simple_mtx_unlock(&owner->Mutex);
    }
 }
 

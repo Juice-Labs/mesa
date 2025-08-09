@@ -280,6 +280,173 @@ zink_resource_destroy(struct pipe_screen *pscreen,
    FREE_CL(res);
 }
 
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
+                                         struct pipe_screen *dst_screen,
+                                         uint32_t srcName, uint32_t srcTarget,
+                                         int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
+                                         uint32_t dstName, uint32_t dstTarget,
+                                         int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
+                                         int32_t width, int32_t height, int32_t depth)
+{
+   /* For now: just verify devices match and log; no actual copy yet */
+   if (!src_screen || !dst_screen) {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: invalid screens");
+      return false;
+   }
+
+   struct zink_screen *src = zink_screen(src_screen);
+   struct zink_screen *dst = zink_screen(dst_screen);
+   if (!src || !dst) {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: failed to resolve zink screens");
+      return false;
+   }
+
+   if (src->dev == dst->dev) {
+      mesa_log(MESA_LOG_INFO, "ZINK", "Cross-context copy: VkDevices match; performing Vulkan image copy");
+      
+      /* Since devices match, we can perform a VkImage to VkImage copy directly.
+       * First, we need to get the current GL contexts to lookup the texture objects. */
+      
+      /* Get current GL context - we'll use this to look up textures from both contexts.
+       * Note: This is a cross-context operation, so we'll need to be careful about 
+       * context switching, but since VkDevices match we can use the same command buffer. */
+      struct gl_context *current_gl_ctx = _mesa_get_current_context();
+      if (!current_gl_ctx) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No current GL context");
+         return false;
+      }
+
+      /* Get the state tracker context from current GL context */
+      struct st_context *current_st_ctx = (struct st_context*)current_gl_ctx->st;
+      if (!current_st_ctx) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No Mesa state tracker context");
+         return false;
+      }
+
+      /* Get zink context for command buffer operations */
+      struct pipe_context *pipe_ctx = current_st_ctx->pipe;
+      struct zink_context *ctx = zink_context(pipe_ctx);
+      if (!ctx) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No zink context");
+         return false;
+      }
+
+      /* Look up source texture object */
+      struct gl_texture_object *src_tex_obj = _mesa_lookup_texture(current_gl_ctx, srcName);
+      if (!src_tex_obj) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Source GL texture %u not found", srcName);
+         return false;
+      }
+
+      /* Look up destination texture object */
+      struct gl_texture_object *dst_tex_obj = _mesa_lookup_texture(current_gl_ctx, dstName);
+      if (!dst_tex_obj) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Destination GL texture %u not found", dstName);
+         return false;
+      }
+
+      /* Get pipe resources from texture objects */
+      struct pipe_resource *src_pipe_res = st_get_texobj_resource(src_tex_obj);
+      struct pipe_resource *dst_pipe_res = st_get_texobj_resource(dst_tex_obj);
+      
+      if (!src_pipe_res || !dst_pipe_res) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Failed to get pipe resources");
+         return false;
+      }
+
+      /* Convert to zink resources to access VkImage handles */
+      struct zink_resource *src_zink_res = zink_resource(src_pipe_res);
+      struct zink_resource *dst_zink_res = zink_resource(dst_pipe_res);
+      
+      if (!src_zink_res || !dst_zink_res || !src_zink_res->obj || !dst_zink_res->obj) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Failed to get zink resources");
+         return false;
+      }
+
+      if (src_zink_res->obj->is_buffer || dst_zink_res->obj->is_buffer) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Buffer resources not supported");
+         return false;
+      }
+
+      /* Get VkImage handles */
+      VkImage src_vk_image = src_zink_res->obj->image;
+      VkImage dst_vk_image = dst_zink_res->obj->image;
+      
+      if (!src_vk_image || !dst_vk_image) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Invalid VkImage handles");
+         return false;
+      }
+
+      /* Set up image barriers for transfer operations */
+      zink_screen(ctx->base.screen)->image_barrier(ctx, src_zink_res,
+                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                 VK_ACCESS_TRANSFER_READ_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+      zink_screen(ctx->base.screen)->image_barrier(ctx, dst_zink_res,
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                 VK_ACCESS_TRANSFER_WRITE_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+      /* Get command buffer from batch */
+      VkCommandBuffer cmdbuf = ctx->batch.state->cmdbuf;
+      if (!cmdbuf) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: No command buffer available");
+         return false;
+      }
+
+      /* Set up VkImageCopy structure */
+      VkImageCopy copy_region = {0};
+      
+      /* Source subresource */
+      copy_region.srcSubresource.aspectMask = aspect_from_format(src_pipe_res->format);
+      copy_region.srcSubresource.mipLevel = srcLevel;
+      copy_region.srcSubresource.baseArrayLayer = 0;
+      copy_region.srcSubresource.layerCount = 1;
+      
+      /* Source offset */
+      copy_region.srcOffset.x = srcX;
+      copy_region.srcOffset.y = srcY;
+      copy_region.srcOffset.z = srcZ;
+      
+      /* Destination subresource */
+      copy_region.dstSubresource.aspectMask = aspect_from_format(dst_pipe_res->format);
+      copy_region.dstSubresource.mipLevel = dstLevel;
+      copy_region.dstSubresource.baseArrayLayer = 0;
+      copy_region.dstSubresource.layerCount = 1;
+      
+      /* Destination offset */
+      copy_region.dstOffset.x = dstX;
+      copy_region.dstOffset.y = dstY;
+      copy_region.dstOffset.z = dstZ;
+      
+      /* Copy extent */
+      copy_region.extent.width = (uint32_t)width;
+      copy_region.extent.height = (uint32_t)height;
+      copy_region.extent.depth = (uint32_t)depth;
+
+      /* Record the copy command */
+      VKCTX(CmdCopyImage)(cmdbuf,
+                         src_vk_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         dst_vk_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         1, &copy_region);
+
+      /* Reference resources for batch tracking */
+      zink_batch_reference_resource_rw(&ctx->batch, src_zink_res, false); /* read */
+      zink_batch_reference_resource_rw(&ctx->batch, dst_zink_res, true);  /* write */
+
+      mesa_log(MESA_LOG_INFO, "ZINK", "Cross-context copy: VkImage copy command recorded successfully");
+      return true;
+   } else {
+      mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: VkDevices differ; cross-device copy not supported yet");
+      return false;
+   }
+}
+
 static VkImageAspectFlags
 aspect_from_format(enum pipe_format fmt)
 {

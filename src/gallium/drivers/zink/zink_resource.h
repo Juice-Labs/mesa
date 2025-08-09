@@ -74,6 +74,18 @@ zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
 __declspec(dllexport)
 #endif
 bool
+zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
+                                         struct pipe_screen *dst_screen,
+                                         uint32_t srcName, uint32_t srcTarget,
+                                         int32_t srcLevel, int32_t srcX, int32_t srcY, int32_t srcZ,
+                                         uint32_t dstName, uint32_t dstTarget,
+                                         int32_t dstLevel, int32_t dstX, int32_t dstY, int32_t dstZ,
+                                         int32_t width, int32_t height, int32_t depth);
+
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
 zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_target, 
                                          uint64_t* out_handle, uint64_t* out_size,
                                          uint64_t* out_semaphore_handle, uint64_t* out_semaphore,

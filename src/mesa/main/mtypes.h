@@ -2404,6 +2404,11 @@ struct gl_query_state
 };
 
 
+/* Forward declaration to allow sync objects to reference their owning
+ * share group without requiring reordering of struct definitions.
+ */
+struct gl_shared_state;
+
 /** Sync object state */
 struct gl_sync_object
 {
@@ -2416,6 +2421,11 @@ struct gl_sync_object
    GLenum16 SyncCondition;
    GLbitfield Flags;          /**< Flags passed to glFenceSync */
    GLuint StatusFlag:1;       /**< Has the sync object been signaled? */
+
+   /* The share group that owns this sync object. This enables lookups and
+    * refcounting from any context by redirecting to the correct shared set.
+    */
+   struct gl_shared_state *OwnerShared;
 
    struct pipe_fence_handle *fence;
    simple_mtx_t mutex; /**< protects "fence" */

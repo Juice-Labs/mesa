@@ -1914,14 +1914,13 @@ texture_error_check( struct gl_context *ctx,
       return GL_TRUE;
    }
 
-   /* Check border */
+   /* Check border, but warn and set to 0 if invalid */
    if (border < 0 || border > 1 ||
        ((!_mesa_is_desktop_gl_compat(ctx) ||
          target == GL_TEXTURE_RECTANGLE_NV ||
          target == GL_PROXY_TEXTURE_RECTANGLE_NV) && border != 0)) {
-      _mesa_error(ctx, GL_INVALID_VALUE,
-                  "glTexImage%dD(border=%d)", dimensions, border);
-      return GL_TRUE;
+      _mesa_warning(ctx, "glTexImage%dD: invalid border=%d, setting to 0", dimensions, border);
+      border = 0;
    }
 
    if (width < 0 || height < 0 || depth < 0) {

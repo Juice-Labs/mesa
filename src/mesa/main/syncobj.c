@@ -282,8 +282,7 @@ delete_sync(struct gl_context *ctx, GLsync sync, bool no_error)
 
    syncObj = _mesa_get_and_ref_sync(ctx, sync, true);
    if (!no_error && !syncObj) {
-      _mesa_error(ctx, GL_INVALID_VALUE,
-                  "glDeleteSync (not a valid sync object)");
+      _mesa_warning(ctx, "glDeleteSync (not a valid sync object)");
       return;
    }
 
@@ -435,8 +434,7 @@ _mesa_ClientWaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout)
 
    syncObj = _mesa_get_and_ref_sync(ctx, sync, true);
    if (!syncObj) {
-      _mesa_error(ctx, GL_INVALID_VALUE,
-                  "glClientWaitSync (not a valid sync object)");
+      _mesa_warning(ctx, "glClientWaitSync (not a valid sync object)");
       return GL_WAIT_FAILED;
    }
 
@@ -507,8 +505,7 @@ _mesa_WaitSync(GLsync sync, GLbitfield flags, GLuint64 timeout)
 
    syncObj = _mesa_get_and_ref_sync(ctx, sync, true);
    if (!syncObj) {
-      _mesa_error(ctx, GL_INVALID_VALUE,
-                  "glWaitSync (not a valid sync object)");
+      _mesa_warning(ctx, "glWaitSync (not a valid sync object)");
       return;
    }
 

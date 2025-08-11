@@ -298,6 +298,7 @@ zink_create_blend_state(struct pipe_context *pctx,
     *       here, as that's closer tied to the update-frequency
     */
    cso->alpha_to_coverage = blend_state->alpha_to_coverage;
+   cso->alpha_to_coverage_dither = blend_state->alpha_to_coverage_dither;
    cso->alpha_to_one = blend_state->alpha_to_one;
    cso->num_rts = blend_state->max_rt + 1;
 

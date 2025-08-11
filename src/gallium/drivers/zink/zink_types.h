@@ -382,6 +382,7 @@ struct zink_blend_state {
    VkLogicOp logicop_func;
 
    VkBool32 alpha_to_coverage;
+   VkBool32 alpha_to_coverage_dither;
    VkBool32 alpha_to_one;
 
    uint32_t wrmask;

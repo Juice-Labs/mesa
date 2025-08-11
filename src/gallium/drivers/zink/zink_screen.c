@@ -874,6 +874,9 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->polygon_offset_clamp = screen->info.feats.features.depthBiasClamp;
 
+   caps->query_pipeline_statistics =
+      screen->info.feats.features.pipelineStatisticsQuery;
+
    caps->query_pipeline_statistics_single =
       screen->info.feats.features.pipelineStatisticsQuery;
 
@@ -926,6 +929,8 @@ zink_init_screen_caps(struct zink_screen *screen)
    caps->query_time_elapsed = screen->timestamp_valid_bits > 0;
 
    caps->texture_multisample = true;
+
+   caps->alpha_to_coverage_dither_control = true;
 
    caps->fragment_shader_interlock = screen->info.have_EXT_fragment_shader_interlock;
 

@@ -1020,6 +1020,12 @@ find_custom_value(struct gl_context *ctx, const struct value_desc *d, union valu
       v->value_int = ctx->pipe->screen->get_device_node_mask(ctx->pipe->screen);
       break;
 
+   /* GL_NV_alpha_to_coverage_dither_control */
+   case GL_ALPHA_TO_COVERAGE_DITHER_MODE_NV:
+      v->value_bool = ctx->Multisample.SampleAlphaToCoverageDitherControl !=
+                      GL_ALPHA_TO_COVERAGE_DITHER_DISABLE_NV;
+      break;
+
    /* GL_EXT_packed_float */
    case GL_RGBA_SIGNED_COMPONENTS_EXT:
       {

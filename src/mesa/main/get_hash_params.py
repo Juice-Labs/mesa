@@ -396,7 +396,7 @@ descriptor=[
   [ "SUPPORTED_MULTISAMPLE_MODES_AMD", "LOC_CUSTOM, TYPE_INT_N, 0, extra_AMD_framebuffer_multisample_advanced" ],
 
 # GL_NV_alpha_to_coverage_dither_control
-  [ "ALPHA_TO_COVERAGE_DITHER_MODE_NV", "CONTEXT_ENUM(Multisample.SampleAlphaToCoverageDitherControl ), NO_EXTRA" ],
+  [ "ALPHA_TO_COVERAGE_DITHER_MODE_NV", "LOC_CUSTOM, TYPE_BOOLEAN, 0, NO_EXTRA" ],
 
 # GL_EXT_pixel_buffer_object
   [ "PIXEL_PACK_BUFFER_BINDING_EXT", "LOC_CUSTOM, TYPE_INT, 0, NO_EXTRA" ],

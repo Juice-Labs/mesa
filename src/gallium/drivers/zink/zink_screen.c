@@ -556,6 +556,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_POLYGON_OFFSET_CLAMP:
       return screen->info.feats.features.depthBiasClamp;
 
+   case PIPE_CAP_QUERY_PIPELINE_STATISTICS:
    case PIPE_CAP_QUERY_PIPELINE_STATISTICS_SINGLE:
       return screen->info.feats.features.pipelineStatisticsQuery;
 
@@ -607,6 +608,9 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return screen->timestamp_valid_bits > 0;
 
    case PIPE_CAP_TEXTURE_MULTISAMPLE:
+      return 1;
+
+   case PIPE_CAP_ALPHA_TO_COVERAGE_DITHER_CONTROL:
       return 1;
 
    case PIPE_CAP_FRAGMENT_SHADER_INTERLOCK:

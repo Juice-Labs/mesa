@@ -48,9 +48,18 @@
 #include "texstore.h"
 #include "format_utils.h"
 #include "pixeltransfer.h"
+#include "util/log.h"
 #include "api_exec_decl.h"
 
+#ifdef _WIN32
+#include <intrin.h>
+#include <windows.h>
+#include <stdlib.h>
+#endif
+
 #include "state_tracker/st_cb_texture.h"
+
+
 
 /**
  * Can the given type represent negative values?
@@ -1498,6 +1507,25 @@ _mesa_GetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
    GET_CURRENT_CONTEXT(ctx);
    static const char *caller = "glGetTexImage";
 
+   void *caller_addr = _ReturnAddress();
+   HMODULE hModule = NULL;
+   
+   GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCTSTR)caller_addr, &hModule);
+   char module_path[MAX_PATH];
+   memset(module_path, 0, sizeof(module_path));
+
+   GetModuleFileNameA(hModule, module_path, sizeof(module_path));
+   const char *module_name = strrchr(module_path, '\\');
+   if (module_name) {
+      module_name++;
+   } else {
+      module_name = module_path;
+   }
+   
+   uintptr_t module_base = (uintptr_t)hModule;
+   uintptr_t caller_offset = (uintptr_t)caller_addr - module_base;
+   uintptr_t ida_address = 0x180000000ULL + caller_offset;
+
    if (!legal_getteximage_target(ctx, target, false)) {
       _mesa_error(ctx, GL_INVALID_ENUM, "%s", caller);
       return;
@@ -1505,6 +1533,28 @@ _mesa_GetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
 
    _get_texture_image(ctx, NULL, target, level, format, type,
                       INT_MAX, pixels, caller);
+
+   /* Override RG32F textures with random data */
+   if ((format == GL_RG || format == GL_RG_INTEGER) && type == GL_FLOAT && pixels) {
+      struct gl_texture_object *texObj = _mesa_get_current_tex_object(ctx, target);
+      if (texObj && texObj->Image[0][level] && 
+          texObj->Image[0][level]->TexFormat == MESA_FORMAT_RG_FLOAT32) {
+          
+         mesa_logi("glGetTexImage: Overriding RG32F texture data with random floats (called from %s+0x%lx, IDA: 0x%llx)",
+                   module_name, caller_offset, ida_address);
+         
+         GLsizei width = texObj->Image[0][level]->Width;
+         GLsizei height = texObj->Image[0][level]->Height;
+         GLsizei depth = texObj->Image[0][level]->Depth;
+         GLsizei total_pixels = width * height * depth;
+         GLfloat *float_data = (GLfloat *)pixels;
+         
+         /* Fill with random float values between 0.0 and 1.0 */
+         for (GLsizei i = 0; i < total_pixels * 2; i++) { /* *2 for RG components */
+            float_data[i] = (float)rand() / (float)RAND_MAX;
+         }
+      }
+   }
 }
 
 

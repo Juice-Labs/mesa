@@ -48,7 +48,30 @@
 #include "varray.h"
 #include "util/u_atomic.h"
 #include "util/u_memory.h"
+#include "util/log.h"
 #include "api_exec_decl.h"
+
+/**
+ * Helper function to dump buffer data as hex bytes
+ */
+static void
+dump_buffer_data_hex(const GLvoid *data, GLsizeiptr size, const char *func, GLenum target)
+{
+   if (!data || size <= 0 || size > 160) {
+      return;
+   }
+
+   const unsigned char *bytes = (const unsigned char *)data;
+   char hex_str[512]; /* 160 bytes * 2 chars per byte + extra space */
+   char *hex_ptr = hex_str;
+   
+   for (GLsizeiptr i = 0; i < size; i++) {
+      hex_ptr += snprintf(hex_ptr, sizeof(hex_str) - (hex_ptr - hex_str), "%02X", bytes[i]);
+   }
+   
+   mesa_logi("%s(%s, %ld, %s)", func, _mesa_enum_to_string(target), (long int)size, hex_str);
+}
+
 #include "util/set.h"
 
 #include "state_tracker/st_debug.h"
@@ -2402,6 +2425,11 @@ buffer_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
    printf("glBufferDataARB(%u, sz %ld, from %p, usage 0x%x)\n",
                 bufObj->Name, size, data, usage);
 #endif
+
+   /* Dump hex bytes for uniform buffers <= 160 bytes */
+   if (target == GL_UNIFORM_BUFFER && data && size <= 160) {
+      dump_buffer_data_hex(data, size, func, target);
+   }
 
 #ifdef BOUNDS_CHECK
    size += 100;

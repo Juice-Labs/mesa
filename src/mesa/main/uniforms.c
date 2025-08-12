@@ -45,7 +45,13 @@
 #include "compiler/glsl_types.h"
 #include "program/program.h"
 #include "util/bitscan.h"
+#include "util/log.h"
 #include "api_exec_decl.h"
+
+#ifdef _WIN32
+#include <intrin.h>
+#include <windows.h>
+#endif
 
 #include "state_tracker/st_context.h"
 
@@ -1048,6 +1054,28 @@ _mesa_GetUniformBlockIndex(GLuint program,
    GET_CURRENT_CONTEXT(ctx);
    struct gl_shader_program *shProg;
 
+   void *caller_addr = _ReturnAddress();
+   HMODULE hModule = NULL;
+   
+   GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCTSTR)caller_addr, &hModule);
+   char module_path[MAX_PATH];
+   memset(module_path, 0, sizeof(module_path));
+
+   GetModuleFileNameA(hModule, module_path, sizeof(module_path));
+   // Extract just the module name from the full path
+   const char *module_name = strrchr(module_path, '\\');
+   if (module_name) {
+      module_name++; // Skip the backslash
+   } else {
+      module_name = module_path;
+   }
+   
+   // Calculate offset from module base + IDA Pro base address (0x180000000)
+   uintptr_t module_base = (uintptr_t)hModule;
+   uintptr_t caller_offset = (uintptr_t)caller_addr - module_base;
+
+   uintptr_t ida_address = 0x180000000ULL + caller_offset;   
+
    if (!ctx->Extensions.ARB_uniform_buffer_object) {
       _mesa_error(ctx, GL_INVALID_OPERATION, "glGetUniformBlockIndex");
       return GL_INVALID_INDEX;
@@ -1055,16 +1083,58 @@ _mesa_GetUniformBlockIndex(GLuint program,
 
    shProg = _mesa_lookup_shader_program_err(ctx, program,
 					    "glGetUniformBlockIndex");
-   if (!shProg)
+   if (!shProg) {
+      mesa_logi("glGetUniformBlockIndex: program %u, uniformBlockName '%s' -- invalid shader program (called from %s+0x%lx, IDA: 0x%llx)",
+                program, uniformBlockName ? uniformBlockName : "(null)",
+                module_name, (unsigned long)caller_offset, (unsigned long long)ida_address);
       return GL_INVALID_INDEX;
+   }
 
    struct gl_program_resource *res =
       _mesa_program_resource_find_name(shProg, GL_UNIFORM_BLOCK,
                                        uniformBlockName, NULL);
-   if (!res)
+                                 
+   if (!res) {
+      mesa_logi("glGetUniformBlockIndex: program %u, uniformBlockName '%s' -- invalid resource (called from %s+0x%lx, IDA: 0x%llx)",
+                program, uniformBlockName ? uniformBlockName : "(null)",
+                module_name, (unsigned long)caller_offset, (unsigned long long)ida_address);
       return GL_INVALID_INDEX;
+   }
 
-   return _mesa_program_resource_index(shProg, res);
+   GLuint ret = _mesa_program_resource_index(shProg, res);
+
+   // Log caller information for specific uniform blocks
+   if (uniformBlockName && (strcmp(uniformBlockName, "binding_size") == 0 ||
+                           strcmp(uniformBlockName, "source_data") == 0 ||
+                           strcmp(uniformBlockName, "param") == 0)) {
+            
+      // Get fragment shader source SHA if available  
+      const char* frag_sha_str = "none";
+      char sha_buffer[48]; // 20 bytes * 2 hex chars + null terminator + some extra
+      
+      if (shProg && shProg->Shaders) {
+         // Find the fragment shader in the program
+         for (unsigned i = 0; i < shProg->NumShaders; i++) {
+            struct gl_shader *shader = shProg->Shaders[i];
+            if (shader && shader->Stage == MESA_SHADER_FRAGMENT) {
+
+               uint32_t hash = *(uint32_t*)shader->source_sha1;
+
+               // Convert source SHA1 bytes to hex string (first 8 bytes)
+               snprintf(sha_buffer, sizeof(sha_buffer), "%08x",
+                        hash);
+               frag_sha_str = sha_buffer;
+               break;
+            }
+         }
+      }
+            
+      mesa_logi("glGetUniformBlockIndex('%s') called from %s+0x%lx (IDA: 0x%llx), program=%u, block index=%u, frag SHA: %s",
+               uniformBlockName, module_name, (unsigned long)caller_offset, 
+               (unsigned long long)ida_address, program, ret, frag_sha_str);
+   }
+
+   return ret;
 }
 
 void GLAPIENTRY

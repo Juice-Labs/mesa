@@ -48,6 +48,7 @@
 #include "texstore.h"
 #include "format_utils.h"
 #include "pixeltransfer.h"
+#include "util/log.h"
 #include "api_exec_decl.h"
 
 #include "state_tracker/st_cb_texture.h"
@@ -1513,6 +1514,28 @@ _mesa_GetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
 
    _get_texture_image(ctx, NULL, target, level, format, type,
                       INT_MAX, pixels, caller);
+
+   /* Override RG32F textures with random data */
+   if ((format == GL_RG || format == GL_RG_INTEGER) && type == GL_FLOAT && pixels) {
+      struct gl_texture_object *texObj = _mesa_get_current_tex_object(ctx, target);
+      if (texObj && texObj->Image[0][level] && 
+          texObj->Image[0][level]->TexFormat == MESA_FORMAT_RG_FLOAT32) {
+
+         GLsizei width = texObj->Image[0][level]->Width;
+         GLsizei height = texObj->Image[0][level]->Height;
+         if (width * height < 16384) {
+            mesa_logi("glGetTexImage: Overriding RG32F texture data with random floats");
+            GLsizei depth = texObj->Image[0][level]->Depth;
+            GLsizei total_pixels = width * height * depth;
+            GLfloat *float_data = (GLfloat *)pixels;
+
+            /* Fill with random float values between 0.0 and 1.0 */
+            for (GLsizei i = 0; i < total_pixels * 2; i++) { /* *2 for RG components */
+               float_data[i] = (float)rand() / (float)RAND_MAX;
+            }
+         }
+      }
+   }                      
 }
 
 

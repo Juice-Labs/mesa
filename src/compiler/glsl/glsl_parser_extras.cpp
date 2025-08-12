@@ -2436,6 +2436,18 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
                                       add_builtin_defines, state, ctx);
    }
 
+   /* Write post-processed shader to c:\temp for debugging */
+   if (!state->error && source) {
+      char filename[512];
+      snprintf(filename, sizeof(filename), "c:\\temp\\shader_%u.glsl", shader->Name);
+      
+      FILE *fp = fopen(filename, "w");
+      if (fp) {
+         fprintf(fp, "%s", source);
+         fclose(fp);
+      }
+   }
+
    /* Now that we have run the preprocessor we can check the shader cache and
     * skip compilation if possible for those shaders that contained a shader
     * include.

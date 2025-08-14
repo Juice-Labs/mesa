@@ -86,8 +86,15 @@ static struct {
    size_t spirv_size;
 } cached_spirv[MESA_SHADER_STAGES] = {0};
 
+/* Cached NIR data for correlation with SPIRV */
+static struct {
+   char stage_name[64];
+   struct nir_shader *nir;
+} cached_nir[MESA_SHADER_STAGES] = {0};
+
 /* Forward declarations */
 static void dump_spirv_shader(const char *stage_name, unsigned draw_id, const void *spirv_data, size_t spirv_size);
+static void dump_nir_shader(struct nir_shader *nir, const char *stage_name, unsigned draw_id);
 
 /* Initialize the SPIRV dump hook - call this once */
 static void
@@ -134,6 +141,33 @@ void _mesa_dump_spirv_hook(const char *stage_name, const void *spirv_data, size_
    
    /* Also dump immediately for debugging */
    dump_spirv_shader(stage_name, dump_counter, spirv_data, spirv_size);
+}
+
+/**
+ * Global hook for NIR dumping - called from Zink driver
+ */
+void _mesa_dump_nir_hook(const char *stage_name, struct nir_shader *nir)
+{
+   if (!nir || !stage_name) return;
+   
+   /* Find the appropriate slot for this shader stage */
+   int slot = -1;
+   if (strstr(stage_name, "vertex")) slot = MESA_SHADER_VERTEX;
+   else if (strstr(stage_name, "fragment")) slot = MESA_SHADER_FRAGMENT;
+   else if (strstr(stage_name, "geometry")) slot = MESA_SHADER_GEOMETRY;
+   else if (strstr(stage_name, "tess_ctrl")) slot = MESA_SHADER_TESS_CTRL;
+   else if (strstr(stage_name, "tess_eval")) slot = MESA_SHADER_TESS_EVAL;
+   else if (strstr(stage_name, "compute")) slot = MESA_SHADER_COMPUTE;
+   
+   if (slot >= 0 && slot < MESA_SHADER_STAGES) {
+      /* Cache the NIR reference (don't deep copy, just reference) */
+      cached_nir[slot].nir = nir;
+      strncpy(cached_nir[slot].stage_name, stage_name, sizeof(cached_nir[slot].stage_name) - 1);
+      cached_nir[slot].stage_name[sizeof(cached_nir[slot].stage_name) - 1] = '\0';
+   }
+   
+   /* Immediately dump the NIR since we have it fresh */
+   dump_nir_shader(nir, stage_name, dump_counter);
 }
 
 /**

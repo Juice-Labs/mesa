@@ -41,8 +41,9 @@ static const SpvFPFastMathModeMask default_fp_mode =
    SpvFPFastMathModeAllowContractMask |
    SpvFPFastMathModeAllowReassocMask |
    SpvFPFastMathModeAllowTransformMask;
-/* Mesa debug hook - forward declaration */
+/* Mesa debug hooks - forward declarations */
 void _mesa_dump_spirv_hook(const char *stage_name, const void *spirv_data, size_t spirv_size);
+void _mesa_dump_nir_hook(const char *stage_name, struct nir_shader *nir);
 
 /* Global flag to enable SPIRV dumping */
 static bool spirv_dumping_enabled = true;
@@ -5601,9 +5602,10 @@ nir_to_spirv(struct nir_shader *s, const struct ntv_info *sinfo)
    ret->tcs_vertices_out_word = tcs_vertices_out_word;
    assert(ret->num_words == num_words);
 
-   /* Call Mesa's SPIRV dump hook for debugging */
+   /* Call Mesa's debug hooks for NIR and SPIRV */
    if (spirv_dumping_enabled) {
       const char *stage_name = _mesa_shader_stage_to_string(s->info.stage);
+      _mesa_dump_nir_hook(stage_name, s);
       _mesa_dump_spirv_hook(stage_name, ret->words, ret->num_words * sizeof(uint32_t));
    }
 

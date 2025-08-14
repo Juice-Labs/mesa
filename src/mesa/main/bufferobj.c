@@ -2430,6 +2430,11 @@ buffer_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
    if (target == GL_UNIFORM_BUFFER && data && size <= 160) {
       dump_buffer_data_hex(data, size, func, target);
    }
+   
+   /* Track uniform buffer updates for draw call dumping */
+   if (target == GL_UNIFORM_BUFFER && data) {
+      ctx->_UniformBufferDataUpdated = true;
+   }
 
 #ifdef BOUNDS_CHECK
    size += 100;

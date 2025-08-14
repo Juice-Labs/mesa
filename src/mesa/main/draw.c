@@ -27,6 +27,7 @@
  **************************************************************************/
 
 #include <stdio.h>
+#include <stdlib.h>
 #include "arrayobj.h"
 #include "util/glheader.h"
 #include "c99_alloca.h"
@@ -49,6 +50,7 @@
 #include "state_tracker/st_draw.h"
 #include "util/u_draw.h"
 #include "util/u_threaded_context.h"
+#include "state_tracker/st_cb_readpixels.h"
 
 typedef struct {
    GLuint count;
@@ -65,6 +67,64 @@ typedef struct {
    GLuint baseInstance;
 } DrawElementsIndirectCommand;
 
+/**
+ * Simple counter for unique filenames
+ */
+static unsigned dump_counter = 0;
+
+/**
+ * Dump framebuffer contents to a raw file
+ */
+static void
+dump_framebuffer_after_draw(struct gl_context *ctx)
+{   
+   /* Only dump if we recently had a uniform buffer update */
+   if (!ctx->_UniformBufferDataUpdated)
+      return;
+
+   /* Get dimensions from current draw framebuffer */
+   GLint width = (GLint)ctx->DrawBuffer->Width;
+   GLint height = (GLint)ctx->DrawBuffer->Height;
+   
+   if (width <= 0 || height <= 0)
+      return;
+      
+   /* Allocate buffer for RGBA data */
+   GLubyte *pixels = malloc(width * height * 4);
+   if (!pixels)
+      return;
+      
+   /* Read the framebuffer */
+   struct gl_pixelstore_attrib pack = ctx->DefaultPacking;
+   st_ReadPixels(ctx, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, &pack, pixels);
+   
+   /* Generate filename - both PPM and raw formats */
+   char filename_ppm[256], filename_raw[256];
+   snprintf(filename_ppm, sizeof(filename_ppm), "c:\\temp\\draw_%06u_%dx%d.ppm", ++dump_counter, width, height);
+   snprintf(filename_raw, sizeof(filename_raw), "c:\\temp\\draw_%06u_%dx%d.raw", dump_counter, width, height);
+   
+   /* Write raw RGBA data */
+   FILE *fp_raw = fopen(filename_raw, "wb");
+   if (fp_raw) {
+      fwrite(pixels, 1, width * height * 4, fp_raw);
+      fclose(fp_raw);
+   }
+   
+   /* Write PPM file */
+   FILE *fp_ppm = fopen(filename_ppm, "wb");
+   if (fp_ppm) {
+      fprintf(fp_ppm, "P6\n%d %d\n255\n", width, height);
+      for (int y = height - 1; y >= 0; y--) { /* Flip Y */
+         for (int x = 0; x < width; x++) {
+            GLubyte *pixel = &pixels[(y * width + x) * 4];
+            fwrite(pixel, 1, 3, fp_ppm); /* Write RGB, skip alpha */
+         }
+      }
+      fclose(fp_ppm);
+   }
+   
+   free(pixels);
+}
 
 /**
  * Want to figure out which fragment program inputs are actually
@@ -1176,6 +1236,12 @@ _mesa_draw_arrays(struct gl_context *ctx, GLenum mode, GLint start,
    st_prepare_draw(ctx, mask);
 
    ctx->Driver.DrawGallium(ctx, &info, ctx->DrawID, NULL, &draw, 1);
+
+   /* Dump framebuffer after draw if enabled */
+   dump_framebuffer_after_draw(ctx);
+   
+   /* Reset the uniform buffer update flag */
+   ctx->_UniformBufferDataUpdated = false;
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);

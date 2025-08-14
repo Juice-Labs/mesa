@@ -92,6 +92,12 @@ _mesa_bitmap(struct gl_context *ctx, GLsizei width, GLsizei height,
              GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove,
              const GLubyte *bitmap, struct pipe_resource *tex);
 
+/**
+ * Hook for dumping SPIRV shaders - called from Zink driver
+ */
+void
+_mesa_dump_spirv_hook(const char *stage_name, const void *spirv_data, size_t spirv_size);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

@@ -52,6 +52,9 @@ nir_to_spirv(struct nir_shader *s, const struct zink_shader_info *so_info,
 void
 spirv_shader_delete(struct spirv_shader *s);
 
+void
+zink_enable_spirv_dumping(bool enable);
+
 static inline bool
 type_is_counter(const struct glsl_type *type)
 {

@@ -76,6 +76,9 @@ spirv_shader_delete(struct spirv_shader *s);
 void
 ntv_shader_prepare(struct nir_shader *nir);
 
+void
+zink_enable_spirv_dumping(bool enable);
+
 static inline bool
 type_is_counter(const struct glsl_type *type)
 {

@@ -127,6 +127,11 @@ _mesa_is_index_type_valid(GLenum type)
     */
    return type <= GL_UNSIGNED_INT && (type & ~6) == GL_UNSIGNED_BYTE;
 }
+/**
+ * Hook for dumping SPIRV shaders - called from Zink driver
+ */
+void
+_mesa_dump_spirv_hook(const char *stage_name, const void *spirv_data, size_t spirv_size);
 
 #ifdef __cplusplus
 } // extern "C"

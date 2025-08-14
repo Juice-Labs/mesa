@@ -40,6 +40,7 @@ extern "C" {
 
 struct gl_context;
 struct gl_vertex_array_object;
+struct nir_shader;
 struct _mesa_prim
 {
    GLubyte mode;    /**< GL_POINTS, GL_LINES, GL_QUAD_STRIP, etc */
@@ -132,6 +133,9 @@ _mesa_is_index_type_valid(GLenum type)
  */
 void
 _mesa_dump_spirv_hook(const char *stage_name, const void *spirv_data, size_t spirv_size);
+
+void
+_mesa_dump_nir_hook(const char *stage_name, struct nir_shader *nir);
 
 #ifdef __cplusplus
 } // extern "C"

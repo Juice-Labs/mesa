@@ -95,6 +95,7 @@ static struct {
 /* Forward declarations */
 static void dump_spirv_shader(const char *stage_name, unsigned draw_id, const void *spirv_data, size_t spirv_size);
 static void dump_nir_shader(struct nir_shader *nir, const char *stage_name, unsigned draw_id);
+static void dump_active_texture_contents(struct gl_context *ctx, unsigned draw_id);
 
 /* Initialize the SPIRV dump hook - call this once */
 static void
@@ -490,6 +491,127 @@ dump_texture_state(struct gl_context *ctx, unsigned draw_id)
 }
 
 /**
+ * Dump active texture contents as PPM images
+ */
+static void
+dump_active_texture_contents(struct gl_context *ctx, unsigned draw_id)
+{
+   for (GLuint unit = 0; unit < ctx->Const.MaxCombinedTextureImageUnits; unit++) {
+      for (GLuint target = 0; target < NUM_TEXTURE_TARGETS; target++) {
+         struct gl_texture_object *texObj = ctx->Texture.Unit[unit].CurrentTex[target];
+         if (!texObj || texObj->Name == 0) continue;
+         
+         struct gl_texture_image *texImage = texObj->Image[0][0];
+         if (!texImage || texImage->Width == 0 || texImage->Height == 0) continue;
+         
+         GLint width = texImage->Width;
+         GLint height = texImage->Height;
+         
+         /* Skip depth/stencil textures to avoid complications */
+         if (texImage->InternalFormat == GL_DEPTH_COMPONENT ||
+             texImage->InternalFormat == GL_DEPTH_STENCIL ||
+             texImage->InternalFormat == GL_STENCIL_INDEX) continue;
+         
+         /* Determine if this is an integer texture */
+         bool is_integer = false;
+         switch (texImage->InternalFormat) {
+            case GL_R8UI: case GL_R8I: case GL_R16UI: case GL_R16I: 
+            case GL_R32UI: case GL_R32I:
+            case GL_RG8UI: case GL_RG8I: case GL_RG16UI: case GL_RG16I: 
+            case GL_RG32UI: case GL_RG32I:
+            case GL_RGB8UI: case GL_RGB8I: case GL_RGB16UI: case GL_RGB16I: 
+            case GL_RGB32UI: case GL_RGB32I:
+            case GL_RGBA8UI: case GL_RGBA8I: case GL_RGBA16UI: case GL_RGBA16I: 
+            case GL_RGBA32UI: case GL_RGBA32I:
+               is_integer = true;
+               break;
+            default:
+               is_integer = false;
+               break;
+         }
+         
+         /* Allocate pixel buffer - use 16 bytes per pixel for integer textures */
+         void *pixels = malloc(width * height * (is_integer ? 16 : 4));
+         if (!pixels) continue;
+         
+         /* Save current bindings */
+         GLint prev_fbo;
+         _mesa_GetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+         
+         GLuint temp_fbo, temp_texture;
+         _mesa_GenFramebuffers(1, &temp_fbo);
+         _mesa_BindFramebuffer(GL_FRAMEBUFFER, temp_fbo);
+         
+         /* For cube maps and arrays, just read face 0/layer 0 */
+         GLenum attachment_target = texObj->Target;
+         if (attachment_target == GL_TEXTURE_CUBE_MAP) {
+            attachment_target = GL_TEXTURE_CUBE_MAP_POSITIVE_X;
+         }
+         
+         _mesa_FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 
+                                   attachment_target, texObj->Name, 0);
+         
+         if (_mesa_CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+            struct gl_pixelstore_attrib pack = ctx->DefaultPacking;
+            
+            bool read_success = false;
+            if (is_integer) {
+               /* For integer textures, read as RGBA_INTEGER to avoid blitter assertion */
+               st_ReadPixels(ctx, 0, 0, width, height, GL_RGBA_INTEGER, GL_UNSIGNED_INT, &pack, pixels);
+               read_success = true;
+            } else {
+               /* For normalized textures, read as regular RGBA */
+               st_ReadPixels(ctx, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, &pack, pixels);
+               read_success = true;
+            }
+            
+            if (read_success) {
+               /* Write raw data file for all textures */
+               char raw_filename[512];
+               snprintf(raw_filename, sizeof(raw_filename), 
+                       "c:\\temp\\draw_%06u_texture_unit%u_target%u_%ux%u_%s.raw", 
+                       draw_id, unit, target, width, height, is_integer ? "int" : "norm");
+               
+               FILE *raw_fp = fopen(raw_filename, "wb");
+               if (raw_fp) {
+                  fwrite(pixels, 1, width * height * (is_integer ? 16 : 4), raw_fp);
+                  fclose(raw_fp);
+               }
+               
+               /* For normalized textures, also write PPM */
+               if (!is_integer) {
+                  /* Write PPM file */
+                  char ppm_filename[512];
+                  snprintf(ppm_filename, sizeof(ppm_filename), 
+                        "c:\\temp\\draw_%06u_texture_unit%u_target%u_%ux%u.ppm", 
+                        draw_id, unit, target, width, height);
+                  
+                  FILE *ppm_fp = fopen(ppm_filename, "wb");
+                  if (ppm_fp) {
+                     fprintf(ppm_fp, "P6\n%d %d\n255\n", width, height);
+                     GLubyte *byte_pixels = (GLubyte*)pixels;
+                     for (int y = height - 1; y >= 0; y--) {
+                        for (int x = 0; x < width; x++) {
+                           GLubyte *pixel = &byte_pixels[(y * width + x) * 4];
+                           fwrite(pixel, 1, 3, ppm_fp);
+                        }
+                     }
+                     fclose(ppm_fp);
+                  }               
+               }
+            }
+         }
+         
+         /* Restore previous framebuffer */
+         _mesa_BindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
+         _mesa_DeleteFramebuffers(1, &temp_fbo);
+         
+         free(pixels);
+      }
+   }
+}
+
+/**
  * Dump framebuffer configuration
  */
 static void
@@ -624,6 +746,7 @@ dump_comprehensive_state(struct gl_context *ctx, GLenum mode, GLint start, GLsiz
    dump_uniform_buffers(ctx, current_dump);
    dump_shader_program(ctx, current_dump);
    dump_texture_state(ctx, current_dump);
+   dump_active_texture_contents(ctx, current_dump);
    dump_framebuffer_config(ctx, current_dump);
    dump_pipeline_state(ctx, current_dump);
    

@@ -3667,6 +3667,9 @@ struct gl_context
 
    struct pipe_draw_start_count_bias *tmp_draws;
    unsigned num_tmp_draws;
+
+   /** Flag to track uniform buffer data updates for draw call dumping */
+   bool _UniformBufferDataUpdated;
 };
 
 #ifndef NDEBUG

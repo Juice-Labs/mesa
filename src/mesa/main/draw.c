@@ -28,6 +28,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "arrayobj.h"
 #include "util/glheader.h"
 #include "c99_alloca.h"
@@ -40,6 +41,9 @@
 #include "bufferobj.h"
 #include "enums.h"
 #include "util/bitscan.h"
+#include "compiler/nir/nir.h"
+#include "compiler/nir/nir_serialize.h"
+#include "util/blob.h"
 #include "macros.h"
 #include "transformfeedback.h"
 #include "pipe/p_state.h"
@@ -72,6 +76,65 @@ typedef struct {
  * Simple counter for unique filenames
  */
 static unsigned dump_counter = 0;
+
+/**
+ * SPIRV cache for associating with draw calls
+ */
+static struct {
+   char stage_name[64];
+   void *spirv_data;
+   size_t spirv_size;
+} cached_spirv[MESA_SHADER_STAGES] = {0};
+
+/* Forward declarations */
+static void dump_spirv_shader(const char *stage_name, unsigned draw_id, const void *spirv_data, size_t spirv_size);
+
+/* Initialize the SPIRV dump hook - call this once */
+static void
+init_spirv_dump_hook(void)
+{
+   static bool initialized = false;
+   if (!initialized) {
+      zink_enable_spirv_dumping(true);
+      initialized = true;
+   }
+}
+
+/**
+ * Global hook for SPIRV dumping - called from Zink driver
+ */
+void _mesa_dump_spirv_hook(const char *stage_name, const void *spirv_data, size_t spirv_size)
+{
+   if (!spirv_data || spirv_size == 0 || !stage_name) return;
+   
+   /* Find the appropriate slot for this shader stage */
+   int slot = -1;
+   if (strstr(stage_name, "vertex")) slot = MESA_SHADER_VERTEX;
+   else if (strstr(stage_name, "fragment")) slot = MESA_SHADER_FRAGMENT;
+   else if (strstr(stage_name, "geometry")) slot = MESA_SHADER_GEOMETRY;
+   else if (strstr(stage_name, "tess_ctrl")) slot = MESA_SHADER_TESS_CTRL;
+   else if (strstr(stage_name, "tess_eval")) slot = MESA_SHADER_TESS_EVAL;
+   else if (strstr(stage_name, "compute")) slot = MESA_SHADER_COMPUTE;
+   
+   if (slot >= 0 && slot < MESA_SHADER_STAGES) {
+      /* Free any existing cached data */
+      if (cached_spirv[slot].spirv_data) {
+         free(cached_spirv[slot].spirv_data);
+      }
+      
+      /* Cache the new SPIRV data */
+      cached_spirv[slot].spirv_data = malloc(spirv_size);
+      if (cached_spirv[slot].spirv_data) {
+         memcpy(cached_spirv[slot].spirv_data, spirv_data, spirv_size);
+         cached_spirv[slot].spirv_size = spirv_size;
+         strncpy(cached_spirv[slot].stage_name, stage_name, sizeof(cached_spirv[slot].stage_name) - 1);
+         cached_spirv[slot].stage_name[sizeof(cached_spirv[slot].stage_name) - 1] = '\0';
+      }
+   }
+   
+   /* Also dump immediately for debugging */
+   dump_spirv_shader(stage_name, dump_counter, spirv_data, spirv_size);
+}
 
 /**
  * Dump buffer object data to file
@@ -177,7 +240,97 @@ dump_uniform_buffers(struct gl_context *ctx, unsigned draw_id)
 }
 
 /**
- * Dump active shader program state
+ * Dump NIR shader for a specific stage
+ */
+static void
+dump_nir_shader(struct nir_shader *nir, const char *stage_name, unsigned draw_id)
+{
+   if (!nir) return;
+   
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_nir_%s.txt", draw_id, stage_name);
+   
+   FILE *fp = fopen(filename, "w");
+   if (!fp) return;
+   
+   fprintf(fp, "=== NIR SHADER: %s ===\n", stage_name);
+   fprintf(fp, "Draw ID: %u\n", draw_id);
+   fprintf(fp, "Stage: %s\n", _mesa_shader_stage_to_string(nir->info.stage));
+   fprintf(fp, "Name: %s\n", nir->info.name ? nir->info.name : "unknown");
+   fprintf(fp, "Work Group Size: %ux%ux%u\n", 
+           nir->info.workgroup_size[0], nir->info.workgroup_size[1], nir->info.workgroup_size[2]);
+   fprintf(fp, "Num Inputs: %u\n", nir->num_inputs);
+   fprintf(fp, "Num Outputs: %u\n", nir->num_outputs);
+   fprintf(fp, "Num Uniforms: %u\n", nir->num_uniforms);
+   fprintf(fp, "SPIRV File: draw_%06u_spirv_%s.spv\n", draw_id, stage_name);
+   fprintf(fp, "SPIRV Info: draw_%06u_spirv_%s.txt\n", draw_id, stage_name);
+   fprintf(fp, "\n=== NIR CODE ===\n");
+   
+   nir_print_shader(nir, fp);
+   fclose(fp);
+   
+   /* Also dump binary NIR */
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_nir_%s.bin", draw_id, stage_name);
+   FILE *bin_fp = fopen(filename, "wb");
+   if (bin_fp) {
+      struct blob blob;
+      blob_init(&blob);
+      nir_serialize(&blob, nir, false);
+      fwrite(blob.data, 1, blob.size, bin_fp);
+      blob_finish(&blob);
+      fclose(bin_fp);
+   }
+}
+
+/**
+ * Dump SPIRV shader data if available (placeholder for Zink integration)
+ */
+static void
+dump_spirv_shader(const char *stage_name, unsigned draw_id, const void *spirv_data, size_t spirv_size)
+{
+   if (!spirv_data || spirv_size == 0) return;
+   
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_spirv_%s.spv", draw_id, stage_name);
+   
+   FILE *fp = fopen(filename, "wb");
+   if (!fp) return;
+   
+   fwrite(spirv_data, 1, spirv_size, fp);
+   fclose(fp);
+   
+   /* Create a text file with SPIRV info */
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_spirv_%s.txt", draw_id, stage_name);
+   fp = fopen(filename, "w");
+   if (fp) {
+      fprintf(fp, "=== SPIRV SHADER: %s ===\n", stage_name);
+      fprintf(fp, "Draw ID: %u\n", draw_id);
+      fprintf(fp, "Binary Size: %zu bytes\n", spirv_size);
+      fprintf(fp, "Word Count: %zu\n", spirv_size / 4);
+      fprintf(fp, "Magic Number: 0x%08X\n", spirv_size >= 4 ? *((const uint32_t*)spirv_data) : 0);
+      fprintf(fp, "NIR Source: draw_%06u_nir_%s.txt\n", draw_id, stage_name);
+      fprintf(fp, "NIR Binary: draw_%06u_nir_%s.bin\n", draw_id, stage_name);
+      fprintf(fp, "\n=== SPIRV BINARY DUMP ===\n");
+      
+      /* Dump first 64 words as hex */
+      const uint32_t *words = (const uint32_t*)spirv_data;
+      size_t word_count = (spirv_size / 4 < 64) ? spirv_size / 4 : 64;
+      for (size_t i = 0; i < word_count; i++) {
+         if (i % 8 == 0) fprintf(fp, "%04zx: ", i);
+         fprintf(fp, "%08x ", words[i]);
+         if (i % 8 == 7) fprintf(fp, "\n");
+      }
+      if (word_count % 8 != 0) fprintf(fp, "\n");
+      if (spirv_size / 4 > 64) {
+         fprintf(fp, "... (%zu more words)\n", spirv_size / 4 - 64);
+      }
+      
+      fclose(fp);
+   }
+}
+
+/**
+ * Dump comprehensive shader program state including NIR and SPIRV
  */
 static void
 dump_shader_program(struct gl_context *ctx, unsigned draw_id)
@@ -191,25 +344,82 @@ dump_shader_program(struct gl_context *ctx, unsigned draw_id)
    FILE *fp_file = fopen(filename, "w");
    if (!fp_file) return;
    
+   fprintf(fp_file, "=== SHADER PROGRAM DUMP %u ===\n", draw_id);
+   
    if (ctx->_Shader && ctx->_Shader->ActiveProgram) {
       struct gl_shader_program *prog = ctx->_Shader->ActiveProgram;
       fprintf(fp_file, "Active Shader Program: %u\n", prog->Name);
       fprintf(fp_file, "Link Status: %d\n", prog->data ? prog->data->LinkStatus : -1);
       
-      /* Dump linked shaders */
+      /* Dump linked shaders and their NIR */
       for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
-         if (prog->_LinkedShaders[i]) {
-            fprintf(fp_file, "Shader[%u]: Stage=%u, Program=%u\n", 
-                    i, prog->_LinkedShaders[i]->Stage, prog->Name);
+         if (prog->_LinkedShaders[i] && prog->_LinkedShaders[i]->Program) {
+            struct gl_program *stage_prog = prog->_LinkedShaders[i]->Program;
+            const char *stage_names[] = {"vertex", "tess_ctrl", "tess_eval", "geometry", "fragment", "compute"};
+            const char *stage_name = (i < 6) ? stage_names[i] : "unknown";
+            
+            fprintf(fp_file, "Shader[%u]: Stage=%s, Program=%u, NIR=%s\n", 
+                    i, stage_name, prog->Name, stage_prog->nir ? "available" : "null");
+            
+            /* Dump NIR if available */
+            if (stage_prog->nir) {
+               dump_nir_shader(stage_prog->nir, stage_name, draw_id);
+            }
+            
+            /* Dump cached SPIRV if available */
+            if (cached_spirv[i].spirv_data && cached_spirv[i].spirv_size > 0) {
+               dump_spirv_shader(stage_name, draw_id, cached_spirv[i].spirv_data, cached_spirv[i].spirv_size);
+            }
          }
       }
    }
    
+   /* Dump current program NIR directly */
    if (vp) {
-      fprintf(fp_file, "Vertex Program: ID=%u\n", vp->Id);
+      fprintf(fp_file, "Vertex Program: ID=%u, NIR=%s\n", vp->Id, vp->nir ? "available" : "null");
+      if (vp->nir) {
+         dump_nir_shader(vp->nir, "vertex_current", draw_id);
+      }
    }
+   
    if (fp) {
-      fprintf(fp_file, "Fragment Program: ID=%u\n", fp->Id);
+      fprintf(fp_file, "Fragment Program: ID=%u, NIR=%s\n", fp->Id, fp->nir ? "available" : "null");
+      if (fp->nir) {
+         dump_nir_shader(fp->nir, "fragment_current", draw_id);
+      }
+   }
+   
+   /* Dump other pipeline stages */
+   if (ctx->GeometryProgram._Current) {
+      struct gl_program *gp = ctx->GeometryProgram._Current;
+      fprintf(fp_file, "Geometry Program: ID=%u, NIR=%s\n", gp->Id, gp->nir ? "available" : "null");
+      if (gp->nir) {
+         dump_nir_shader(gp->nir, "geometry_current", draw_id);
+      }
+   }
+   
+   if (ctx->TessCtrlProgram._Current) {
+      struct gl_program *tcp = ctx->TessCtrlProgram._Current;
+      fprintf(fp_file, "Tess Control Program: ID=%u, NIR=%s\n", tcp->Id, tcp->nir ? "available" : "null");
+      if (tcp->nir) {
+         dump_nir_shader(tcp->nir, "tess_ctrl_current", draw_id);
+      }
+   }
+   
+   if (ctx->TessEvalProgram._Current) {
+      struct gl_program *tep = ctx->TessEvalProgram._Current;
+      fprintf(fp_file, "Tess Eval Program: ID=%u, NIR=%s\n", tep->Id, tep->nir ? "available" : "null");
+      if (tep->nir) {
+         dump_nir_shader(tep->nir, "tess_eval_current", draw_id);
+      }
+   }
+   
+   if (ctx->ComputeProgram._Current) {
+      struct gl_program *cp = ctx->ComputeProgram._Current;
+      fprintf(fp_file, "Compute Program: ID=%u, NIR=%s\n", cp->Id, cp->nir ? "available" : "null");
+      if (cp->nir) {
+         dump_nir_shader(cp->nir, "compute_current", draw_id);
+      }
    }
    
    fclose(fp_file);
@@ -350,6 +560,9 @@ dump_comprehensive_state(struct gl_context *ctx, GLenum mode, GLint start, GLsiz
    /* Only dump if we recently had a uniform buffer update */
    if (!ctx->_UniformBufferDataUpdated)
       return;
+
+   /* Initialize SPIRV dump hook on first use */
+   init_spirv_dump_hook();
 
    unsigned current_dump = ++dump_counter;
    

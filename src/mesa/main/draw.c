@@ -39,6 +39,7 @@
 #include "varray.h"
 #include "bufferobj.h"
 #include "enums.h"
+#include "util/bitscan.h"
 #include "macros.h"
 #include "transformfeedback.h"
 #include "pipe/p_state.h"
@@ -73,57 +74,353 @@ typedef struct {
 static unsigned dump_counter = 0;
 
 /**
- * Dump framebuffer contents to a raw file
+ * Dump buffer object data to file
  */
 static void
-dump_framebuffer_after_draw(struct gl_context *ctx)
-{   
+dump_buffer_object(struct gl_context *ctx, struct gl_buffer_object *bufObj, const char *name, unsigned draw_id)
+{
+   if (!bufObj || !bufObj->Size || bufObj->Size > 10*1024*1024) /* Skip huge buffers */
+      return;
+      
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_%s_buf%u_%lubytes.raw", 
+            draw_id, name, bufObj->Name, (unsigned long)bufObj->Size);
+   
+   FILE *fp = fopen(filename, "wb");
+   if (!fp) return;
+   
+   /* Map and dump buffer data */
+   void *data = _mesa_bufferobj_map_range(ctx, 0, bufObj->Size, GL_MAP_READ_BIT, bufObj, MAP_INTERNAL);
+   if (data) {
+      fwrite(data, 1, bufObj->Size, fp);
+      _mesa_bufferobj_unmap(ctx, bufObj, MAP_INTERNAL);
+   }
+   fclose(fp);
+}
+
+/**
+ * Dump vertex array object state
+ */
+static void
+dump_vertex_arrays(struct gl_context *ctx, unsigned draw_id)
+{
+   struct gl_vertex_array_object *vao = ctx->Array.VAO;
+   if (!vao) return;
+   
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_vao_state.txt", draw_id);
+   
+   FILE *fp = fopen(filename, "w");
+   if (!fp) return;
+   
+   fprintf(fp, "VAO Name: %u\n", vao->Name);
+   fprintf(fp, "Enabled Attributes: 0x%llx\n", (unsigned long long)vao->Enabled);
+   
+   GLbitfield mask = vao->Enabled;
+   while (mask) {
+      const gl_vert_attrib i = u_bit_scan(&mask);
+      const struct gl_array_attributes *array = &vao->VertexAttrib[i];
+      const struct gl_vertex_buffer_binding *binding = &vao->BufferBinding[array->BufferBindingIndex];
+      
+      fprintf(fp, "Attr[%d]: Size=%d, Type=0x%x, Stride=%d, Offset=%ld, Buffer=%u\n",
+              i, array->Format.Size, array->Format.Type, 
+              binding->Stride, (long)array->RelativeOffset, 
+              binding->BufferObj ? binding->BufferObj->Name : 0);
+              
+      /* Dump the vertex buffer data */
+      if (binding->BufferObj) {
+         char buf_name[64];
+         snprintf(buf_name, sizeof(buf_name), "vertex_attr%d", i);
+         dump_buffer_object(ctx, binding->BufferObj, buf_name, draw_id);
+      }
+   }
+   
+   /* Dump index buffer if present */
+   if (vao->IndexBufferObj) {
+      fprintf(fp, "Index Buffer: %u\n", vao->IndexBufferObj->Name);
+      dump_buffer_object(ctx, vao->IndexBufferObj, "index", draw_id);
+   }
+   
+   fclose(fp);
+}
+
+/**
+ * Dump uniform buffer bindings and data
+ */
+static void
+dump_uniform_buffers(struct gl_context *ctx, unsigned draw_id)
+{
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_uniforms.txt", draw_id);
+   
+   FILE *fp = fopen(filename, "w");
+   if (!fp) return;
+   
+   fprintf(fp, "=== UNIFORM BUFFER BINDINGS ===\n");
+   
+   for (GLuint i = 0; i < ctx->Const.MaxUniformBufferBindings; i++) {
+      struct gl_buffer_object *bufObj = ctx->UniformBufferBindings[i].BufferObject;
+      if (!bufObj) continue;
+      
+      fprintf(fp, "UBO[%u]: Buffer=%u, Offset=%ld, Size=%ld\n", 
+              i, bufObj->Name, 
+              (long)ctx->UniformBufferBindings[i].Offset,
+              (long)ctx->UniformBufferBindings[i].Size);
+              
+      /* Dump the uniform buffer data */
+      char buf_name[64];
+      snprintf(buf_name, sizeof(buf_name), "uniform%u", i);
+      dump_buffer_object(ctx, bufObj, buf_name, draw_id);
+   }
+   
+   fclose(fp);
+}
+
+/**
+ * Dump active shader program state
+ */
+static void
+dump_shader_program(struct gl_context *ctx, unsigned draw_id)
+{
+   struct gl_program *vp = ctx->VertexProgram._Current;
+   struct gl_program *fp = ctx->FragmentProgram._Current;
+   
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_shaders.txt", draw_id);
+   
+   FILE *fp_file = fopen(filename, "w");
+   if (!fp_file) return;
+   
+   if (ctx->_Shader && ctx->_Shader->ActiveProgram) {
+      struct gl_shader_program *prog = ctx->_Shader->ActiveProgram;
+      fprintf(fp_file, "Active Shader Program: %u\n", prog->Name);
+      fprintf(fp_file, "Link Status: %d\n", prog->data ? prog->data->LinkStatus : -1);
+      
+      /* Dump linked shaders */
+      for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
+         if (prog->_LinkedShaders[i]) {
+            fprintf(fp_file, "Shader[%u]: Stage=%u, Program=%u\n", 
+                    i, prog->_LinkedShaders[i]->Stage, prog->Name);
+         }
+      }
+   }
+   
+   if (vp) {
+      fprintf(fp_file, "Vertex Program: ID=%u\n", vp->Id);
+   }
+   if (fp) {
+      fprintf(fp_file, "Fragment Program: ID=%u\n", fp->Id);
+   }
+   
+   fclose(fp_file);
+}
+
+/**
+ * Dump texture bindings and basic info
+ */
+static void
+dump_texture_state(struct gl_context *ctx, unsigned draw_id)
+{
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_textures.txt", draw_id);
+   
+   FILE *fp = fopen(filename, "w");
+   if (!fp) return;
+   
+   fprintf(fp, "=== TEXTURE BINDINGS ===\n");
+   
+   for (GLuint unit = 0; unit < ctx->Const.MaxCombinedTextureImageUnits; unit++) {
+      for (GLuint target = 0; target < NUM_TEXTURE_TARGETS; target++) {
+         struct gl_texture_object *texObj = ctx->Texture.Unit[unit].CurrentTex[target];
+         if (!texObj || texObj->Name == 0) continue;
+         
+         fprintf(fp, "Unit[%u] Target[%u]: Tex=%u, Target=0x%x, Size=%ux%u, Format=0x%x\n",
+                 unit, target, texObj->Name, texObj->Target,
+                 texObj->Image[0][0] ? texObj->Image[0][0]->Width : 0,
+                 texObj->Image[0][0] ? texObj->Image[0][0]->Height : 0,
+                 texObj->Image[0][0] ? texObj->Image[0][0]->InternalFormat : 0);
+      }
+   }
+   
+   fclose(fp);
+}
+
+/**
+ * Dump framebuffer configuration
+ */
+static void
+dump_framebuffer_config(struct gl_context *ctx, unsigned draw_id)
+{
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_framebuffer.txt", draw_id);
+   
+   FILE *fp = fopen(filename, "w");
+   if (!fp) return;
+   
+   struct gl_framebuffer *fb = ctx->DrawBuffer;
+   fprintf(fp, "=== DRAW FRAMEBUFFER ===\n");
+   fprintf(fp, "FBO Name: %u\n", fb->Name);
+   fprintf(fp, "Size: %ux%u\n", fb->Width, fb->Height);
+   fprintf(fp, "Status: 0x%x\n", fb->_Status);
+   fprintf(fp, "Has Attachments: %s\n", fb->_HasAttachments ? "true" : "false");
+   
+   /* Dump color attachments */
+   for (int i = 0; i < MAX_DRAW_BUFFERS; i++) {
+      struct gl_renderbuffer_attachment *att = &fb->Attachment[BUFFER_COLOR0 + i];
+      if (att->Type != GL_NONE) {
+         fprintf(fp, "Color[%d]: Type=0x%x", i, att->Type);
+         if (att->Type == GL_TEXTURE) {
+            fprintf(fp, " Tex=%u Level=%u Face=%u", 
+                    att->Texture ? att->Texture->Name : 0, 
+                    att->TextureLevel, att->CubeMapFace);
+         } else if (att->Type == GL_RENDERBUFFER) {
+            fprintf(fp, " RB=%u", att->Renderbuffer ? att->Renderbuffer->Name : 0);
+         }
+         fprintf(fp, "\n");
+      }
+   }
+   
+   /* Dump depth/stencil attachments */
+   struct gl_renderbuffer_attachment *depth_att = &fb->Attachment[BUFFER_DEPTH];
+   if (depth_att->Type != GL_NONE) {
+      fprintf(fp, "Depth: Type=0x%x", depth_att->Type);
+      if (depth_att->Type == GL_TEXTURE && depth_att->Texture) {
+         fprintf(fp, " Tex=%u Level=%u", depth_att->Texture->Name, depth_att->TextureLevel);
+      }
+      fprintf(fp, "\n");
+   }
+   
+   fclose(fp);
+}
+
+/**
+ * Dump additional GL pipeline state
+ */
+static void
+dump_pipeline_state(struct gl_context *ctx, unsigned draw_id)
+{
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_pipeline_state.txt", draw_id);
+   
+   FILE *fp = fopen(filename, "w");
+   if (!fp) return;
+   
+   fprintf(fp, "=== PIPELINE STATE ===\n");
+   
+   /* Viewport state */
+   fprintf(fp, "Viewport[0]: X=%.1f Y=%.1f W=%.1f H=%.1f Near=%.6f Far=%.6f\n",
+           ctx->ViewportArray[0].X, ctx->ViewportArray[0].Y,
+           ctx->ViewportArray[0].Width, ctx->ViewportArray[0].Height,
+           ctx->ViewportArray[0].Near, ctx->ViewportArray[0].Far);
+   
+   /* Blend state */
+   fprintf(fp, "Blend Enabled: %s\n", ctx->Color.BlendEnabled ? "true" : "false");
+   if (ctx->Color.BlendEnabled) {
+      fprintf(fp, "Blend Src RGB: 0x%x, Dst RGB: 0x%x\n", 
+              ctx->Color.Blend[0].SrcRGB, ctx->Color.Blend[0].DstRGB);
+      fprintf(fp, "Blend Src Alpha: 0x%x, Dst Alpha: 0x%x\n",
+              ctx->Color.Blend[0].SrcA, ctx->Color.Blend[0].DstA);
+   }
+   
+   /* Depth state */
+   fprintf(fp, "Depth Test: %s, Depth Func: 0x%x\n", 
+           ctx->Depth.Test ? "true" : "false", ctx->Depth.Func);
+   fprintf(fp, "Depth Mask: %s\n", ctx->Depth.Mask ? "true" : "false");
+   
+   /* Stencil state */
+   fprintf(fp, "Stencil Test: %s\n", ctx->Stencil.Enabled ? "true" : "false");
+   
+   /* Rasterizer state */
+   fprintf(fp, "Cull Face: %s, Cull Mode: 0x%x, Front Face: 0x%x\n",
+           ctx->Polygon.CullFlag ? "true" : "false",
+           ctx->Polygon.CullFaceMode, ctx->Polygon.FrontFace);
+   
+   /* Color mask */
+   fprintf(fp, "Color Mask: 0x%x\n", ctx->Color.ColorMask);
+   
+   fclose(fp);
+}
+
+/**
+ * Comprehensive RenderDoc-style dump of all GL state and buffers
+ */
+static void
+dump_comprehensive_state(struct gl_context *ctx, GLenum mode, GLint start, GLsizei count, GLuint numInstances, GLuint baseInstance)
+{
    /* Only dump if we recently had a uniform buffer update */
    if (!ctx->_UniformBufferDataUpdated)
       return;
 
-   /* Get dimensions from current draw framebuffer */
+   unsigned current_dump = ++dump_counter;
+   
+   /* Create main state file */
+   char main_filename[512];
+   snprintf(main_filename, sizeof(main_filename), "c:\\temp\\draw_%06u_main_state.txt", current_dump);
+   
+   FILE *main_fp = fopen(main_filename, "w");
+   if (main_fp) {
+      fprintf(main_fp, "=== MESA DRAW CALL DUMP %u ===\n", current_dump);
+      fprintf(main_fp, "Draw Mode: 0x%x (%s)\n", mode, _mesa_enum_to_string(mode));
+      fprintf(main_fp, "First Vertex: %d\n", start);
+      fprintf(main_fp, "Vertex Count: %d\n", count);
+      fprintf(main_fp, "Instance Count: %u\n", numInstances);
+      fprintf(main_fp, "Base Instance: %u\n", baseInstance);
+      fprintf(main_fp, "Current Program: %u\n", 
+              ctx->_Shader && ctx->_Shader->ActiveProgram ? ctx->_Shader->ActiveProgram->Name : 0);
+      fprintf(main_fp, "Framebuffer: %u (%ux%u)\n", 
+              ctx->DrawBuffer->Name, ctx->DrawBuffer->Width, ctx->DrawBuffer->Height);
+      fclose(main_fp);
+   }
+   
+   /* Dump all the different state categories */
+   dump_vertex_arrays(ctx, current_dump);
+   dump_uniform_buffers(ctx, current_dump);
+   dump_shader_program(ctx, current_dump);
+   dump_texture_state(ctx, current_dump);
+   dump_framebuffer_config(ctx, current_dump);
+   dump_pipeline_state(ctx, current_dump);
+   
+   /* Dump framebuffer contents */
    GLint width = (GLint)ctx->DrawBuffer->Width;
    GLint height = (GLint)ctx->DrawBuffer->Height;
    
-   if (width <= 0 || height <= 0)
-      return;
-      
-   /* Allocate buffer for RGBA data */
-   GLubyte *pixels = malloc(width * height * 4);
-   if (!pixels)
-      return;
-      
-   /* Read the framebuffer */
-   struct gl_pixelstore_attrib pack = ctx->DefaultPacking;
-   st_ReadPixels(ctx, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, &pack, pixels);
-   
-   /* Generate filename - both PPM and raw formats */
-   char filename_ppm[256], filename_raw[256];
-   snprintf(filename_ppm, sizeof(filename_ppm), "c:\\temp\\draw_%06u_%dx%d.ppm", ++dump_counter, width, height);
-   snprintf(filename_raw, sizeof(filename_raw), "c:\\temp\\draw_%06u_%dx%d.raw", dump_counter, width, height);
-   
-   /* Write raw RGBA data */
-   FILE *fp_raw = fopen(filename_raw, "wb");
-   if (fp_raw) {
-      fwrite(pixels, 1, width * height * 4, fp_raw);
-      fclose(fp_raw);
-   }
-   
-   /* Write PPM file */
-   FILE *fp_ppm = fopen(filename_ppm, "wb");
-   if (fp_ppm) {
-      fprintf(fp_ppm, "P6\n%d %d\n255\n", width, height);
-      for (int y = height - 1; y >= 0; y--) { /* Flip Y */
-         for (int x = 0; x < width; x++) {
-            GLubyte *pixel = &pixels[(y * width + x) * 4];
-            fwrite(pixel, 1, 3, fp_ppm); /* Write RGB, skip alpha */
+   if (width > 0 && height > 0) {
+      GLubyte *pixels = malloc(width * height * 4);
+      if (pixels) {
+         struct gl_pixelstore_attrib pack = ctx->DefaultPacking;
+         st_ReadPixels(ctx, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, &pack, pixels);
+         
+         /* Write raw framebuffer data */
+         char fb_filename[512];
+         snprintf(fb_filename, sizeof(fb_filename), "c:\\temp\\draw_%06u_framebuffer_%dx%d.raw", 
+                 current_dump, width, height);
+         
+         FILE *fb_fp = fopen(fb_filename, "wb");
+         if (fb_fp) {
+            fwrite(pixels, 1, width * height * 4, fb_fp);
+            fclose(fb_fp);
          }
+         
+         /* Write PPM for easy viewing */
+         char ppm_filename[512];
+         snprintf(ppm_filename, sizeof(ppm_filename), "c:\\temp\\draw_%06u_framebuffer_%dx%d.ppm", 
+                 current_dump, width, height);
+         
+         FILE *ppm_fp = fopen(ppm_filename, "wb");
+         if (ppm_fp) {
+            fprintf(ppm_fp, "P6\n%d %d\n255\n", width, height);
+            for (int y = height - 1; y >= 0; y--) {
+               for (int x = 0; x < width; x++) {
+                  GLubyte *pixel = &pixels[(y * width + x) * 4];
+                  fwrite(pixel, 1, 3, ppm_fp);
+               }
+            }
+            fclose(ppm_fp);
+         }
+         
+         free(pixels);
       }
-      fclose(fp_ppm);
    }
-   
-   free(pixels);
 }
 
 /**
@@ -1237,8 +1534,8 @@ _mesa_draw_arrays(struct gl_context *ctx, GLenum mode, GLint start,
 
    ctx->Driver.DrawGallium(ctx, &info, ctx->DrawID, NULL, &draw, 1);
 
-   /* Dump framebuffer after draw if enabled */
-   dump_framebuffer_after_draw(ctx);
+   /* Dump comprehensive state after draw if enabled */
+   dump_comprehensive_state(ctx, mode, start, count, numInstances, baseInstance);
    
    /* Reset the uniform buffer update flag */
    ctx->_UniformBufferDataUpdated = false;

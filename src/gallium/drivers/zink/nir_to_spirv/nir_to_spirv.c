@@ -1162,9 +1162,7 @@ emit_bo(struct ntv_context *ctx, struct nir_variable *var, bool aliased)
       if (bitsize == 32)
          ctx->ssbo_vars = var;
    } else {
-      assert(var->data.driver_location < ARRAY_SIZE(ctx->ubos));
-      assert(!ctx->ubos[var->data.driver_location][idx]);  
-      assert(var->data.driver_location < ARRAY_SIZE(ctx->ubo_vars));
+      assert(!ctx->ubos[var->data.driver_location][idx]);
       ctx->ubos[var->data.driver_location][idx] = var_id;
       ctx->ubo_vars[var->data.driver_location] = var;
    }

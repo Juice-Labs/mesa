@@ -1734,6 +1734,9 @@ bind_buffer_base_uniform_buffer(struct gl_context *ctx,
       return;
    }
 
+   mesa_logi("GL BIND BUFFER BASE: GL_UNIFORM_BUFFER, index=%u, bufObj=%p, bufObj->Name=%u, bufObj->Size=%lu",
+             index, bufObj, bufObj ? bufObj->Name : 0, bufObj ? (unsigned long)bufObj->Size : 0);
+
    _mesa_reference_buffer_object(ctx, &ctx->UniformBuffer, bufObj);
 
    if (!bufObj)

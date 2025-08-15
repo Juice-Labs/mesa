@@ -1286,6 +1286,10 @@ zink_descriptors_update_masked(struct zink_context *ctx, enum zink_pipeline_idx 
           * (this is effectively an optimization of indirecting through screen->desc_set_id)
           */
          VKSCR(UpdateDescriptorSetWithTemplate)(screen->dev, desc_sets[type], pg->dd.templates[type + 1], ctx);
+         
+         mesa_logi("VULKAN DESC BIND CHANGED: is_compute=%d, desc_type=%u, vulkan_set_index=%u, desc_set=%p", 
+                   is_compute, type, type + 1, desc_sets[type]);
+         
          VKSCR(CmdBindDescriptorSets)(bs->cmdbuf,
                                  is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
                                  /* same set indexing as above */
@@ -1464,6 +1468,8 @@ zink_descriptors_update(struct zink_context *ctx, enum zink_pipeline_idx pidx)
                bs->dd.sets[pidx][0] = push_set;
             }
             assert(bs->dd.sets[pidx][0]);
+            mesa_logi("VULKAN DESC BIND PUSH: is_compute=%d, vulkan_set_index=0, desc_set=%p", 
+                      is_compute, bs->dd.sets[pidx][0]);
             VKCTX(CmdBindDescriptorSets)(bs->cmdbuf,
                                     is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     pg->layout, 0, 1, &bs->dd.sets[pidx][0],

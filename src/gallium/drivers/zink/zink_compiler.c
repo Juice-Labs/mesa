@@ -4713,7 +4713,7 @@ zink_binding(mesa_shader_stage stage, VkDescriptorType type, int index, bool com
       switch (type) {
       case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
       case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-         return base * 2 + !!index;
+         return base * 2 + index;
 
       case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
          assert(stage == MESA_SHADER_KERNEL);

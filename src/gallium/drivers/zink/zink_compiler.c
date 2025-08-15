@@ -2679,7 +2679,7 @@ zink_binding(gl_shader_stage stage, VkDescriptorType type, int index, bool compa
       switch (type) {
       case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
       case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-         return base * 2 + !!index;
+         return base * 2 + index;
 
       case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
       case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:

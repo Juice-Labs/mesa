@@ -277,6 +277,17 @@ st_bind_ubos(struct st_context *st, struct gl_program *prog,
 
       binding = &st->ctx->UniformBufferBindings[block->Binding];
 
+      mesa_logi("MESA UBO READ BINDING: shader=%d, block[%d]='%s', block->Binding=%u, binding=%p", 
+                shader_type, i,
+                block->name.string ? block->name.string : "(null)",
+                block->Binding, binding);
+      
+      mesa_logi("MESA UBO BINDING CONTENTS: BufferObject=%p, BufferObject->Name=%u, BufferObject->Size=%lu, binding->Offset=%ld, binding->Size=%ld, AutomaticSize=%d",
+                binding->BufferObject, 
+                binding->BufferObject ? binding->BufferObject->Name : 0,
+                binding->BufferObject ? (unsigned long)binding->BufferObject->Size : 0,
+                (long)binding->Offset, (long)binding->Size, binding->AutomaticSize);
+
       cb.buffer = _mesa_get_bufferobj_reference(st->ctx, binding->BufferObject);
 
       if (cb.buffer) {

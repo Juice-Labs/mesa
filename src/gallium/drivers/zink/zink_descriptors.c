@@ -849,6 +849,10 @@ zink_descriptors_update_masked(struct zink_context *ctx, bool is_compute, uint8_
       assert(type + 1 < pg->num_dsl);
       if (pg->dd.pool_key[type]) {
          VKSCR(UpdateDescriptorSetWithTemplate)(screen->dev, desc_sets[type], pg->dd.templates[type + 1], ctx);
+         
+         mesa_logi("VULKAN DESC BIND CHANGED: is_compute=%d, desc_type=%u, vulkan_set_index=%u, desc_set=%p", 
+                   is_compute, type, type + 1, desc_sets[type]);
+         
          VKSCR(CmdBindDescriptorSets)(bs->cmdbuf,
                                  is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
                                  /* set index incremented by 1 to account for push set */
@@ -861,6 +865,10 @@ zink_descriptors_update_masked(struct zink_context *ctx, bool is_compute, uint8_
       if (!pg->dd.pool_key[type])
          continue;
       assert(bs->dd.sets[is_compute][type + 1]);
+      
+      mesa_logi("VULKAN DESC BIND CACHED: is_compute=%d, desc_type=%u, vulkan_set_index=%u, desc_set=%p", 
+                is_compute, type, type + 1, bs->dd.sets[is_compute][type + 1]);
+      
       VKSCR(CmdBindDescriptorSets)(bs->cmdbuf,
                               is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
                               /* set index incremented by 1 to account for push set */
@@ -927,9 +935,14 @@ zink_descriptors_update(struct zink_context *ctx, bool is_compute)
             bs->dd.sets[is_compute][0] = push_set;
          }
          assert(push_set || bs->dd.sets[is_compute][0]);
+         
+         VkDescriptorSet actual_set = push_set ? push_set : bs->dd.sets[is_compute][0];
+         mesa_logi("VULKAN DESC BIND PUSH: is_compute=%d, vulkan_set_index=0, desc_set=%p", 
+                   is_compute, actual_set);
+         
          VKCTX(CmdBindDescriptorSets)(bs->cmdbuf,
                                  is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                 pg->layout, 0, 1, push_set ? &push_set : &bs->dd.sets[is_compute][0],
+                                 pg->layout, 0, 1, &actual_set,
                                  0, NULL);
       }
    }

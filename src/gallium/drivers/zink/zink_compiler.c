@@ -4431,6 +4431,9 @@ unbreak_bos(nir_shader *shader, struct zink_shader *zs, bool needs_size)
 
       unsigned num_ubos = shader->info.num_ubos - !!shader->info.first_ubo_is_default_ubo;
       uint32_t ubos_used = zs->ubos_used & ~BITFIELD_BIT(0);
+      mesa_logi("ZINK COMPILER UBO: num_ubos=%u, ubos_used=0x%x, ubos_used_filtered=0x%x", 
+                num_ubos, zs->ubos_used, ubos_used);
+      
       if (num_ubos && ubos_used) {
          field.type = glsl_array_type(glsl_uint_type(), max_ubo_size * 4, 4);
          /* shrink array as much as possible */
@@ -4438,12 +4441,22 @@ unbreak_bos(nir_shader *shader, struct zink_shader *zs, bool needs_size)
          assert(first_ubo < PIPE_MAX_CONSTANT_BUFFERS);
          num_ubos -= first_ubo;
          assert(num_ubos);
+         
+         mesa_logi("ZINK COMPILER UBO CALC: ffs(ubos_used)=%d, first_ubo=%u, final_num_ubos=%u", 
+                   ffs(ubos_used), first_ubo, num_ubos);
+         mesa_logi("ZINK COMPILER UBO ARRAY: first_ubo_is_default=%d, driver_location=%u", 
+                   !!shader->info.first_ubo_is_default_ubo, 
+                   first_ubo + !!shader->info.first_ubo_is_default_ubo);
+         
          nir_variable *var = nir_variable_create(shader, nir_var_mem_ubo,
                                    glsl_array_type(glsl_struct_type(&field, 1, "struct", false), num_ubos, 0),
                                    "ubos@32");
          var->interface_type = var->type;
          var->data.mode = nir_var_mem_ubo;
          var->data.driver_location = first_ubo + !!shader->info.first_ubo_is_default_ubo;
+         
+         mesa_logi("ZINK COMPILER UBO CREATED: var=%p, driver_location=%u", 
+                   var, var->data.driver_location);
       }
    }
    if (shader->info.num_ssbos && zs->ssbos_used) {

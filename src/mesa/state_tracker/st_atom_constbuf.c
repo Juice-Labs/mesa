@@ -39,6 +39,7 @@
 #include "pipe/p_defines.h"
 #include "util/u_inlines.h"
 #include "util/u_upload_mgr.h"
+#include "util/log.h"
 #include "cso_cache/cso_context.h"
 
 #include "main/bufferobj.h"
@@ -300,9 +301,9 @@ st_bind_ubos(struct st_context *st, struct gl_program *prog,
 
    for (i = 0; i < prog->sh.NumUniformBlocks; i++) {
       struct gl_buffer_binding *binding;
+      struct gl_uniform_block *block = prog->sh.UniformBlocks[i];
 
-      binding =
-         &st->ctx->UniformBufferBindings[prog->sh.UniformBlocks[i]->Binding];
+      binding = &st->ctx->UniformBufferBindings[block->Binding];
 
       if (binding->BufferObject) {
          cb.buffer = binding->BufferObject->buffer;
@@ -324,6 +325,11 @@ st_bind_ubos(struct st_context *st, struct gl_program *prog,
          cb.buffer_offset = 0;
          cb.buffer_size = 0;
       }
+
+      mesa_logi("MESA UBO BIND: shader=%d, block[%d]='%s', Binding=%u, gallium_index=%u, cb.buffer=%p, cb.buffer_size=%u", 
+                shader_type, i, 
+                block->name.string ? block->name.string : "(null)",
+                block->Binding, 1 + i, cb.buffer, cb.buffer_size);
 
       pipe->set_constant_buffer(pipe, shader_type, 1 + i, &cb);
    }

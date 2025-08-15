@@ -556,6 +556,9 @@ zink_descriptor_program_init(struct zink_context *ctx, struct zink_program *pg)
             binding->descriptorCount = shader->bindings[j][k].size;
             binding->stageFlags = stage_flags;
             binding->pImmutableSamplers = NULL;
+            
+            mesa_logi("VULKAN DESC SET LAYOUT: desc_set=%u, vulkan_binding=%u, desc_type=%d, desc_count=%u, stage_flags=%u", 
+                      desc_set, binding->binding, binding->descriptorType, binding->descriptorCount, binding->stageFlags);
 
             unsigned idx = screen->compact_descriptors ? zink_vktype_to_size_idx_comp(shader->bindings[j][k].type) :
                                                          zink_vktype_to_size_idx(shader->bindings[j][k].type);

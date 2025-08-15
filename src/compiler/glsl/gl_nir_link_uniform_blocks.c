@@ -25,6 +25,7 @@
 #include "nir_deref.h"
 #include "gl_nir_linker.h"
 #include "linker_util.h"
+#include "main/config.h"
 #include "main/consts_exts.h"
 #include "main/shader_types.h"
 #include "util/u_math.h"
@@ -1264,6 +1265,77 @@ link_linked_shader_uniform_blocks(void *mem_ctx,
    assert(variable_index == num_variables);
 }
 
+/**
+ * Assign consecutive binding points to uniform blocks that don't have 
+ * explicit layout(binding=X) declarations.
+ *
+ * This prevents multiple blocks from colliding at binding point 0,
+ * which causes data corruption in some drivers.
+ */
+static void
+assign_consecutive_uniform_block_bindings(struct gl_uniform_block *blocks,
+                                          unsigned num_blocks,
+                                          const struct gl_constants *consts)
+{
+   if (num_blocks == 0)
+      return;
+
+   /* Count how many blocks have Binding = 0 */
+   unsigned blocks_with_binding_zero = 0;
+   for (unsigned i = 0; i < num_blocks; i++) {
+      if (blocks[i].Binding == 0) {
+         blocks_with_binding_zero++;
+      }
+   }
+   
+   /* If only one block has binding=0, it might be explicit, so leave it alone */
+   if (blocks_with_binding_zero <= 1) {
+      return;
+   }
+
+   /* Multiple blocks have binding=0, which means collision due to defaulting */
+   /* Track which binding points are used by non-zero bindings */
+   bool used_bindings[MAX_COMBINED_UNIFORM_BUFFERS];
+   memset(used_bindings, false, sizeof(used_bindings));
+   
+   /* Pass 1: Mark all non-zero bindings as used */
+   for (unsigned i = 0; i < num_blocks; i++) {
+      if (blocks[i].Binding != 0) {
+         unsigned binding = blocks[i].Binding;
+         if (binding < MAX_COMBINED_UNIFORM_BUFFERS) {
+            used_bindings[binding] = true;
+         }
+      }
+   }
+   
+   /* Pass 2: Assign consecutive unused bindings to blocks with binding=0 */
+   /* Keep the first block at binding=0 (might be explicit), reassign others */
+   unsigned next_free_binding = 1; /* Start from 1 to avoid conflict with first block */
+   bool first_zero_block = true;
+   
+   for (unsigned i = 0; i < num_blocks; i++) {
+      if (blocks[i].Binding == 0) {
+         if (first_zero_block) {
+            /* Keep first block with binding=0 (might be explicit) */
+            used_bindings[0] = true;
+            first_zero_block = false;
+         } else {
+            /* Reassign subsequent blocks with binding=0 */
+            while (next_free_binding < MAX_COMBINED_UNIFORM_BUFFERS && 
+                   used_bindings[next_free_binding]) {
+               next_free_binding++;
+            }
+            
+            if (next_free_binding < MAX_COMBINED_UNIFORM_BUFFERS) {
+               blocks[i].Binding = next_free_binding;
+               used_bindings[next_free_binding] = true;
+               next_free_binding++;
+            }
+         }
+      }
+   }
+}
+
 bool
 gl_nir_link_uniform_blocks(const struct gl_constants *consts,
                            struct gl_shader_program *prog)
@@ -1350,6 +1422,10 @@ gl_nir_link_uniform_blocks(const struct gl_constants *consts,
 
    if (!nir_interstage_cross_validate_uniform_blocks(prog, BLOCK_SSBO))
       goto out;
+
+   /* Assign consecutive binding points to blocks without explicit bindings */
+   assign_consecutive_uniform_block_bindings(prog->data->UniformBlocks,
+                                             prog->data->NumUniformBlocks, consts);
 
    ret = true;
 out:

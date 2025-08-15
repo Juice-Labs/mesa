@@ -49,6 +49,7 @@
 #include "util/u_atomic.h"
 #include "util/u_memory.h"
 #include "util/log.h"
+#include "util/u_process.h"
 #include "api_exec_decl.h"
 
 /**
@@ -1720,17 +1721,67 @@ bind_atomic_buffer(struct gl_context *ctx, unsigned index,
                USAGE_ATOMIC_COUNTER_BUFFER);
 }
 
-/**
- * Bind a buffer object to a uniform block binding point.
- * As above, but offset = 0.
- */
+static bool
+contains_ignore_case(const char *haystack, const char *needle)
+{
+   if (!haystack || !needle) return false;
+   
+   size_t haystack_len = strlen(haystack);
+   size_t needle_len = strlen(needle);
+   
+   if (needle_len > haystack_len) return false;
+   
+   for (size_t i = 0; i <= haystack_len - needle_len; i++) {
+      bool match = true;
+      for (size_t j = 0; j < needle_len; j++) {
+         if (tolower(haystack[i + j]) != tolower(needle[j])) {
+            match = false;
+            break;
+         }
+      }
+      if (match) return true;
+   }
+   return false;
+}
+
+// Add this helper function near the top of the file, after existing static functions
+static bool
+is_catia_stellar_process(void)
+{
+   static int catia_detected = -1;  // -1 = unknown, 0 = no, 1 = yes
+   
+   if (catia_detected == -1) {
+      const char *process_name = util_get_process_name();
+      catia_detected = (process_name && strstr(process_name, "3DExperience.exe")) ? 1 : 0;
+   }
+   
+   return catia_detected == 1;
+}
+
+// Modify the bind_buffer_base_uniform_buffer function around line 1746
 static void
 bind_buffer_base_uniform_buffer(struct gl_context *ctx,
 				GLuint index,
 				struct gl_buffer_object *bufObj)
 {
+   GLuint original_index = index;
+   
+   // Workaround for Catia/Stellar bug: they swap uniform block bindings
+   // but then use the original indices in glBindBufferBase calls
+   if (is_catia_stellar_process()) {
+      // For uniform buffers, swap indices 0 and 1 to compensate for their bug
+      if (index == 0) {
+         index = 1;
+      } else if (index == 1) {
+         index = 0;
+      }
+      
+      mesa_logi("CATIA WORKAROUND: glBindBufferBase GL_UNIFORM_BUFFER index swapped from %u to %u", 
+                original_index, index);
+   }
+   
    if (index >= ctx->Const.MaxUniformBufferBindings) {
-      _mesa_error(ctx, GL_INVALID_VALUE, "glBindBufferBase(index=%d)", index);
+      _mesa_error(ctx, GL_INVALID_VALUE, "glBindBufferBase(index=%d)", original_index);
       return;
    }
 

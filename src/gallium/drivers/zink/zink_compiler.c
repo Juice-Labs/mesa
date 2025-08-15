@@ -3210,6 +3210,10 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
                                              VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                                              var->data.driver_location,
                                              screen->compact_descriptors);
+            
+            mesa_logi("ZINK UBO BINDING CALC: stage=%d, driver_location=%d → vulkan_binding=%u", 
+                      nir->info.stage, var->data.driver_location, var->data.binding);
+            
             assert(var->data.driver_location || var->data.binding < 10);
             VkDescriptorType vktype = !var->data.driver_location ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             int binding = var->data.binding;
@@ -3247,6 +3251,10 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
                var->data.driver_location = var->data.binding;
                var->data.descriptor_set = screen->desc_set_id[ztype];
                var->data.binding = zink_binding(nir->info.stage, vktype, var->data.driver_location, screen->compact_descriptors);
+               
+               mesa_logi("ZINK BINDING CALC: stage=%d, vktype=%d, driver_location=%d → vulkan_binding=%u", 
+                         nir->info.stage, vktype, var->data.driver_location, var->data.binding);
+               
                ret->bindings[ztype][ret->num_bindings[ztype]].index = var->data.driver_location;
                ret->bindings[ztype][ret->num_bindings[ztype]].binding = var->data.binding;
                ret->bindings[ztype][ret->num_bindings[ztype]].type = vktype;

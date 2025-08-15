@@ -5140,6 +5140,12 @@ void
 zink_copy_buffer(struct zink_context *ctx, struct zink_resource *dst, struct zink_resource *src,
                  unsigned dst_offset, unsigned src_offset, unsigned size, bool unsync)
 {
+   mesa_logi("ZINK COPY BUFFER: ENTRY - dst=%p, src=%p, dst_offset=%u, src_offset=%u, size=%u", 
+             dst, src, dst_offset, src_offset, size);
+   mesa_logi("ZINK COPY BUFFER: DST - buffer=%p, usage=0x%x, base.target=%d", 
+             dst->obj->buffer, dst->base.b.usage, dst->base.b.target);
+   mesa_logi("ZINK COPY BUFFER: SRC - buffer=%p, usage=0x%x, base.target=%d", 
+             src->obj->buffer, src->base.b.usage, src->base.b.target);
    if (unsync) {
       util_queue_fence_wait(&ctx->flush_fence);
       util_queue_fence_reset(&ctx->unsync_fence);
@@ -5150,6 +5156,13 @@ zink_copy_buffer(struct zink_context *ctx, struct zink_resource *dst, struct zin
    region.dstOffset = dst_offset;
    region.size = size;
 
+   mesa_logi("ZINK COPY BUFFER: REGION - srcOffset=%u, dstOffset=%u, size=%u", 
+             (unsigned)region.srcOffset, (unsigned)region.dstOffset, (unsigned)region.size);
+   mesa_logi("ZINK COPY BUFFER: BARRIERS - setting up transfer barriers");
+   mesa_logi("ZINK COPY BUFFER: CMDBUF - got command buffer %p", cmdbuf);
+   mesa_logi("ZINK COPY BUFFER: VULKAN CALL - vkCmdCopyBuffer src=%p -> dst=%p", 
+             src->obj->buffer, dst->obj->buffer);
+   mesa_logi("ZINK COPY BUFFER: COMPLETE");
    struct pipe_box box;
    u_box_3d((int)src_offset, 0, 0, (int)size, 0, 0, &box);
    /* must barrier if something wrote the valid buffer range */

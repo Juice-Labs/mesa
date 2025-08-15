@@ -1175,6 +1175,18 @@ static void
 uniform_block_binding(struct gl_context *ctx, struct gl_shader_program *shProg,
                       GLuint uniformBlockIndex, GLuint uniformBlockBinding)
 {
+   mesa_logi("GL_UNIFORM_BLOCK_BINDING: program=%u, blockIndex=%u, blockBinding=%u", 
+             shProg ? shProg->Name : 0, uniformBlockIndex, uniformBlockBinding);
+   
+   if (uniformBlockIndex < shProg->data->NumUniformBlocks) {
+      mesa_logi("GL_UNIFORM_BLOCK_BINDING: block[%u] name='%s', old_binding=%u, new_binding=%u", 
+                uniformBlockIndex,
+                shProg->data->UniformBlocks[uniformBlockIndex].name.string ? 
+                   shProg->data->UniformBlocks[uniformBlockIndex].name.string : "(null)",
+                shProg->data->UniformBlocks[uniformBlockIndex].Binding,
+                uniformBlockBinding);
+   }
+   
    if (shProg->data->UniformBlocks[uniformBlockIndex].Binding !=
        uniformBlockBinding) {
 
@@ -1183,6 +1195,13 @@ uniform_block_binding(struct gl_context *ctx, struct gl_shader_program *shProg,
 
       shProg->data->UniformBlocks[uniformBlockIndex].Binding =
          uniformBlockBinding;
+      
+      mesa_logi("GL_UNIFORM_BLOCK_BINDING: Updated binding for block '%s' to %u", 
+                shProg->data->UniformBlocks[uniformBlockIndex].name.string ? 
+                   shProg->data->UniformBlocks[uniformBlockIndex].name.string : "(null)",
+                uniformBlockBinding);
+   } else {
+      mesa_logi("GL_UNIFORM_BLOCK_BINDING: No change needed, binding already %u", uniformBlockBinding);
    }
 }
 

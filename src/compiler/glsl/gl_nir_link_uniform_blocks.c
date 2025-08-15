@@ -28,6 +28,7 @@
 #include "main/config.h"
 #include "main/consts_exts.h"
 #include "main/shader_types.h"
+#include "util/log.h"
 #include "util/u_math.h"
 
 /**
@@ -1355,6 +1356,90 @@ gl_nir_link_uniform_blocks(const struct gl_constants *consts,
       link_linked_shader_uniform_blocks(mem_ctx, consts, prog, linked,
                                         &ubo_blocks, &num_ubo_blocks,
                                         BLOCK_UBO);
+
+   /* Reorder blocks to match existing program order */
+   mesa_logi("UNIFORM BLOCK REORDER: Starting reorder, num_blocks=%u", num_ubo_blocks);
+   mesa_logi("UNIFORM BLOCK REORDER: prog=%p, prog->data=%p", prog, prog ? prog->data : NULL);
+
+   if (prog && prog->data && prog->data->UniformBlocks && prog->data->NumUniformBlocks > 0) {
+      mesa_logi("UNIFORM BLOCK REORDER: Found existing program blocks, NumUniformBlocks=%u", prog->data->NumUniformBlocks);
+
+      /* Log existing program order */
+      for (unsigned prog_i = 0; prog_i < prog->data->NumUniformBlocks; prog_i++) {
+         mesa_logi("UNIFORM BLOCK REORDER: prog->data->UniformBlocks[%u] = '%s', Binding=%u", 
+                   prog_i, 
+                   prog->data->UniformBlocks[prog_i].name.string ? prog->data->UniformBlocks[prog_i].name.string : "(null)",
+                   prog->data->UniformBlocks[prog_i].Binding);
+      }
+
+      /* Log hash table order before reordering */
+      mesa_logi("UNIFORM BLOCK REORDER: Hash table order before reordering:");
+      for (unsigned i = 0; i < num_ubo_blocks; i++) {
+         mesa_logi("UNIFORM BLOCK REORDER: blocks[%u] = '%s', Binding=%u", 
+                   i, 
+                   ubo_blocks[i].name.string ? ubo_blocks[i].name.string : "(null)",
+                   ubo_blocks[i].Binding);
+      }
+
+      struct gl_uniform_block *ordered_blocks = rzalloc_array(mem_ctx, struct gl_uniform_block, num_ubo_blocks);
+      unsigned ordered_count = 0;
+
+      /* Find each program block in our hash table blocks and copy in program order */
+      for (unsigned prog_i = 0; prog_i < prog->data->NumUniformBlocks; prog_i++) {
+         const char *prog_block_name = prog->data->UniformBlocks[prog_i].name.string;
+         mesa_logi("UNIFORM BLOCK REORDER: Looking for program block '%s' in hash table blocks", 
+                   prog_block_name ? prog_block_name : "(null)");
+
+         bool found = false;
+         for (unsigned i = 0; i < num_ubo_blocks; i++) {
+            if (strcmp(ubo_blocks[i].name.string, prog_block_name) == 0) {
+               mesa_logi("UNIFORM BLOCK REORDER: Found match! Copying blocks[%u] to ordered_blocks[%u]", i, ordered_count);
+               memcpy(&ordered_blocks[ordered_count], &ubo_blocks[i], sizeof(struct gl_uniform_block));
+               ordered_count++;
+               found = true;
+               break;
+            }
+         }
+
+         if (!found) {
+            mesa_logi("UNIFORM BLOCK REORDER: WARNING: Program block '%s' not found in hash table blocks!", 
+                      prog_block_name ? prog_block_name : "(null)");
+         }
+      }
+
+      mesa_logi("UNIFORM BLOCK REORDER: Ordered %u blocks out of %u total", ordered_count, num_ubo_blocks);
+
+      if (ordered_count == num_ubo_blocks) {
+         /* Copy back and use the program-ordered array */
+         memcpy(ubo_blocks, ordered_blocks, sizeof(struct gl_uniform_block) * num_ubo_blocks);
+         mesa_logi("UNIFORM BLOCK REORDER: Successfully reordered blocks to match program order");
+
+         /* Log final order after reordering */
+         mesa_logi("UNIFORM BLOCK REORDER: Final order after reordering:");
+         for (unsigned i = 0; i < num_ubo_blocks; i++) {
+            mesa_logi("UNIFORM BLOCK REORDER: blocks[%u] = '%s', Binding=%u", 
+                      i, 
+                      ubo_blocks[i].name.string ? ubo_blocks[i].name.string : "(null)",
+                      ubo_blocks[i].Binding);
+         }
+      } else {
+         mesa_logi("UNIFORM BLOCK REORDER: ERROR: Ordered count (%u) != num_blocks (%u), keeping hash table order", 
+                   ordered_count, num_ubo_blocks);
+      }
+
+      ralloc_free(ordered_blocks);
+   } else {
+      mesa_logi("UNIFORM BLOCK REORDER: No existing program blocks found, keeping hash table order");
+
+      /* Log hash table order */
+      mesa_logi("UNIFORM BLOCK REORDER: Hash table order (no reordering):");
+      for (unsigned i = 0; i < num_ubo_blocks; i++) {
+         mesa_logi("UNIFORM BLOCK REORDER: blocks[%u] = '%s', Binding=%u", 
+                   i, 
+                   ubo_blocks[i].name.string ? ubo_blocks[i].name.string : "(null)",
+                   ubo_blocks[i].Binding);
+      }
+   }
 
       link_linked_shader_uniform_blocks(mem_ctx, consts, prog, linked,
                                         &ssbo_blocks, &num_ssbo_blocks,

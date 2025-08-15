@@ -687,6 +687,9 @@ ALWAYS_INLINE static struct zink_resource *
 update_descriptor_state_ubo_db(struct zink_context *ctx, mesa_shader_stage shader, unsigned slot, struct zink_resource *res)
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
+   mesa_logi("ZINK UBO DESC UPDATE: shader=%d, slot=%d, res=%p", shader, slot, res);
+   mesa_logi("ZINK UBO DESC INPUT: ctx->ubos[%d][%d].buffer_offset=%u, .buffer_size=%u", 
+             shader, slot, ctx->ubos[shader][slot].buffer_offset, ctx->ubos[shader][slot].buffer_size);
    ctx->di.descriptor_res[ZINK_DESCRIPTOR_TYPE_UBO][shader][slot] = res;
    if (res) {
       ctx->di.db.ubos[shader][slot].address = res->obj->bda + ctx->ubos[shader][slot].buffer_offset;
@@ -1774,16 +1777,28 @@ zink_set_constant_buffer_internal(struct pipe_context *pctx,
    bool update = false;
 
    struct zink_resource *res = zink_resource(ctx->ubos[shader][index].buffer);
+   
+   mesa_logi("ZINK UBO SET: shader=%d, index=%d, use_db=%d", shader, index, use_db);
+   
    if (cb) {
+      mesa_logi("ZINK UBO CB: buffer=%p, buffer_size=%u, buffer_offset=%u, user_buffer=%p", 
+                cb->buffer, cb->buffer_size, cb->buffer_offset, cb->user_buffer);
+      
       struct pipe_resource *buffer = cb->buffer;
       unsigned offset = cb->buffer_offset;
       struct zink_screen *screen = zink_screen(pctx->screen);
+      
       if (cb->user_buffer) {
+         mesa_logi("ZINK UBO UPLOAD: user_buffer=%p, size=%u, offset_before=%u", 
+                   cb->user_buffer, cb->buffer_size, offset);
          u_upload_data_ref(ctx->base.const_uploader, 0, cb->buffer_size,
                        screen->info.props.limits.minUniformBufferOffsetAlignment,
                        cb->user_buffer, &offset, &buffer);
+         mesa_logi("ZINK UBO UPLOAD RESULT: new_buffer=%p, new_offset=%u", buffer, offset);
       }
+      
       struct zink_resource *new_res = zink_resource(buffer);
+      mesa_logi("ZINK UBO RESOURCE: old_res=%p, new_res=%p, buffer=%p", res, new_res, buffer);
       update |= ctx->ubos[shader][index].buffer_offset != offset ||
                 !!res != !!buffer || (res && res->obj->buffer != new_res->obj->buffer) ||
                 ctx->ubos[shader][index].buffer_size != cb->buffer_size;
@@ -1803,6 +1818,8 @@ zink_set_constant_buffer_internal(struct pipe_context *pctx,
             zink_resource_disable_unordered(new_res, false);
       }
 
+      mesa_logi("ZINK UBO STORE: shader=%d, gallium_index=%d, buffer_size=%u, buffer_offset=%u", 
+                shader, index, cb->buffer_size, offset);
       ctx->ubos[shader][index].buffer = buffer;
       ctx->ubos[shader][index].buffer_offset = offset;
       ctx->ubos[shader][index].buffer_size = cb->buffer_size;
@@ -1814,16 +1831,23 @@ zink_set_constant_buffer_internal(struct pipe_context *pctx,
       if (index + 1 >= ctx->di.num_ubos[shader])
          ctx->di.num_ubos[shader] = index + 1;
       
+      mesa_logi("ZINK UBO BEFORE DESC UPDATE: ctx->ubos[%d][%d].buffer=%p, .buffer_size=%u, .buffer_offset=%u, num_ubos[%d]=%u", 
+                shader, index, ctx->ubos[shader][index].buffer, 
+                ctx->ubos[shader][index].buffer_size, ctx->ubos[shader][index].buffer_offset,
+                shader, ctx->di.num_ubos[shader]);
       if (use_db) {
          update_descriptor_state_ubo_db(ctx, shader, index, new_res);
       } else {
          update_descriptor_state_ubo_lazy(ctx, shader, index, new_res);
       }
    } else {
+      mesa_logi("ZINK UBO NULL: shader=%d, index=%d, clearing buffer", shader, index);
+      
       ctx->ubos[shader][index].buffer_offset = 0;
       ctx->ubos[shader][index].buffer_size = 0;
       ctx->ubos[shader][index].user_buffer = NULL;
       if (res) {
+         mesa_logi("ZINK UBO UNBIND: res=%p", res);
          unbind_ubo(ctx, res, shader, index);
          if (use_db) {
             update_descriptor_state_ubo_db(ctx, shader, index, NULL);
@@ -1836,12 +1860,16 @@ zink_set_constant_buffer_internal(struct pipe_context *pctx,
       ctx->ubos[shader][index].buffer = NULL;
       if (ctx->di.num_ubos[shader] == index + 1)
          ctx->di.num_ubos[shader]--;
+      
+      mesa_logi("ZINK UBO NULL COMPLETE: num_ubos[%d]=%u", shader, ctx->di.num_ubos[shader]);
    }
    if (index == 0) {
       /* Invalidate current inlinable uniforms. */
       invalidate_inlined_uniforms(ctx, shader);
    }
 
+      mesa_logi("ZINK UBO INVALIDATE DESC: shader=%d, index=%d", shader, index);
+   mesa_logi("ZINK UBO SET COMPLETE: shader=%d, index=%d, update=%d", shader, index, update);
    if (update)
       ctx->invalidate_descriptor_state(ctx, shader, ZINK_DESCRIPTOR_TYPE_UBO, index, 1);
 }
@@ -4903,6 +4931,8 @@ zink_set_stream_output_targets(struct pipe_context *pctx,
 ALWAYS_INLINE static struct zink_resource *
 rebind_ubo(struct zink_context *ctx, mesa_shader_stage shader, unsigned slot)
 {
+   mesa_logi("ZINK UBO REBIND: shader=%d, slot=%d", shader, slot);
+   mesa_logi("ZINK UBO REBIND RESULT: res=%p", res);
    struct zink_resource *res;
    if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
       res = update_descriptor_state_ubo_db(ctx, shader, slot, ctx->di.descriptor_res[ZINK_DESCRIPTOR_TYPE_UBO][shader][slot]);

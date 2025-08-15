@@ -4246,19 +4246,38 @@ void
 zink_copy_buffer(struct zink_context *ctx, struct zink_resource *dst, struct zink_resource *src,
                  unsigned dst_offset, unsigned src_offset, unsigned size)
 {
+   mesa_logi("ZINK COPY BUFFER: ENTRY - dst=%p, src=%p, dst_offset=%u, src_offset=%u, size=%u", 
+             dst, src, dst_offset, src_offset, size);
+   mesa_logi("ZINK COPY BUFFER: DST - buffer=%p, usage=0x%x, base.target=%d", 
+             dst->obj->buffer, dst->base.b.usage, dst->base.b.target);
+   mesa_logi("ZINK COPY BUFFER: SRC - buffer=%p, usage=0x%x, base.target=%d", 
+             src->obj->buffer, src->base.b.usage, src->base.b.target);
+
    VkBufferCopy region;
    region.srcOffset = src_offset;
    region.dstOffset = dst_offset;
    region.size = size;
 
+   mesa_logi("ZINK COPY BUFFER: REGION - srcOffset=%u, dstOffset=%u, size=%u", 
+             (unsigned)region.srcOffset, (unsigned)region.dstOffset, (unsigned)region.size);
+
    struct zink_batch *batch = &ctx->batch;
    util_range_add(&dst->base.b, &dst->valid_buffer_range, dst_offset, dst_offset + size);
+   
+   mesa_logi("ZINK COPY BUFFER: BARRIERS - setting up transfer barriers");
    zink_screen(ctx->base.screen)->buffer_barrier(ctx, src, VK_ACCESS_TRANSFER_READ_BIT, 0);
    zink_screen(ctx->base.screen)->buffer_barrier(ctx, dst, VK_ACCESS_TRANSFER_WRITE_BIT, 0);
+   
    VkCommandBuffer cmdbuf = zink_get_cmdbuf(ctx, src, dst);
+   mesa_logi("ZINK COPY BUFFER: CMDBUF - got command buffer %p", cmdbuf);
+   
    zink_batch_reference_resource_rw(batch, src, false);
    zink_batch_reference_resource_rw(batch, dst, true);
+   
+   mesa_logi("ZINK COPY BUFFER: VULKAN CALL - vkCmdCopyBuffer src=%p -> dst=%p", 
+             src->obj->buffer, dst->obj->buffer);
    VKCTX(CmdCopyBuffer)(cmdbuf, src->obj->buffer, dst->obj->buffer, 1, &region);
+   mesa_logi("ZINK COPY BUFFER: COMPLETE");
 }
 
 void

@@ -3211,7 +3211,7 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
                                              var->data.driver_location,
                                              screen->compact_descriptors);
             
-            mesa_logi("ZINK UBO BINDING CALC: stage=%d, driver_location=%d → vulkan_binding=%u", 
+            mesa_logi("ZINK UBO BINDING CALC: stage=%d, driver_location=%d -> vulkan_binding=%u", 
                       nir->info.stage, var->data.driver_location, var->data.binding);
             
             assert(var->data.driver_location || var->data.binding < 10);
@@ -3252,7 +3252,7 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
                var->data.descriptor_set = screen->desc_set_id[ztype];
                var->data.binding = zink_binding(nir->info.stage, vktype, var->data.driver_location, screen->compact_descriptors);
                
-               mesa_logi("ZINK BINDING CALC: stage=%d, vktype=%d, driver_location=%d → vulkan_binding=%u", 
+               mesa_logi("ZINK BINDING CALC: stage=%d, vktype=%d, driver_location=%d -> vulkan_binding=%u", 
                          nir->info.stage, vktype, var->data.driver_location, var->data.binding);
                
                ret->bindings[ztype][ret->num_bindings[ztype]].index = var->data.driver_location;

@@ -1515,6 +1515,7 @@ _mesa_GetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
    _get_texture_image(ctx, NULL, target, level, format, type,
                       INT_MAX, pixels, caller);
 
+#if 0
    /* Override RG32F textures with random data */
    if ((format == GL_RG || format == GL_RG_INTEGER) && type == GL_FLOAT && pixels) {
       struct gl_texture_object *texObj = _mesa_get_current_tex_object(ctx, target);
@@ -1535,7 +1536,8 @@ _mesa_GetTexImage(GLenum target, GLint level, GLenum format, GLenum type,
             }
          }
       }
-   }                      
+   }
+#endif
 }
 
 

@@ -1757,6 +1757,39 @@ is_catia_stellar_process(void)
    return catia_detected == 1;
 }
 
+/**
+ * Check if uniform blocks at binding indices 0 and 1 are named 'param' or 'binding_size'
+ */
+static bool
+catia_uniform_blocks_have_target_names(struct gl_context *ctx)
+{
+   bool has_param_or_binding_size = false;
+   
+   // Check all shader stages for uniform blocks at bindings 0 and 1
+   for (unsigned stage = 0; stage < MESA_SHADER_STAGES; stage++) {
+      struct gl_program *prog = ctx->_Shader->CurrentProgram[stage];
+      if (!prog) continue;
+      
+      for (unsigned i = 0; i < prog->sh.NumUniformBlocks; i++) {
+         struct gl_uniform_block *block = prog->sh.UniformBlocks[i];
+         
+         // Check if this block is bound to index 0 or 1
+         if (block->Binding == 0 || block->Binding == 1) {
+            if (block->name.string) {
+               const char *name = block->name.string;
+               if (strcmp(name, "param") == 0 || strcmp(name, "binding_size") == 0) {
+                  has_param_or_binding_size = true;
+                  mesa_logi("CW: Found target uniform block '%s' at binding %u in shader stage %u", 
+                            name, block->Binding, stage);
+               }
+            }
+         }
+      }
+   }
+   
+   return has_param_or_binding_size;
+}
+
 // Modify the bind_buffer_base_uniform_buffer function around line 1746
 static void
 bind_buffer_base_uniform_buffer(struct gl_context *ctx,
@@ -1767,7 +1800,8 @@ bind_buffer_base_uniform_buffer(struct gl_context *ctx,
    
    // Workaround for Catia/Stellar bug: they swap uniform block bindings
    // but then use the original indices in glBindBufferBase calls
-   if (is_catia_stellar_process()) {
+   // Only apply this workaround if the uniform blocks at indices 0 and 1 are named 'param' or 'binding_size'
+   if (is_catia_stellar_process() && catia_uniform_blocks_have_target_names(ctx)) {
       // For uniform buffers, swap indices 0 and 1 to compensate for their bug
       if (index == 0) {
          index = 1;
@@ -1775,7 +1809,7 @@ bind_buffer_base_uniform_buffer(struct gl_context *ctx,
          index = 0;
       }
       
-      mesa_logi("CATIA WORKAROUND: glBindBufferBase GL_UNIFORM_BUFFER index swapped from %u to %u", 
+      mesa_logi("CW: glBindBufferBase GL_UNIFORM_BUFFER index swapped from %u to %u", 
                 original_index, index);
    }
    

@@ -1725,16 +1725,16 @@ static bool
 contains_ignore_case(const char *haystack, const char *needle)
 {
    if (!haystack || !needle) return false;
-   
+
    size_t haystack_len = strlen(haystack);
    size_t needle_len = strlen(needle);
-   
+
    if (needle_len > haystack_len) return false;
-   
+
    for (size_t i = 0; i <= haystack_len - needle_len; i++) {
       bool match = true;
       for (size_t j = 0; j < needle_len; j++) {
-         if (tolower(haystack[i + j]) != tolower(needle[j])) {
+         if (tolower((unsigned char)haystack[i + j]) != tolower((unsigned char)needle[j])) {
             match = false;
             break;
          }
@@ -1744,17 +1744,16 @@ contains_ignore_case(const char *haystack, const char *needle)
    return false;
 }
 
-// Add this helper function near the top of the file, after existing static functions
 static bool
 is_catia_stellar_process(void)
 {
    static int catia_detected = -1;  // -1 = unknown, 0 = no, 1 = yes
-   
+
    if (catia_detected == -1) {
       const char *process_name = util_get_process_name();
-      catia_detected = (process_name && strstr(process_name, "3DExperience.exe")) ? 1 : 0;
+      catia_detected = (process_name && contains_ignore_case(process_name, "3DEXPERIENCE.exe")) ? 1 : 0;
    }
-   
+
    return catia_detected == 1;
 }
 

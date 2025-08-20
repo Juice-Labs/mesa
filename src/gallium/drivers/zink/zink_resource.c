@@ -2084,7 +2084,7 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
    res->queue = VK_QUEUE_FAMILY_IGNORED;
    bool valid_contents = (res->obj->is_buffer && (res->valid_buffer_range.end || res->base.valid_buffer_range.end)) ||
                          (!res->obj->is_buffer && res->valid);
-   #if 0 
+
    if (valid_contents) {
       for (unsigned i = 0; i <= res->base.b.last_level; i++) {
          struct pipe_box box;
@@ -2095,7 +2095,7 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
          ctx->base.resource_copy_region(&ctx->base, &res->base.b, i, 0, 0, 0, &staging.base.b, i, &box);
       }
    }
-   #endif
+   
    res->rebind_count++;
    if (old_obj->exportable) {
       simple_mtx_lock(&ctx->bs->exportable_lock);

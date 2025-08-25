@@ -440,6 +440,47 @@ zink_clear_texture(struct pipe_context *pctx,
 {
    struct zink_context *ctx = zink_context(pctx);
    struct zink_resource *res = zink_resource(pres);
+   
+   /* For color images, try using vkCmdClearColorImage directly if possible */
+   if (res->aspect & VK_IMAGE_ASPECT_COLOR_BIT && 
+       box->x == 0 && box->y == 0 && box->z == 0 &&
+       box->width == u_minify(pres->width0, level) &&
+       box->height == u_minify(pres->height0, level) &&
+       box->depth == u_minify(pres->depth0, level)) {
+       
+       union pipe_color_union color;
+       util_format_unpack_rgba(pres->format, color.ui, data, 1);
+       
+       VkClearColorValue vk_color;
+       vk_color.float32[0] = color.f[0];
+       vk_color.float32[1] = color.f[1];
+       vk_color.float32[2] = color.f[2];
+       vk_color.float32[3] = color.f[3];
+       
+       VkImageSubresourceRange range = {
+           VK_IMAGE_ASPECT_COLOR_BIT,
+           level,
+           1,
+           0,
+           pres->array_size
+       };
+       
+       /* Ensure we're outside a render pass */
+       zink_batch_no_rp(ctx);
+       
+       /* Transition to TRANSFER_DST_OPTIMAL layout for clearing */
+       zink_resource_image_barrier(ctx, res, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
+                                   VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+       
+       VkCommandBuffer cmdbuf = zink_get_cmdbuf(ctx, NULL, res);
+       zink_batch_reference_resource_rw(&ctx->batch, res, true);
+       
+       VKCTX(CmdClearColorImage)(cmdbuf, res->obj->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                 &vk_color, 1, &range);
+       return;
+   }
+
+   /* Fall back to the original Gallium clear path for partial clears or depth/stencil */
    struct pipe_surface *surf = NULL;
    struct pipe_scissor_state scissor = {box->x, box->y, box->x + box->width, box->y + box->height};
 

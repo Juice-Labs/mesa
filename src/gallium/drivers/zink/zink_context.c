@@ -49,6 +49,7 @@
 #include "util/format_srgb.h"
 #include "util/format/u_format.h"
 #include "util/u_helpers.h"
+#include "util/u_math.h"
 #include "util/u_inlines.h"
 #include "util/u_thread.h"
 #include "util/u_cpu_detect.h"
@@ -4587,6 +4588,37 @@ zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
          srcX, srcY, srcZ,
          width, height, depth
       };
+
+      /* Validate dimensions and bounds to align with native WGL behavior */
+      if (width <= 0 || height <= 0 || depth <= 0) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: invalid dimensions %dx%dx%d", width, height, depth);
+         return false;
+      }
+      if (srcX < 0 || srcY < 0 || srcZ < 0 || dstX < 0 || dstY < 0 || dstZ < 0) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: negative offsets");
+         return false;
+      }
+
+      /* Compute level dimensions and enforce bounds */
+      unsigned src_w = u_minify(src_pipe_res->width0, srcLevel);
+      unsigned src_h = u_minify(src_pipe_res->height0, srcLevel);
+      unsigned src_d = u_minify(src_pipe_res->depth0, srcLevel);
+      unsigned dst_w = u_minify(dst_pipe_res->width0, dstLevel);
+      unsigned dst_h = u_minify(dst_pipe_res->height0, dstLevel);
+      unsigned dst_d = u_minify(dst_pipe_res->depth0, dstLevel);
+
+      if ((uint64_t)srcX + (uint64_t)width > src_w ||
+          (uint64_t)srcY + (uint64_t)height > src_h ||
+          (uint64_t)srcZ + (uint64_t)depth > src_d) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: source region out of bounds (level %d: %ux%ux%u)", srcLevel, src_w, src_h, src_d);
+         return false;
+      }
+      if ((uint64_t)dstX + (uint64_t)width > dst_w ||
+          (uint64_t)dstY + (uint64_t)height > dst_h ||
+          (uint64_t)dstZ + (uint64_t)depth > dst_d) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: destination region out of bounds (level %d: %ux%ux%u)", dstLevel, dst_w, dst_h, dst_d);
+         return false;
+      }
 
       struct zink_context *ctx = zink_context(pipe_ctx);
       zink_flush_queue(ctx);

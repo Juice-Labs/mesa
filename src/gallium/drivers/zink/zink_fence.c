@@ -227,10 +227,15 @@ zink_fence_server_signal(struct pipe_context *pctx, struct pipe_fence_handle *pf
    // Dumb simple signal for now
    if (mfence->type == PIPE_FD_TYPE_TIMELINE_SEMAPHORE) {
 
-      /* If we're in a batch, flush it to ensure proper ordering */
+      /* If we're in a batch, flush it and wait for completion to ensure proper ordering */
       if (ctx->batch.has_work) {
-         /* Flush the batch but don't wait for it to complete */
-         pctx->flush(pctx, NULL, PIPE_FLUSH_ASYNC);
+         /* Flush the batch and wait for it to complete */
+         struct pipe_fence_handle *fence = NULL;
+         pctx->flush(pctx, &fence, 0);
+         if (fence) {
+            pctx->screen->fence_finish(pctx->screen, pctx, fence, PIPE_TIMEOUT_INFINITE);
+            pctx->screen->fence_reference(pctx->screen, &fence, NULL);
+         }
       }      
 
       struct zink_screen *screen = zink_screen(ctx->base.screen);

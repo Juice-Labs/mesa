@@ -1228,8 +1228,22 @@ resource_create(struct pipe_screen *pscreen,
          res->need_2D = (screen->need_2D_zs && util_format_is_depth_or_stencil(templ->format)) ||
                         (screen->need_2D_sparse && (templ->flags & PIPE_RESOURCE_FLAG_SPARSE));
       }
-      res->dmabuf_acquire = whandle && whandle->type == WINSYS_HANDLE_TYPE_FD;
-      res->dmabuf = res->dmabuf_acquire = whandle && whandle->type == WINSYS_HANDLE_TYPE_FD;
+      /* For externally imported images, perform a FOREIGN -> gfx ownership
+       * acquire on first use. This is required not only for dma-buf (FD)
+       * imports, but also for Win32 external handles imported via
+       * EXT_memory_object_win32 where whandle->type is ZINK_EXTERNAL_MEMORY_HANDLE
+       * or WIN32 handle/name. */
+      bool is_external_import = whandle && (
+                                 whandle->type == WINSYS_HANDLE_TYPE_FD ||
+                                 whandle->type == ZINK_EXTERNAL_MEMORY_HANDLE ||
+                                 whandle->type == WINSYS_HANDLE_TYPE_WIN32_HANDLE ||
+                                 whandle->type == WINSYS_HANDLE_TYPE_WIN32_NAME);
+      if (is_external_import) {
+         fprintf(stderr, "[zink] external import detected (type=%d) -> setting dmabuf_acquire=true\n", whandle->type);
+      }
+      res->dmabuf_acquire = is_external_import;
+      /* Keep res->dmabuf flag tied to true dma-buf usage to preserve existing logic */
+      res->dmabuf = (whandle && whandle->type == WINSYS_HANDLE_TYPE_FD);
       res->layout = res->dmabuf_acquire ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
       res->linear = linear;
       res->aspect = aspect_from_format(templ->format);
@@ -1655,27 +1669,36 @@ zink_resource_from_memobj(struct pipe_screen *pscreen,
 {
    struct zink_memory_object *memobj = (struct zink_memory_object *)pmemobj;
 
-   struct pipe_resource *pres = resource_create(pscreen, templ, &memobj->whandle, 0, NULL, 0, NULL, NULL);
+   /* For external memory textures, ensure they have render target capability */
+   struct pipe_resource templ_enhanced = *templ;
+   if (templ->target != PIPE_BUFFER) {
+      templ_enhanced.bind |= PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW;
+   }
+
+   struct pipe_resource *pres = resource_create(pscreen, &templ_enhanced, &memobj->whandle, 0, NULL, 0, NULL, NULL);
    if (!pres) {
       /* If resource_create fails, try with templ->usage as DYNAMIC and a HOST_VISIBLE_COHERENT heap */
-      struct pipe_resource templ_dynamic = *templ;
+      struct pipe_resource templ_dynamic = templ_enhanced;
       templ_dynamic.usage = PIPE_USAGE_DYNAMIC;
       pres = resource_create(pscreen, &templ_dynamic, &memobj->whandle, 0, NULL, 0, 
                             NULL, (void*)(uintptr_t)ZINK_HEAP_HOST_VISIBLE_COHERENT);
    }
    if (!pres) {
       /* If that fails, try with templ->usage as STAGING and a HOST_VISIBLE_CACHED heap */
-      struct pipe_resource templ_staging = *templ;
+      struct pipe_resource templ_staging = templ_enhanced;
       templ_staging.usage = PIPE_USAGE_STAGING;
       pres = resource_create(pscreen, &templ_staging, &memobj->whandle, 0, NULL, 0, 
                             NULL, (void*)(uintptr_t)ZINK_HEAP_HOST_VISIBLE_CACHED);
    }
    
    if (pres) {
-      if (pres->target != PIPE_BUFFER)
+      if (pres->target != PIPE_BUFFER) {
          zink_resource(pres)->valid = true;
-      else
+         /* Mark external memory resources as exportable for proper handling */
+         zink_resource(pres)->obj->exportable = true;
+      } else {
          tc_buffer_disable_cpu_storage(pres);
+      }
    }
    return pres;
 }

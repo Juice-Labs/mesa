@@ -727,6 +727,14 @@ server_signal_semaphore(struct gl_context *ctx,
    struct gl_buffer_object *bufObj;
    struct gl_texture_object *texObj;
 
+   printf("[mesa] server_signal_semaphore: submitting GL work before resource flushes\n");
+   fflush(stdout);
+
+   /* Ensure all pending GL work has been recorded/submitted before making
+    * external visibility guarantees for the listed resources. */
+   st_flush_bitmap_cache(st);
+   pipe->flush(pipe, NULL, 0);
+
    for (unsigned i = 0; i < numBufferBarriers; i++) {
       if (!bufObjs[i])
          continue;
@@ -741,11 +749,16 @@ server_signal_semaphore(struct gl_context *ctx,
          continue;
 
       texObj = texObjs[i];
-      if (texObj->pt)
+      if (texObj->pt) {
+         printf("[mesa] server_signal_semaphore: flush_resource on texture %u\n", texObjs[i]->Name);
+         fflush(stdout);
          pipe->flush_resource(pipe, texObj->pt);
+      }
    }
 
    /* The driver must flush during fence_server_signal, be prepared */
+   printf("[mesa] server_signal_semaphore: signaling fence now\n");
+   fflush(stdout);
    st_flush_bitmap_cache(st);
    pipe->fence_server_signal(pipe, semObj->fence);
 }

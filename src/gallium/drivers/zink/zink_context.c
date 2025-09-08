@@ -3938,6 +3938,15 @@ zink_flush_resource(struct pipe_context *pctx,
       ctx->batch.swapchain = res;
    } else if (res->dmabuf)
       res->dmabuf_acquire = true;
+   else if (res->obj->exportable) {
+      /* For external memory textures, ensure proper flushing and memory barriers */
+      /* Transition to general layout for external access */
+      zink_screen(ctx->base.screen)->image_barrier(ctx, res, VK_IMAGE_LAYOUT_GENERAL, 
+                                                   VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT, 
+                                                   VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+      /* Ensure the resource is tracked for this batch */
+      zink_batch_reference_resource_rw(&ctx->batch, res, true);
+   }
 }
 
 static struct pipe_stream_output_target *

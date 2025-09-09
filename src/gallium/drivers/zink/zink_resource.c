@@ -33,6 +33,7 @@
 
 #include "main/context.h"
 #include "main/texobj.h"
+#include "main/bufferobj.h"
 #include "main/format_utils.h"
 #include "state_tracker/st_context.h"
 #include "state_tracker/st_texture.h"
@@ -2339,9 +2340,10 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
       whandle->handle = handle;
 #endif
       uint64_t value;
-      zink_resource_get_param(pscreen, context, tex, 0, 0, 0, PIPE_RESOURCE_PARAM_MODIFIER, 0, &value);
-      whandle->modifier = value;
+
       if (!res->obj->is_buffer) {
+         zink_resource_get_param(pscreen, context, tex, 0, 0, 0, PIPE_RESOURCE_PARAM_MODIFIER, 0, &value);
+         whandle->modifier = value;
          zink_resource_get_param(pscreen, context, tex, 0, 0, 0, PIPE_RESOURCE_PARAM_OFFSET, 0, &value);
          whandle->offset = value;
          zink_resource_get_param(pscreen, context, tex, 0, 0, 0, PIPE_RESOURCE_PARAM_STRIDE, 0, &value);
@@ -3996,3 +3998,132 @@ zink_cuda_wait_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
    return false;
 #endif
 }
+
+/**
+ * Recreate a GL buffer for CUDA export by making it externally shareable
+ * This function bridges between the client layer and Zink driver for buffers
+ */
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_recreate_gl_buffer_for_export(uint32_t gl_buffer_id, 
+                                        uint64_t* out_handle, uint64_t* out_size,
+                                        uint64_t* out_semaphore_handle, uint64_t* out_semaphore,
+                                        char* error_msg, size_t error_msg_size)
+{
+   if (!out_handle || !out_size || !out_semaphore_handle || !out_semaphore) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Invalid output parameters");
+      return false;
+   }
+
+#ifdef _WIN32
+   // Get the current Mesa GL context
+   struct gl_context *gl_ctx = _mesa_get_current_context();
+   if (!gl_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No current GL context");
+      return false;
+   }
+
+   // Get the Mesa state tracker context
+   struct st_context *st_ctx = (struct st_context*)gl_ctx->st;
+   if (!st_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No Mesa state tracker context");
+      return false;
+   }
+
+   struct pipe_context *pipe_ctx = st_ctx->pipe;
+   struct pipe_screen *pipe_screen = pipe_ctx->screen;
+
+   // Look up the GL buffer object using the error-checking version
+   // This function handles DummyBufferObject checks and sets GL errors appropriately
+   struct gl_buffer_object *buf_obj = _mesa_lookup_bufferobj_err(gl_ctx, gl_buffer_id, "zink_cuda_recreate_gl_buffer_for_export");
+   if (!buf_obj) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "GL buffer %u not found or invalid", gl_buffer_id);
+      return false;
+   }
+
+   // Validate that the buffer object has been properly initialized
+   if (buf_obj->Size == 0) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "GL buffer %u has zero size - not properly allocated", gl_buffer_id);
+      return false;
+   }
+
+   // Get the pipe resource from the buffer object
+   struct pipe_resource *pipe_res = buf_obj->buffer;
+   if (!pipe_res) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No pipe resource for GL buffer %u - buffer not bound or allocated", gl_buffer_id);
+      return false;
+   }
+
+   // Now recreate with export capabilities
+   struct winsys_handle export_handle = {};
+   bool success = zink_resource_recreate_for_cuda_export(pipe_screen, pipe_ctx, pipe_res, &export_handle);
+   
+   if (!success) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to recreate buffer with export capabilities");
+      return false;
+   }
+
+   // Create exportable timeline semaphore for synchronization (same as textures)
+   struct zink_screen *screen = zink_screen(pipe_screen);
+   VkSemaphore semaphore = VK_NULL_HANDLE;
+   VkSemaphoreTypeCreateInfo semaphore_type_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+      .pNext = NULL,
+      .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+      .initialValue = 0
+   };
+
+   VkExportSemaphoreCreateInfo export_semaphore_info = {
+      .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+      .pNext = &semaphore_type_info,
+      .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT
+   };
+
+   VkSemaphoreCreateInfo semaphore_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+      .pNext = &export_semaphore_info,
+      .flags = 0
+   };
+
+   VkResult result = VKSCR(CreateSemaphore)(screen->dev, &semaphore_info, NULL, &semaphore);
+   if (result != VK_SUCCESS) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to create timeline semaphore: %s", vk_Result_to_str(result));
+      return false;
+   }
+
+   // Export the semaphore handle
+   VkSemaphoreGetWin32HandleInfoKHR semaphore_get_handle_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR,
+      .pNext = NULL,
+      .semaphore = semaphore,
+      .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT
+   };
+
+   HANDLE semaphore_handle;
+   result = VKSCR(GetSemaphoreWin32HandleKHR)(screen->dev, &semaphore_get_handle_info, &semaphore_handle);
+   if (result != VK_SUCCESS) {
+      VKSCR(DestroySemaphore)(screen->dev, semaphore, NULL);
+      if (error_msg) snprintf(error_msg, error_msg_size, "Failed to export semaphore handle: %s", vk_Result_to_str(result));
+      return false;
+   }
+
+   *out_handle = (uint64_t)export_handle.handle;
+   *out_semaphore_handle = (uint64_t)semaphore_handle;
+   *out_semaphore = (uint64_t)semaphore;
+   
+   // Get the actual allocation size from the Vulkan resource object
+   struct zink_resource *zink_res = zink_resource(pipe_res);
+   *out_size = zink_res->obj->size;
+   
+   return true;
+#else
+   if (error_msg) snprintf(error_msg, error_msg_size, "Platform not supported");
+   return false;
+#endif
+}
+
+/**
+ * Signal a timeline semaphore with the specified value
+ * This function submits a signal operation to the Vulkan queue

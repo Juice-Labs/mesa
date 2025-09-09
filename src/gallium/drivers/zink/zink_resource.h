@@ -95,6 +95,15 @@ zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_tar
 __declspec(dllexport)
 #endif
 bool
+zink_cuda_recreate_gl_buffer_for_export(uint32_t gl_buffer_id, 
+                                        uint64_t* out_handle, uint64_t* out_size,
+                                        uint64_t* out_semaphore_handle, uint64_t* out_semaphore,
+                                        char* error_msg, size_t error_msg_size);
+
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
 zink_cuda_signal_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
                                    char* error_msg, size_t error_msg_size);
 

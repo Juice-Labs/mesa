@@ -5677,6 +5677,34 @@ zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
          mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Failed to get pipe resources");
          return false;
       }
+
+      /* Validate bounds for source region */
+      if (srcX < 0 || srcY < 0 || srcZ < 0 || width <= 0 || height <= 0 || depth <= 0) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Invalid source coordinates or dimensions");
+         return false;
+      }
+
+      if (srcX + width > src_pipe_res->width0 || 
+          srcY + height > src_pipe_res->height0 || 
+          srcZ + depth > src_pipe_res->depth0) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Source region exceeds texture bounds (%d+%d > %d, %d+%d > %d, %d+%d > %d)", 
+                  srcX, width, src_pipe_res->width0, srcY, height, src_pipe_res->height0, srcZ, depth, src_pipe_res->depth0);
+         return false;
+      }
+
+      /* Validate bounds for destination region */
+      if (dstX < 0 || dstY < 0 || dstZ < 0) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Invalid destination coordinates");
+         return false;
+      }
+
+      if (dstX + width > dst_pipe_res->width0 || 
+          dstY + height > dst_pipe_res->height0 || 
+          dstZ + depth > dst_pipe_res->depth0) {
+         mesa_log(MESA_LOG_ERROR, "ZINK", "Cross-context copy: Destination region exceeds texture bounds (%d+%d > %d, %d+%d > %d, %d+%d > %d)", 
+                  dstX, width, dst_pipe_res->width0, dstY, height, dst_pipe_res->height0, dstZ, depth, dst_pipe_res->depth0);
+         return false;
+      }
          
       /* Use u_box_3d rather than a positional initializer: struct pipe_box is
        * laid out {x, width, y, height, z, depth}, not {x, y, z, width, ...}.

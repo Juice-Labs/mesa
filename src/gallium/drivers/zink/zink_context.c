@@ -69,6 +69,16 @@ debug_describe_zink_buffer_view(char *buf, const struct zink_buffer_view *ptr)
    sprintf(buf, "zink_buffer_view");
 }
 
+ALWAYS_INLINE static struct zink_context*
+zink_context_from_usage(struct zink_batch_usage *usage)
+{
+    if (usage) {
+        struct zink_batch_state *state = (struct zink_batch_state*) ((char*)usage - offsetof(struct zink_batch_state, usage));
+        return state->ctx;
+    }
+    return NULL;
+}
+
 ALWAYS_INLINE static void
 check_resource_for_batch_ref(struct zink_context *ctx, struct zink_resource *res)
 {
@@ -76,11 +86,27 @@ check_resource_for_batch_ref(struct zink_context *ctx, struct zink_resource *res
       /* avoid desync between usage and tracking:
        * - if usage exists, it must be removed before the context is destroyed
        * - having usage does not imply having tracking
-       * - if tracking will be added here, also reapply usage to avoid dangling usage once tracking is removed
+       * - add tracking to the context that any existing usage belongs to [1]
        * TODO: somehow fix this for perf because it's an extra hash lookup
+       *
+       * [1] Tracking is added to the context that any existing usage belongs
+       * to rather than the current context.  If the current context is
+       * different then there is no guarantee that the current context's
+       * usage will complete after the existing usage.
        */
-      if (!res->obj->dt && (res->obj->bo->reads || res->obj->bo->writes))
-         zink_batch_reference_resource_rw(&ctx->batch, res, !!res->obj->bo->writes);
+      if (!res->obj->dt && (res->obj->bo->reads || res->obj->bo->writes)) {
+         struct zink_batch_usage* reads = res->obj->bo->reads;
+         if (reads) {
+             struct zink_context* reads_ctx = zink_context_from_usage(reads);
+             zink_batch_reference_resource_rw(&reads_ctx->batch, res, false);
+         }
+
+         struct zink_batch_usage* writes = res->obj->bo->writes;
+         if (writes) {
+             struct zink_context* writes_ctx = zink_context_from_usage(writes);
+             zink_batch_reference_resource_rw(&writes_ctx->batch, res, true);
+         }
+      }
       else
          zink_batch_reference_resource(&ctx->batch, res);
    }

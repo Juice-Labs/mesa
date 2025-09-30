@@ -691,6 +691,17 @@ nir_visitor::visit(ir_variable *ir)
    else
       var->constant_initializer = constant_copy(ir->constant_value, shader);
 
+   // Set uninitialized scalar and vector values to zero to match behavior
+   // of other OpenGL vendors.  The OpenGL Shading Language specification
+   // states that uninitialized variables have an undefined value but that
+   // doesn't preclude that value always being zero.
+   if (!var->constant_initializer && !glsl_type_is_array(var->type) && !glsl_type_is_struct(var->type) && var->type->matrix_columns == 1) {
+       if (var->data.mode == nir_var_function_temp || var->data.mode == nir_var_shader_temp) {
+           nir_constant *zero = rzalloc(shader, nir_constant);
+           var->constant_initializer = zero;
+       }
+   }
+   
    if (var->data.mode == nir_var_function_temp)
       nir_function_impl_add_variable(impl, var);
    else

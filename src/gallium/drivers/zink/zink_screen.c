@@ -2653,12 +2653,12 @@ zink_query_memory_info(struct pipe_screen *pscreen, struct pipe_memory_info *inf
             /* VRAM */
             info->total_device_memory += screen->info.mem_props.memoryHeaps[i].size / 1024;
             /* free real estate! */
-            info->avail_device_memory += info->total_device_memory;
+            info->avail_device_memory += screen->info.mem_props.memoryHeaps[i].size / 1024;
          } else {
             /* GART */
             info->total_staging_memory += screen->info.mem_props.memoryHeaps[i].size / 1024;
             /* free real estate! */
-            info->avail_staging_memory += info->total_staging_memory;
+            info->avail_staging_memory += screen->info.mem_props.memoryHeaps[i].size / 1024;
          }
       }
    }

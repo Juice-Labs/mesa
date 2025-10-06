@@ -122,7 +122,9 @@ output_if_debug(const char *prefixString, const char *outputString,
       else
          snprintf(useBuf, totalLen, "%s%s", outputString, newline ? "\n" : "");
 
-      juice_log_output(useBuf);
+      if (juice_log_output) {
+          juice_log_output(useBuf);
+      }
 
       if (allocedBuf) {
          free(useBuf);

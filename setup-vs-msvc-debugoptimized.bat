@@ -1,1 +1,1 @@
-meson setup --backend=vs2022 --buildtype=debugoptimized -Dgallium-drivers=zink -Dgles2=enabled -Degl=enabled -Dshared-glapi=enabled build\debugoptimized_vs2022
+meson setup --backend=vs2022 --buildtype=debugoptimized --wrap-mode=forcefallback -Dgallium-drivers=zink -Dgles2=enabled -Degl=enabled -Degl=enabled -Dzlib=enabled -Dshared-glapi=enabled -Dprefix=%~dp0build\debug build\debugoptimized_vs2022

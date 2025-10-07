@@ -127,6 +127,10 @@ zink_context_destroy(struct pipe_context *pctx)
          mesa_loge("ZINK: vkQueueWaitIdle failed (%s)", vk_Result_to_str(result));
    }
 
+   if (ctx->needs_present) {
+      pipe_resource_reference((struct pipe_resource**)&ctx->needs_present, NULL);
+   }
+
    for (unsigned i = 0; i < ARRAY_SIZE(ctx->program_cache); i++) {
       simple_mtx_lock((&ctx->program_lock[i]));
       hash_table_foreach(&ctx->program_cache[i], entry) {

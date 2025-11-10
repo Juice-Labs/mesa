@@ -409,8 +409,13 @@ zink_blit(struct pipe_context *pctx,
       ctx->rp_tc_info_updated = true;
 
    if (zink_is_swapchain(dst)) {
+      VkExtent2D swapchain_size = ctx->swapchain_size;
       if (!zink_kopper_acquire(ctx, dst, UINT64_MAX))
          return;
+      if (swapchain_size.width != ctx->swapchain_size.width ||
+          swapchain_size.height != ctx->swapchain_size.height) {
+         return;
+      }
    }
 
    if (src_desc == dst_desc ||

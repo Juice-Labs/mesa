@@ -399,7 +399,15 @@ stw_st_flush(struct st_context_iface *stctx,
    args.stwfb = stwfb;
    args.flags = flags;
 
-   if (flags & ST_FLUSH_END_OF_FRAME && !stwfb->fb->winsys_framebuffer)
+   /* Zink/Kopper uses Vulkan swapchains which handle async presentation.
+    * Don't add ST_FLUSH_WAIT for Zink as it would block on network RPC calls
+    * (vkWaitSemaphores) and prevent proper triple buffering pipelining.
+    */
+   bool is_zink = stw_dev && stw_dev->screen && 
+                  stw_dev->screen->get_name &&
+                  strncmp(stw_dev->screen->get_name(stw_dev->screen), "zink", 4) == 0;
+
+   if (flags & ST_FLUSH_END_OF_FRAME && !stwfb->fb->winsys_framebuffer && !is_zink)
       flags |= ST_FLUSH_WAIT;
 
    if (flags & ST_FLUSH_WAIT)

@@ -297,7 +297,6 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
        *result = error;
        return NULL;
    }
-   cswap->max_acquires = cswap->scci.minImageCount - cdt->caps.minImageCount;
    cswap->last_present = UINT32_MAX;
 
    *result = VK_SUCCESS;
@@ -320,6 +319,11 @@ kopper_GetSwapchainImages(struct zink_screen *screen, struct kopper_swapchain *c
       for (unsigned i = 0; i < cswap->num_images; i++)
          cswap->images[i].image = images[i];
    }
+   /* Calculate max_acquires based on actual number of images created.
+    * This allows proper pipelining: with 4 images and minImageCount=4,
+    * max_acquires = 1 allows triple buffering (1 displayed, 1 rendering, 1 ready).
+    */
+   cswap->max_acquires = cswap->num_images - cswap->scci.minImageCount + 1;
    return error;
 }
 
@@ -641,35 +645,11 @@ kopper_present(void *data, void *gdata, int thread_idx)
    cpi->info.pResults = &error;
 
    simple_mtx_lock(&screen->queue_lock);
-   if (screen->driver_workarounds.implicit_sync && cdt->type != KOPPER_WIN32) {
-      if (!screen->fence) {
-         VkFenceCreateInfo fci = {0};
-         fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-         VKSCR(CreateFence)(screen->dev, &fci, NULL, &screen->fence);
-      }
-      VKSCR(ResetFences)(screen->dev, 1, &screen->fence);
-      VkSubmitInfo si = {0};
-      si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-      si.waitSemaphoreCount = 1;
-      si.pWaitSemaphores = cpi->info.pWaitSemaphores;
-      VkPipelineStageFlags stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-      si.pWaitDstStageMask = &stages;
-
-      error = VKSCR(QueueSubmit)(screen->queue, 1, &si, screen->fence);
-      if (!zink_screen_handle_vkresult(screen, error)) {
-         simple_mtx_unlock(&screen->queue_lock);
-         VKSCR(DestroySemaphore)(screen->dev, cpi->sem, NULL);
-         goto out;
-      }
-      error = VKSCR(WaitForFences)(screen->dev, 1, &screen->fence, VK_TRUE, UINT64_MAX);
-      if (!zink_screen_handle_vkresult(screen, error)) {
-         simple_mtx_unlock(&screen->queue_lock);
-         VKSCR(DestroySemaphore)(screen->dev, cpi->sem, NULL);
-         goto out;
-      }
-      cpi->info.pWaitSemaphores = NULL;
-      cpi->info.waitSemaphoreCount = 0;
-   }
+   /* Note: The implicit_sync workaround was blocking on WaitForFences before
+    * presenting, which serialized all presents and prevented proper pipelining.
+    * We now let vkQueuePresentKHR handle the semaphore wait asynchronously,
+    * which allows multiple frames to be in flight and enables triple buffering.
+    */
    VkResult error2 = VKSCR(QueuePresentKHR)(screen->queue, &cpi->info);
    simple_mtx_unlock(&screen->queue_lock);
    swapchain->last_present = cpi->image;

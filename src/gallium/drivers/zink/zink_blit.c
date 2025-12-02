@@ -391,6 +391,7 @@ zink_blit(struct pipe_context *pctx,
    struct zink_resource *dst = zink_resource(info->dst.resource);
    if (dst->unflushed_transient)
       dst = dst->transient;
+   struct pipe_blit_info info_copy = *info;
    bool needs_present_readback = false;
 
    if (ctx->awaiting_resolve && ctx->in_rp && ctx->dynamic_fb.tc_info.has_resolve) {
@@ -409,13 +410,14 @@ zink_blit(struct pipe_context *pctx,
       ctx->rp_tc_info_updated = true;
 
    if (zink_is_swapchain(dst)) {
-      VkExtent2D swapchain_size = ctx->swapchain_size;
       if (!zink_kopper_acquire(ctx, dst, UINT64_MAX))
          return;
-      if (swapchain_size.width != ctx->swapchain_size.width ||
-          swapchain_size.height != ctx->swapchain_size.height) {
-         return;
-      }
+      /* Clamp blit if extents exceed swapchain size because of a resize */
+      if (info->dst.box.x + info->dst.box.width > dst->base.b.width0)
+         info_copy.dst.box.width = dst->base.b.width0 - info->dst.box.x;
+      if (info->dst.box.y + info->dst.box.height > dst->base.b.height0)
+         info_copy.dst.box.height = dst->base.b.height0 - info->dst.box.y;
+      info = &info_copy;
    }
 
    if (src_desc == dst_desc ||

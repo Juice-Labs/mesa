@@ -1004,14 +1004,21 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       assert(reqs.memoryTypeBits & BITFIELD_BIT(mai.memoryTypeIndex));
    }
 
+   /* Windows requires external/shared memory allocations to be dedicated. */
+   bool external_allocation = false;
+   external_allocation |= needs_export;
+   external_allocation |= shared;
+   external_allocation |= (templ->bind & (ZINK_BIND_VIDEO | ZINK_BIND_DMABUF | ZINK_BIND_CUDA_EXPORT)) != 0;
+   external_allocation |= (whandle && whandle->handle);
+
    VkMemoryDedicatedAllocateInfo ded_alloc_info = {
       .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
       .pNext = mai.pNext,
-      .image = obj->image,
-      .buffer = VK_NULL_HANDLE,
+      .image = obj->is_buffer ? VK_NULL_HANDLE : obj->image,
+      .buffer = obj->is_buffer ? obj->buffer : VK_NULL_HANDLE,
    };
 
-   if (screen->info.have_KHR_dedicated_allocation && need_dedicated) {
+   if (screen->info.have_KHR_dedicated_allocation && (need_dedicated || external_allocation)) {
       ded_alloc_info.pNext = mai.pNext;
       mai.pNext = &ded_alloc_info;
    }

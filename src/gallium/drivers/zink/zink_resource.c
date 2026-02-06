@@ -602,6 +602,8 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
 
    VkMemoryRequirements reqs = {0};
    VkMemoryPropertyFlags flags;
+   VkImageCreateInfo saved_ici = {0};
+   bool exported_image_memory = false;
 
    /* figure out aux plane count */
    if (whandle && whandle->plane >= util_format_get_num_planes(whandle->format))
@@ -901,6 +903,10 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          goto fail1;
       }
 
+      /* Save a pNext-free copy of the image create info for the Win32 reimport workaround */
+      saved_ici = ici;
+      saved_ici.pNext = NULL;
+
       if (ici.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
          VkImageDrmFormatModifierPropertiesEXT modprops = {0};
          modprops.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
@@ -1024,6 +1030,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       emai.pNext = mai.pNext;
       mai.pNext = &emai;
       obj->exportable = true;
+      exported_image_memory = !obj->is_buffer;
    }
 
 #ifdef ZINK_USE_DMABUF
@@ -1141,6 +1148,83 @@ retry:
             }
       }
    }
+
+#if defined(_WIN32)
+   /* WORKAROUND: A Windows WDDM regression causes the exporting VkDeviceMemory's
+    * GPU virtual address mapping to go stale after repeated alloc/free cycles with
+    * shared handles.  Freshly imported VkDeviceMemory always has a valid mapping.
+    * Fix: immediately export the handle, re-import into a new VkDeviceMemory
+    * (preserving export capability), bind a new image to it, and destroy the
+    * originals.
+    */
+   if (exported_image_memory) {
+
+      HANDLE reimport_win32_handle = NULL;
+      VkMemoryGetWin32HandleInfoKHR get_handle_info = {0};
+      get_handle_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR;
+      get_handle_info.memory = zink_bo_get_mem(obj->bo);
+      get_handle_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+
+      VkResult export_result = VKSCR(GetMemoryWin32HandleKHR)(screen->dev,
+                                     &get_handle_info, &reimport_win32_handle);
+      if (export_result == VK_SUCCESS && reimport_win32_handle != NULL) {
+         VkImportMemoryWin32HandleInfoKHR reimport_import_info = {0};
+         reimport_import_info.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR;
+         reimport_import_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+         reimport_import_info.handle = reimport_win32_handle;
+
+         VkExportMemoryAllocateInfo reimport_export_info = {0};
+         reimport_export_info.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
+         reimport_export_info.pNext = &reimport_import_info;
+         reimport_export_info.handleTypes = export_types;
+
+         VkMemoryAllocateFlagsInfo reimport_flags_info = {0};
+         reimport_flags_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+         reimport_flags_info.pNext = &reimport_export_info;
+         reimport_flags_info.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR;
+
+         VkMemoryAllocateInfo reimport_alloc_info = {0};
+         reimport_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+         reimport_alloc_info.pNext = screen->info.have_KHR_buffer_device_address
+                                     ? (const void *)&reimport_flags_info
+                                     : (const void *)&reimport_export_info;
+         reimport_alloc_info.allocationSize = reqs.size;
+         reimport_alloc_info.memoryTypeIndex = mai.memoryTypeIndex;
+
+         VkDeviceMemory reimported_mem = VK_NULL_HANDLE;
+         VkResult reimport_result = VKSCR(AllocateMemory)(screen->dev,
+                                          &reimport_alloc_info, NULL, &reimported_mem);
+         if (reimport_result == VK_SUCCESS) {
+            VkExternalMemoryImageCreateInfo reimport_emici = {0};
+            reimport_emici.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+            reimport_emici.handleTypes = export_types;
+            saved_ici.pNext = &reimport_emici;
+
+            VkImage reimported_image = VK_NULL_HANDLE;
+            reimport_result = VKSCR(CreateImage)(screen->dev, &saved_ici, NULL,
+                                                 &reimported_image);
+            if (reimport_result == VK_SUCCESS) {
+               reimport_result = VKSCR(BindImageMemory)(screen->dev, reimported_image,
+                                                        reimported_mem, obj->offset);
+               if (reimport_result == VK_SUCCESS) {
+                  /* Success: destroy originals, use re-imported resources */
+                  VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
+                  VKSCR(FreeMemory)(screen->dev, obj->bo->mem, NULL);
+                  obj->image = reimported_image;
+                  obj->bo->mem = reimported_mem;
+               } else {
+                  VKSCR(DestroyImage)(screen->dev, reimported_image, NULL);
+                  VKSCR(FreeMemory)(screen->dev, reimported_mem, NULL);
+               }
+            } else {
+               VKSCR(FreeMemory)(screen->dev, reimported_mem, NULL);
+            }
+         }
+         CloseHandle(reimport_win32_handle);
+      }
+   }
+#endif /* _WIN32 */
+
    return obj;
 
 fail3:

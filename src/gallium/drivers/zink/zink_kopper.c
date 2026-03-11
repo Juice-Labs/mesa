@@ -337,6 +337,17 @@ update_swapchain(struct zink_screen *screen, struct kopper_displaytarget *cdt, u
    VkResult error = update_caps(screen, cdt);
    if (error != VK_SUCCESS)
       return error;
+   /* Drain in-flight async presents and the Vulkan queue before creating the
+    * new swapchain.  Without this the server may still be processing presents
+    * from the old swapchain when the new one starts being used, which can
+    * cause front-buffer rendering artifacts after a resize.  DXVK/VKD3D avoid
+    * this by calling vkDeviceWaitIdle before swapchain recreation; we do the
+    * equivalent here. */
+   if (util_queue_is_initialized(&screen->flush_queue))
+      util_queue_fence_wait(&cdt->present_fence);
+   VkResult result = VKSCR(QueueWaitIdle)(screen->queue);
+   if (result != VK_SUCCESS)
+      mesa_loge("ZINK: vkQueueWaitIdle failed (%s)", vk_Result_to_str(result));
    struct kopper_swapchain *cswap = kopper_CreateSwapchain(screen, cdt, w, h, &error);
    if (!cswap)
       return error;

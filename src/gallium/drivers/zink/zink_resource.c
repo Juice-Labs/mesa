@@ -2855,10 +2855,14 @@ zink_cuda_signal_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
    struct pipe_context *pipe_ctx = st_ctx->pipe;
    struct zink_context *zink_ctx = zink_context(pipe_ctx);
    struct zink_screen *screen = zink_screen(pipe_ctx->screen);
+
+   /* Flush the current batch so all pending GL work on shared resources
+    * is submitted to the queue before we signal. Without this, the
+    * timeline semaphore can fire before GL rendering commands reach the GPU. */
+   pipe_ctx->flush(pipe_ctx, NULL, 0);
    
    VkSemaphore vk_semaphore = (VkSemaphore)(uintptr_t)semaphore;
    
-   // Create timeline semaphore submit info
    VkTimelineSemaphoreSubmitInfo timeline_info = {
       .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
       .pNext = NULL,
@@ -2868,7 +2872,6 @@ zink_cuda_signal_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
       .pSignalSemaphoreValues = &timeline_value
    };
 
-   // Submit info for signaling the semaphore
    VkSubmitInfo submit_info = {
       .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
       .pNext = &timeline_info,
@@ -2881,7 +2884,9 @@ zink_cuda_signal_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
       .pSignalSemaphores = &vk_semaphore
    };
 
+   simple_mtx_lock(&screen->queue_lock);
    VkResult result = VKSCR(QueueSubmit)(screen->queue, 1, &submit_info, VK_NULL_HANDLE);
+   simple_mtx_unlock(&screen->queue_lock);
    if (result != VK_SUCCESS) {
       if (error_msg) snprintf(error_msg, error_msg_size, "Failed to signal timeline semaphore: %s", vk_Result_to_str(result));
       return false;
@@ -2955,7 +2960,9 @@ zink_cuda_wait_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
       .pSignalSemaphores = NULL
    };
 
+   simple_mtx_lock(&screen->queue_lock);
    VkResult result = VKSCR(QueueSubmit)(screen->queue, 1, &submit_info, VK_NULL_HANDLE);
+   simple_mtx_unlock(&screen->queue_lock);
    if (result != VK_SUCCESS) {
       if (error_msg) snprintf(error_msg, error_msg_size, "Failed to wait on timeline semaphore: %s", vk_Result_to_str(result));
       return false;

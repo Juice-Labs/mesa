@@ -221,7 +221,7 @@ dump_vertex_arrays(struct gl_context *ctx, unsigned draw_id)
       const struct gl_vertex_buffer_binding *binding = &vao->BufferBinding[array->BufferBindingIndex];
       
       fprintf(fp, "Attr[%d]: Size=%d, Type=0x%x, Stride=%d, Offset=%ld, Buffer=%u\n",
-              i, array->Format.Size, array->Format.Type, 
+              i, array->Format.User.Size, array->Format.User.Type, 
               binding->Stride, (long)array->RelativeOffset, 
               binding->BufferObj ? binding->BufferObj->Name : 0);
               
@@ -1907,10 +1907,10 @@ _mesa_draw_arrays(struct gl_context *ctx, GLenum mode, GLint start,
 #ifdef JUICE_MESA_DUMP_DRAW_STATE
    /* Dump comprehensive state after draw if enabled */
    dump_comprehensive_state(ctx, mode, start, count, numInstances, baseInstance);
-   
+#endif
+
    /* Reset the uniform buffer update flag */
    ctx->_UniformBufferDataUpdated = false;
-#endif
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);

@@ -343,7 +343,7 @@ update_swapchain(struct zink_screen *screen, struct kopper_displaytarget *cdt, u
    prune_old_swapchains(screen, cdt, false);
    struct kopper_swapchain **pswap = &cdt->old_swapchain;
    while (*pswap)
-      *pswap = (*pswap)->next;
+       pswap = &(*pswap)->next;
    *pswap = cdt->swapchain;
    cdt->swapchain = cswap;
 

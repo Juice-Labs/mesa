@@ -46,7 +46,12 @@ void _mesa_dump_spirv_hook(const char *stage_name, const void *spirv_data, size_
 void _mesa_dump_nir_hook(const char *stage_name, struct nir_shader *nir);
 
 /* Global flag to enable SPIRV dumping */
-static bool spirv_dumping_enabled = true;
+static bool spirv_dumping_enabled =
+#ifdef JUICE_MESA_DUMP_SHADERS
+   true;
+#else
+   false;
+#endif
 
 /* Function to enable/disable SPIRV dumping - called from Mesa */
 void

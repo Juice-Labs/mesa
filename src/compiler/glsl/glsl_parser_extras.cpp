@@ -2436,6 +2436,7 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
                                       add_builtin_defines, state, ctx);
    }
 
+#ifdef JUICE_MESA_DUMP_SHADERS
    /* Write post-processed shader to c:\temp for debugging */
    if (!state->error && source) {
       char filename[512];
@@ -2447,6 +2448,7 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader,
          fclose(fp);
       }
    }
+#endif
 
    /* Now that we have run the preprocessor we can check the shader cache and
     * skip compilation if possible for those shaders that contained a shader

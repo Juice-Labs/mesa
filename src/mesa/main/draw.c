@@ -1904,10 +1904,10 @@ _mesa_draw_arrays(struct gl_context *ctx, GLenum mode, GLint start,
 #ifdef JUICE_MESA_DUMP_DRAW_STATE
    /* Dump comprehensive state after draw if enabled */
    dump_comprehensive_state(ctx, mode, start, count, numInstances, baseInstance);
-   
+#endif
+
    /* Reset the uniform buffer update flag */
    ctx->_UniformBufferDataUpdated = false;
-#endif
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);

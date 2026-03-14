@@ -62,6 +62,7 @@
 #include "state_tracker/st_format.h"
 #include "state_tracker/st_pbo.h"
 #include "state_tracker/st_texture.h"
+#include "state_tracker/st_texture_gc.h"
 #include "state_tracker/st_gen_mipmap.h"
 #include "state_tracker/st_atom.h"
 #include "state_tracker/st_sampler_view.h"
@@ -979,6 +980,8 @@ st_AllocTextureImageBuffer(struct gl_context *ctx,
    DBG("%s\n", __func__);
 
    assert(!stImage->pt); /* xxx this might be wrong */
+
+   st_texture_gc_free_if_over_limit(st, stObj);
 
    stObj->needs_validation = true;
 

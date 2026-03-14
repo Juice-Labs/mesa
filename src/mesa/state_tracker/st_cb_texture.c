@@ -981,7 +981,7 @@ st_AllocTextureImageBuffer(struct gl_context *ctx,
 
    assert(!stImage->pt); /* xxx this might be wrong */
 
-   st_texture_gc_free_if_over_limit(st, stObj);
+   st_texture_gc_free_if_over_limit(st, stObj, texImage);
 
    st_texture_gc_touch(stObj);
    stObj->needs_validation = true;

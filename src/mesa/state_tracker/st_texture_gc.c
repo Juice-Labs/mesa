@@ -1,14 +1,18 @@
 /**
  * Texture VRAM reclamation for 3DEXPERIENCE.
  *
- * CATIA's Stellar renderer creates render-target textures each frame via
- * glTexImage2D and never calls glDeleteTextures, leaking ~2 GiB/min.
+ * Two rules, both LRU eviction regardless of format:
  *
- * On each glTexImage2D we tally all "offending" textures — big (>=1 MiB),
- * mutable, non-surface textures.  If their total exceeds the offender
- * budget (2 GiB), we release the backing pipe_resource on the oldest ones
- * until we're back under budget.  The GL texture object stays alive so
- * st_finalize_texture can lazily recreate backing if the app touches it.
+ * 1) 75% cap: if total texture VRAM > 75% of GPU memory, evict until
+ *    we're back under 75%.
+ *
+ * 2) R32G32B32A32_FLOAT reaping: when a large (>8 MiB) RGBA32F alloc
+ *    comes in and total RGBA32F texture VRAM > 1 GiB, evict until
+ *    we're below 75% total OR below 1 GiB of RGBA32F, whichever
+ *    threshold we cross first.
+ *
+ * Evicted textures keep their GL name — only the backing pipe_resource
+ * is released.  st_finalize_texture recreates it lazily if needed.
  */
 
 #include "main/context.h"
@@ -18,6 +22,7 @@
 #include "main/teximage.h"
 #include "main/texobj.h"
 #include "st_context.h"
+#include "st_format.h"
 #include "st_sampler_view.h"
 #include "st_texture_gc.h"
 #include "pipe/p_defines.h"
@@ -34,8 +39,9 @@
 #include <wctype.h>
 #endif
 
-#define OFFENDER_BUDGET_BYTES  (2ULL * 1024 * 1024 * 1024)
-#define BIG_TEX_BYTES          (1ULL * 1024 * 1024)
+#define R32G32B32A32_BUDGET  (1ULL * 1024 * 1024 * 1024)
+#define BIG_R32_THRESHOLD    (8ULL * 1024 * 1024)
+#define BIG_TEX_BYTES        (1ULL * 1024 * 1024)
 
 static bool
 is_3dexperience(void)
@@ -59,6 +65,22 @@ is_3dexperience(void)
 }
 
 static uint64_t
+get_vram_limit(struct st_context *st)
+{
+   static uint64_t cached = 0;
+   if (cached)
+      return cached;
+
+   int vram_mb = st->screen->get_param(st->screen, PIPE_CAP_VIDEO_MEMORY);
+   if (vram_mb <= 0)
+      vram_mb = 4096;
+   cached = (uint64_t)vram_mb * 1024 * 1024 * 3 / 4;  /* 75% */
+   fprintf(stderr, "[TEX GC] GPU VRAM: %d MiB, 75%% limit: %.0f MiB\n",
+           vram_mb, cached / (1024.0 * 1024.0));
+   return cached;
+}
+
+static uint64_t
 resource_bytes(const struct pipe_resource *pt)
 {
    if (!pt)
@@ -75,27 +97,25 @@ resource_bytes(const struct pipe_resource *pt)
 }
 
 static bool
-is_offending_texture(const struct gl_texture_object *tex, uint64_t size)
+is_r32g32b32a32_float(const struct pipe_resource *pt)
 {
-   if (tex->Immutable || tex->surface_based)
-      return false;
-   if (size < BIG_TEX_BYTES)
-      return false;
-   return true;
+   return pt && pt->format == PIPE_FORMAT_R32G32B32A32_FLOAT;
 }
 
-struct offender_entry {
+struct evict_entry {
    struct gl_texture_object *tex;
    uint64_t size;
    uint64_t stamp;
+   bool     is_r32;
 };
 
 struct scan_data {
    struct gl_texture_object *keep;
-   struct offender_entry *list;
+   struct evict_entry *list;
    unsigned  count;
    unsigned  cap;
-   uint64_t  total_offender_bytes;
+   uint64_t  total_vram;
+   uint64_t  total_r32;
 };
 
 static void
@@ -106,18 +126,24 @@ scan_callback(void *data, void *user)
 
    if (!tex->pt || tex->Name == 0)
       return;
-   if (tex == sd->keep)
-      return;
 
    uint64_t size = resource_bytes(tex->pt);
-   if (!is_offending_texture(tex, size))
-      return;
+   bool r32 = is_r32g32b32a32_float(tex->pt);
 
-   sd->total_offender_bytes += size;
+   sd->total_vram += size;
+   if (r32)
+      sd->total_r32 += size;
+
+   if (tex == sd->keep)
+      return;
+   if (tex->Immutable || tex->surface_based)
+      return;
+   if (size < BIG_TEX_BYTES)
+      return;
 
    if (sd->count >= sd->cap) {
       unsigned new_cap = sd->cap ? sd->cap * 2 : 64;
-      struct offender_entry *new_list =
+      struct evict_entry *new_list =
          realloc(sd->list, new_cap * sizeof(*new_list));
       if (!new_list)
          return;
@@ -127,14 +153,15 @@ scan_callback(void *data, void *user)
    sd->list[sd->count].tex = tex;
    sd->list[sd->count].size = size;
    sd->list[sd->count].stamp = tex->last_used_stamp;
+   sd->list[sd->count].is_r32 = r32;
    sd->count++;
 }
 
 static int
 cmp_by_stamp_asc(const void *a, const void *b)
 {
-   const struct offender_entry *ea = a;
-   const struct offender_entry *eb = b;
+   const struct evict_entry *ea = a;
+   const struct evict_entry *eb = b;
    return (ea->stamp > eb->stamp) - (ea->stamp < eb->stamp);
 }
 
@@ -157,7 +184,8 @@ evict_texture(struct st_context *st, struct gl_texture_object *tex)
 
 void
 st_texture_gc_free_if_over_limit(struct st_context *st,
-                                 struct gl_texture_object *keep)
+                                 struct gl_texture_object *keep,
+                                 const struct gl_texture_image *incoming)
 {
    if (!is_3dexperience())
       return;
@@ -166,46 +194,96 @@ st_texture_gc_free_if_over_limit(struct st_context *st,
    if (!ctx->Shared || !ctx->Shared->TexObjects)
       return;
 
+   uint64_t vram_limit = get_vram_limit(st);
+
+   /* Determine if the incoming alloc is a big R32G32B32A32_FLOAT */
+   bool incoming_is_big_r32 = false;
+   if (incoming) {
+      enum pipe_format pfmt =
+         st_mesa_format_to_pipe_format(st, incoming->TexFormat);
+      uint64_t incoming_size = (uint64_t)incoming->Width *
+                               incoming->Height *
+                               MAX2(incoming->Depth, 1) *
+                               util_format_get_blocksize(pfmt);
+      incoming_is_big_r32 = (pfmt == PIPE_FORMAT_R32G32B32A32_FLOAT &&
+                             incoming_size > BIG_R32_THRESHOLD);
+   }
+
    struct scan_data sd = {
-      .keep                = keep,
-      .list                = NULL,
-      .count               = 0,
-      .cap                 = 0,
-      .total_offender_bytes = 0,
+      .keep       = keep,
+      .list       = NULL,
+      .count      = 0,
+      .cap        = 0,
+      .total_vram = 0,
+      .total_r32  = 0,
    };
 
    _mesa_HashWalk(ctx->Shared->TexObjects, scan_callback, &sd);
 
-   if (sd.total_offender_bytes <= OFFENDER_BUDGET_BYTES || sd.count == 0) {
+   /* Rule 1: total > 75% of GPU VRAM */
+   bool over_vram = sd.total_vram > vram_limit;
+
+   /* Rule 2: big R32 incoming and R32 total > 1 GiB */
+   bool over_r32 = incoming_is_big_r32 && sd.total_r32 > R32G32B32A32_BUDGET;
+
+   if (!over_vram && !over_r32) {
       free(sd.list);
       return;
    }
 
-   /* Sort by stamp ascending — least recently used first. */
    qsort(sd.list, sd.count, sizeof(sd.list[0]), cmp_by_stamp_asc);
 
-   uint64_t to_free = sd.total_offender_bytes - OFFENDER_BUDGET_BYTES;
+   uint64_t cur_vram = sd.total_vram;
+   uint64_t cur_r32 = sd.total_r32;
    uint64_t freed = 0;
    unsigned evicted = 0;
 
-   for (unsigned i = 0; i < sd.count && freed < to_free; i++) {
+   for (unsigned i = 0; i < sd.count; i++) {
+      /* Stop when both thresholds are satisfied */
+      bool vram_ok = cur_vram <= vram_limit;
+      bool r32_ok = !over_r32 || cur_r32 <= R32G32B32A32_BUDGET;
+
+      if (over_vram && !over_r32) {
+         /* Rule 1 only: stop when VRAM is OK */
+         if (vram_ok) break;
+      } else if (!over_vram && over_r32) {
+         /* Rule 2 only: stop when VRAM is OK OR R32 is OK */
+         if (vram_ok || r32_ok) break;
+      } else {
+         /* Both rules: stop when VRAM is OK AND R32 is OK */
+         if (vram_ok && r32_ok) break;
+      }
+
       evict_texture(st, sd.list[i].tex);
+      cur_vram -= sd.list[i].size;
+      if (sd.list[i].is_r32)
+         cur_r32 -= sd.list[i].size;
       freed += sd.list[i].size;
       evicted++;
    }
 
-   fprintf(stderr, "[TEX GC] offenders %.0f MiB > budget %.0f MiB, "
-           "evicted %u (freed %.0f MiB, %u remain)\n",
-           sd.total_offender_bytes / (1024.0 * 1024.0),
-           (double)OFFENDER_BUDGET_BYTES / (1024.0 * 1024.0),
-           evicted, freed / (1024.0 * 1024.0),
-           sd.count - evicted);
+   if (evicted > 0) {
+      fprintf(stderr, "[TEX GC] evicted %u textures (freed %.0f MiB). "
+              "VRAM: %.0f->%.0f MiB (limit %.0f), "
+              "R32: %.0f->%.0f MiB (limit %.0f)\n",
+              evicted, freed / (1024.0 * 1024.0),
+              sd.total_vram / (1024.0 * 1024.0),
+              cur_vram / (1024.0 * 1024.0),
+              vram_limit / (1024.0 * 1024.0),
+              sd.total_r32 / (1024.0 * 1024.0),
+              cur_r32 / (1024.0 * 1024.0),
+              R32G32B32A32_BUDGET / (1024.0 * 1024.0));
 
-   mesa_logi("JUICE TEX GC: offenders %.0f MiB > budget %.0f MiB, "
-             "evicted %u (freed %.0f MiB)",
-             sd.total_offender_bytes / (1024.0 * 1024.0),
-             (double)OFFENDER_BUDGET_BYTES / (1024.0 * 1024.0),
-             evicted, freed / (1024.0 * 1024.0));
+      mesa_logi("JUICE TEX GC: evicted %u (freed %.0f MiB), "
+                "VRAM %.0f->%.0f/%.0f MiB, R32 %.0f->%.0f/%.0f MiB",
+                evicted, freed / (1024.0 * 1024.0),
+                sd.total_vram / (1024.0 * 1024.0),
+                cur_vram / (1024.0 * 1024.0),
+                vram_limit / (1024.0 * 1024.0),
+                sd.total_r32 / (1024.0 * 1024.0),
+                cur_r32 / (1024.0 * 1024.0),
+                R32G32B32A32_BUDGET / (1024.0 * 1024.0));
+   }
 
    free(sd.list);
 }

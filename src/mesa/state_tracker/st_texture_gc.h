@@ -4,9 +4,12 @@
 #include "main/mtypes.h"
 
 struct st_context;
+struct gl_texture_object;
+struct gl_texture_image;
 
 void st_texture_gc_free_if_over_limit(struct st_context *st,
-                                      struct gl_texture_object *keep);
+                                      struct gl_texture_object *keep,
+                                      const struct gl_texture_image *incoming);
 
 static inline void
 st_texture_gc_touch(struct gl_texture_object *tex)

@@ -43,6 +43,7 @@
 #include "st_context.h"
 #include "st_atom.h"
 #include "st_sampler_view.h"
+#include "st_texture_gc.h"
 #include "st_texture.h"
 #include "st_format.h"
 #include "st_cb_texture.h"
@@ -65,6 +66,8 @@ st_update_single_texture(struct st_context *st,
 
    texObj = ctx->Texture.Unit[texUnit]._Current;
    assert(texObj);
+
+   st_texture_gc_touch(texObj);
 
    GLenum target = texObj->Target;
 

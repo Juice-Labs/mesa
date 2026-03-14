@@ -983,6 +983,7 @@ st_AllocTextureImageBuffer(struct gl_context *ctx,
 
    st_texture_gc_free_if_over_limit(st, stObj);
 
+   st_texture_gc_touch(stObj);
    stObj->needs_validation = true;
 
    compressed_tex_fallback_allocate(st, stImage);

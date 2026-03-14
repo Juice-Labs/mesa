@@ -87,7 +87,7 @@ is_offending_texture(const struct gl_texture_object *tex, uint64_t size)
 struct offender_entry {
    struct gl_texture_object *tex;
    uint64_t size;
-   GLuint   name;
+   uint64_t stamp;
 };
 
 struct scan_data {
@@ -126,16 +126,16 @@ scan_callback(void *data, void *user)
    }
    sd->list[sd->count].tex = tex;
    sd->list[sd->count].size = size;
-   sd->list[sd->count].name = tex->Name;
+   sd->list[sd->count].stamp = tex->last_used_stamp;
    sd->count++;
 }
 
 static int
-cmp_by_name_asc(const void *a, const void *b)
+cmp_by_stamp_asc(const void *a, const void *b)
 {
    const struct offender_entry *ea = a;
    const struct offender_entry *eb = b;
-   return (ea->name > eb->name) - (ea->name < eb->name);
+   return (ea->stamp > eb->stamp) - (ea->stamp < eb->stamp);
 }
 
 static void
@@ -181,8 +181,8 @@ st_texture_gc_free_if_over_limit(struct st_context *st,
       return;
    }
 
-   /* Sort by name ascending — lowest names are oldest allocations. */
-   qsort(sd.list, sd.count, sizeof(sd.list[0]), cmp_by_name_asc);
+   /* Sort by stamp ascending — least recently used first. */
+   qsort(sd.list, sd.count, sizeof(sd.list[0]), cmp_by_stamp_asc);
 
    uint64_t to_free = sd.total_offender_bytes - OFFENDER_BUDGET_BYTES;
    uint64_t freed = 0;

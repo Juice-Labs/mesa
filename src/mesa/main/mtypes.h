@@ -1062,6 +1062,8 @@ struct gl_texture_object
      * the pipe_resource *pt above.
      */
     bool needs_validation;
+
+    uint64_t last_used_stamp;
 };
 
 

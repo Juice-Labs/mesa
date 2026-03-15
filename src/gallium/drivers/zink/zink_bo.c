@@ -34,6 +34,7 @@
 #include "zink_resource.h"
 #include "zink_screen.h"
 #include "util/u_hash_table.h"
+#include "util/log.h"
 
 #if !defined(__APPLE__) && !defined(_WIN32)
 #define ZINK_USE_DMABUF
@@ -146,6 +147,7 @@ bo_destroy(struct zink_screen *screen, struct pb_buffer *pbuf)
       zink_bo_unmap(screen, bo);
    }
 
+   mesa_logi("JUICE BO FREEMEM: bo=%p vkFreeMemory mem=%p size=%"PRIu64, (void*)bo, (void*)bo->mem, bo->base.size);
    VKSCR(FreeMemory)(screen->dev, bo->mem, NULL);
 
    simple_mtx_destroy(&bo->lock);
@@ -230,10 +232,15 @@ bo_destroy_or_cache(struct zink_screen *screen, struct pb_buffer *pbuf)
    bo->reads = NULL;
    bo->writes = NULL;
 
-   if (bo->u.real.use_reusable_pool)
+   if (bo->u.real.use_reusable_pool) {
+      mesa_logi("JUICE BO CACHE: bo=%p mem=%p size=%"PRIu64" -> cached (not freed)",
+                (void*)bo, (void*)bo->mem, bo->base.size);
       pb_cache_add_buffer(bo->cache_entry);
-   else
+   } else {
+      mesa_logi("JUICE BO FREE: bo=%p mem=%p size=%"PRIu64" -> destroying",
+                (void*)bo, (void*)bo->mem, bo->base.size);
       bo_destroy(screen, pbuf);
+   }
 }
 
 static const struct pb_vtbl bo_vtbl = {
@@ -283,8 +290,8 @@ bo_create_internal(struct zink_screen *screen,
       return NULL;
    }
 
-   /* all non-suballocated bo can cache */
-   init_pb_cache = !pNext;
+   /* JUICE: disable BO cache to avoid holding VkDeviceMemory after VkImage destroy */
+   init_pb_cache = false;
 
    if (!bo)
       bo = CALLOC(1, sizeof(struct zink_bo) + init_pb_cache * sizeof(struct pb_cache_entry));
@@ -647,15 +654,7 @@ no_slab:
       alignment = align(alignment, screen->info.props.limits.minMemoryMapAlignment);
    }
 
-   bool use_reusable_pool = !(flags & ZINK_ALLOC_NO_SUBALLOC);
-
-   if (use_reusable_pool) {
-       /* Get a buffer from the cache. */
-       bo = (struct zink_bo*)
-            pb_cache_reclaim_buffer(&screen->pb.bo_cache, size, alignment, 0, heap);
-       if (bo)
-          return &bo->base;
-   }
+   /* JUICE: BO cache disabled — skip cache lookup */
 
    /* Create a new one. */
    bo = bo_create_internal(screen, size, alignment, heap, flags, pNext);

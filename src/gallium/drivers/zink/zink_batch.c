@@ -1,5 +1,6 @@
 #include "zink_batch.h"
 #include "zink_context.h"
+#include "util/log.h"
 #include "zink_descriptors.h"
 #include "zink_framebuffer.h"
 #include "zink_kopper.h"
@@ -199,7 +200,10 @@ unref_resources(struct zink_screen *screen, struct zink_batch_state *bs)
          }
          simple_mtx_unlock(&obj->view_lock);
       }
-      /* this is typically where resource objects get destroyed */
+      if (!obj->is_buffer) {
+         mesa_logi("JUICE BATCH UNREF: obj=%p image=%p refcnt=%d",
+                   (void*)obj, (void*)obj->image, p_atomic_read(&obj->reference.count));
+      }
       zink_resource_object_reference(screen, &obj, NULL);
    }
    while (util_dynarray_contains(&bs->unref_semaphores, VkSemaphore))

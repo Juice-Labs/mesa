@@ -2219,17 +2219,23 @@ st_TexImage(struct gl_context * ctx, GLuint dims,
     * attach, CUDA interop).  This avoids VRAM consumption for textures
     * that the application defines but never renders with.
     */
-   if (!pixels && !texImage->TexObject->Immutable) {
+   {
       struct gl_texture_object *stObj = texImage->TexObject;
-      stObj->needs_validation = true;
-      if (stObj->pt) {
-         pipe_resource_reference(&stObj->pt, NULL);
-         st_texture_release_all_sampler_views(st_context(ctx), stObj);
-      }
-      mesa_logi("JUICE LAZY ALLOC: deferring tex name=%u %ux%ux%u level=%d",
+      bool can_defer = !pixels && !stObj->Immutable;
+      mesa_logi("JUICE TEX DECISION: name=%u %ux%ux%u level=%d pixels=%s immutable=%s -> %s",
                 stObj->Name, texImage->Width, texImage->Height,
-                texImage->Depth, texImage->Level);
-      return;
+                texImage->Depth, texImage->Level,
+                pixels ? "YES" : "NULL",
+                stObj->Immutable ? "YES" : "NO",
+                can_defer ? "DEFERRED" : "EAGER");
+      if (can_defer) {
+         stObj->needs_validation = true;
+         if (stObj->pt) {
+            pipe_resource_reference(&stObj->pt, NULL);
+            st_texture_release_all_sampler_views(st_context(ctx), stObj);
+         }
+         return;
+      }
    }
 
    /* allocate storage for texture data */
@@ -3332,6 +3338,12 @@ st_texture_storage(struct gl_context *ctx,
 
    if (!texObj->pt)
       return GL_FALSE;
+
+   mesa_logi("JUICE TEX STORAGE: name=%u %ux%ux%u levels=%d fmt=%u target=0x%x bind=0x%x samples=%u sparse=%d memObj=%s pt=%p",
+             texObj->Name, ptWidth, ptHeight, ptDepth, levels,
+             (unsigned)fmt, texObj->Target, bindings, num_samples,
+             texObj->IsSparse, memObj ? "YES" : "NO",
+             (void*)texObj->pt);
 
    /* Set image resource pointers */
    for (level = 0; level < levels; level++) {

@@ -34,7 +34,6 @@
 #include "util/format/u_format.h"
 
 #include <stdlib.h>
-#include <stdio.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -73,25 +72,20 @@ log_gpu_memory(struct st_context *st, const char *tag)
       uint64_t dev_avail_mb  = (uint64_t)mi.avail_device_memory / 1024;
       uint64_t stg_total_mb  = (uint64_t)mi.total_staging_memory / 1024;
       uint64_t stg_avail_mb  = (uint64_t)mi.avail_staging_memory / 1024;
-      fprintf(stderr, "[TEX GC] === Memory heap dump ===\n"
-              "[TEX GC]   Device (VRAM):   total=%llu MiB  avail=%llu MiB  used=%llu MiB\n"
-              "[TEX GC]   Staging (GART):  total=%llu MiB  avail=%llu MiB  used=%llu MiB\n"
-              "[TEX GC] ===========================\n",
-              (unsigned long long)dev_total_mb,
-              (unsigned long long)dev_avail_mb,
-              (unsigned long long)(dev_total_mb - dev_avail_mb),
-              (unsigned long long)stg_total_mb,
-              (unsigned long long)stg_avail_mb,
-              (unsigned long long)(stg_total_mb - stg_avail_mb));
+      mesa_logi("JUICE TEX GC: Device(VRAM) total=%llu avail=%llu used=%llu MiB; "
+                "Staging(GART) total=%llu avail=%llu used=%llu MiB",
+                (unsigned long long)dev_total_mb,
+                (unsigned long long)dev_avail_mb,
+                (unsigned long long)(dev_total_mb - dev_avail_mb),
+                (unsigned long long)stg_total_mb,
+                (unsigned long long)stg_avail_mb,
+                (unsigned long long)(stg_total_mb - stg_avail_mb));
    }
 
    uint64_t total_mb = (uint64_t)mi.total_device_memory / 1024;
    uint64_t avail_mb = (uint64_t)mi.avail_device_memory / 1024;
    uint64_t used_mb  = total_mb - avail_mb;
 
-   fprintf(stderr, "[TEX GC] %s GPU VRAM: %llu / %llu MiB used (%.0f%%)\n",
-           tag, (unsigned long long)used_mb, (unsigned long long)total_mb,
-           total_mb ? (used_mb * 100.0 / total_mb) : 0.0);
    mesa_logi("JUICE TEX GC: %s GPU VRAM: %llu / %llu MiB used (%.0f%%)",
              tag, (unsigned long long)used_mb, (unsigned long long)total_mb,
              total_mb ? (used_mb * 100.0 / total_mb) : 0.0);
@@ -109,13 +103,20 @@ is_3dexperience(void)
    if (cached >= 0)
       return cached;
 
+   const char *env = getenv("JUICE_TEXTURE_GC");
+   if (!env || env[0] != '1') {
+      cached = 0;
+      mesa_logi("JUICE TEX GC: disabled (set JUICE_TEXTURE_GC=1 to enable)");
+      return false;
+   }
+
    WCHAR path[MAX_PATH] = { 0 };
    GetModuleFileNameW(NULL, path, MAX_PATH);
    for (WCHAR *p = path; *p; p++)
       *p = towlower(*p);
    cached = (wcsstr(path, L"3dexperience") != NULL);
-   fprintf(stderr, "[TEX GC] is_3dexperience: path='%ls' result=%d\n",
-           path, cached);
+   mesa_logi("JUICE TEX GC: JUICE_TEXTURE_GC=1, is_3dexperience: path='%ls' result=%d",
+             path, cached);
    return cached;
 #else
    return false;
@@ -133,8 +134,8 @@ get_vram_limit(struct st_context *st)
    if (vram_mb <= 0)
       vram_mb = 4096;
    cached = (uint64_t)vram_mb * 1024 * 1024 * 3 / 4;  /* 75% */
-   fprintf(stderr, "[TEX GC] GPU VRAM: %d MiB, 75%% limit: %.0f MiB\n",
-           vram_mb, cached / (1024.0 * 1024.0));
+   mesa_logi("JUICE TEX GC: GPU VRAM: %d MiB, 75%% limit: %.0f MiB",
+             vram_mb, cached / (1024.0 * 1024.0));
    return cached;
 }
 
@@ -291,11 +292,11 @@ st_texture_gc_free_if_over_limit(struct st_context *st,
    }
 
    log_gpu_memory(st, "before-evict");
-   fprintf(stderr, "[TEX GC] triggers: over_vram=%d (gpu_used=%.0f MiB, limit=%.0f MiB) "
-           "over_r32=%d (r32_total=%.0f MiB, limit=%.0f MiB)\n",
-           over_vram, gpu_used / (1024.0 * 1024.0), vram_limit / (1024.0 * 1024.0),
-           over_r32, sd.total_r32 / (1024.0 * 1024.0),
-           R32G32B32A32_BUDGET / (1024.0 * 1024.0));
+   mesa_logi("JUICE TEX GC: triggers: over_vram=%d (gpu_used=%.0f MiB, limit=%.0f MiB) "
+             "over_r32=%d (r32_total=%.0f MiB, limit=%.0f MiB)",
+             over_vram, gpu_used / (1024.0 * 1024.0), vram_limit / (1024.0 * 1024.0),
+             over_r32, sd.total_r32 / (1024.0 * 1024.0),
+             R32G32B32A32_BUDGET / (1024.0 * 1024.0));
 
    qsort(sd.list, sd.count, sizeof(sd.list[0]), cmp_by_stamp_asc);
 
@@ -328,17 +329,6 @@ st_texture_gc_free_if_over_limit(struct st_context *st,
    }
 
    if (evicted > 0) {
-      fprintf(stderr, "[TEX GC] evicted %u textures (freed %.0f MiB). "
-              "GPU: %.0f->%.0f MiB (limit %.0f), "
-              "R32: %.0f->%.0f MiB (limit %.0f)\n",
-              evicted, freed / (1024.0 * 1024.0),
-              gpu_used / (1024.0 * 1024.0),
-              cur_gpu / (1024.0 * 1024.0),
-              vram_limit / (1024.0 * 1024.0),
-              sd.total_r32 / (1024.0 * 1024.0),
-              cur_r32 / (1024.0 * 1024.0),
-              R32G32B32A32_BUDGET / (1024.0 * 1024.0));
-
       mesa_logi("JUICE TEX GC: evicted %u (freed %.0f MiB), "
                 "GPU %.0f->%.0f/%.0f MiB, R32 %.0f->%.0f/%.0f MiB",
                 evicted, freed / (1024.0 * 1024.0),

@@ -3,8 +3,9 @@
  *
  * Two rules, both LRU eviction regardless of format:
  *
- * 1) 75% cap: if total texture VRAM > 75% of GPU memory, evict until
- *    we're back under 75%.
+ * 1) 75% cap: if actual GPU device memory usage > 75% (queried via
+ *    VK_EXT_memory_budget), evict until we're back under 75%.
+ *    This sees ALL device allocations (CUDA, Vulkan, GL, etc.).
  *
  * 2) R32G32B32A32_FLOAT reaping: when a large (>8 MiB) RGBA32F alloc
  *    comes in and total RGBA32F texture VRAM > 1 GiB, evict until
@@ -27,6 +28,7 @@
 #include "st_texture_gc.h"
 #include "pipe/p_defines.h"
 #include "pipe/p_screen.h"
+#include "pipe/p_state.h"
 #include "util/log.h"
 #include "util/u_inlines.h"
 #include "util/format/u_format.h"
@@ -38,6 +40,62 @@
 #include <windows.h>
 #include <wctype.h>
 #endif
+
+static uint64_t
+query_gpu_used_bytes(struct st_context *st)
+{
+   struct pipe_screen *screen = st->screen;
+   if (!screen->query_memory_info)
+      return 0;
+
+   struct pipe_memory_info mi;
+   screen->query_memory_info(screen, &mi);
+
+   uint64_t used_kb = (uint64_t)mi.total_device_memory -
+                      (uint64_t)mi.avail_device_memory;
+   return used_kb * 1024;
+}
+
+static void
+log_gpu_memory(struct st_context *st, const char *tag)
+{
+   struct pipe_screen *screen = st->screen;
+   if (!screen->query_memory_info)
+      return;
+
+   struct pipe_memory_info mi;
+   screen->query_memory_info(screen, &mi);
+
+   static bool first = true;
+   if (first) {
+      first = false;
+      uint64_t dev_total_mb  = (uint64_t)mi.total_device_memory / 1024;
+      uint64_t dev_avail_mb  = (uint64_t)mi.avail_device_memory / 1024;
+      uint64_t stg_total_mb  = (uint64_t)mi.total_staging_memory / 1024;
+      uint64_t stg_avail_mb  = (uint64_t)mi.avail_staging_memory / 1024;
+      fprintf(stderr, "[TEX GC] === Memory heap dump ===\n"
+              "[TEX GC]   Device (VRAM):   total=%llu MiB  avail=%llu MiB  used=%llu MiB\n"
+              "[TEX GC]   Staging (GART):  total=%llu MiB  avail=%llu MiB  used=%llu MiB\n"
+              "[TEX GC] ===========================\n",
+              (unsigned long long)dev_total_mb,
+              (unsigned long long)dev_avail_mb,
+              (unsigned long long)(dev_total_mb - dev_avail_mb),
+              (unsigned long long)stg_total_mb,
+              (unsigned long long)stg_avail_mb,
+              (unsigned long long)(stg_total_mb - stg_avail_mb));
+   }
+
+   uint64_t total_mb = (uint64_t)mi.total_device_memory / 1024;
+   uint64_t avail_mb = (uint64_t)mi.avail_device_memory / 1024;
+   uint64_t used_mb  = total_mb - avail_mb;
+
+   fprintf(stderr, "[TEX GC] %s GPU VRAM: %llu / %llu MiB used (%.0f%%)\n",
+           tag, (unsigned long long)used_mb, (unsigned long long)total_mb,
+           total_mb ? (used_mb * 100.0 / total_mb) : 0.0);
+   mesa_logi("JUICE TEX GC: %s GPU VRAM: %llu / %llu MiB used (%.0f%%)",
+             tag, (unsigned long long)used_mb, (unsigned long long)total_mb,
+             total_mb ? (used_mb * 100.0 / total_mb) : 0.0);
+}
 
 #define R32G32B32A32_BUDGET  (1ULL * 1024 * 1024 * 1024)
 #define BIG_R32_THRESHOLD    (8ULL * 1024 * 1024)
@@ -220,8 +278,9 @@ st_texture_gc_free_if_over_limit(struct st_context *st,
 
    _mesa_HashWalk(ctx->Shared->TexObjects, scan_callback, &sd);
 
-   /* Rule 1: total > 75% of GPU VRAM */
-   bool over_vram = sd.total_vram > vram_limit;
+   /* Rule 1: actual GPU device memory > 75% (includes CUDA, VK, etc.) */
+   uint64_t gpu_used = query_gpu_used_bytes(st);
+   bool over_vram = gpu_used > vram_limit;
 
    /* Rule 2: big R32 incoming and R32 total > 1 GiB */
    bool over_r32 = incoming_is_big_r32 && sd.total_r32 > R32G32B32A32_BUDGET;
@@ -231,31 +290,37 @@ st_texture_gc_free_if_over_limit(struct st_context *st,
       return;
    }
 
+   log_gpu_memory(st, "before-evict");
+   fprintf(stderr, "[TEX GC] triggers: over_vram=%d (gpu_used=%.0f MiB, limit=%.0f MiB) "
+           "over_r32=%d (r32_total=%.0f MiB, limit=%.0f MiB)\n",
+           over_vram, gpu_used / (1024.0 * 1024.0), vram_limit / (1024.0 * 1024.0),
+           over_r32, sd.total_r32 / (1024.0 * 1024.0),
+           R32G32B32A32_BUDGET / (1024.0 * 1024.0));
+
    qsort(sd.list, sd.count, sizeof(sd.list[0]), cmp_by_stamp_asc);
 
-   uint64_t cur_vram = sd.total_vram;
+   uint64_t cur_gpu = gpu_used;
    uint64_t cur_r32 = sd.total_r32;
    uint64_t freed = 0;
    unsigned evicted = 0;
 
    for (unsigned i = 0; i < sd.count; i++) {
-      /* Stop when both thresholds are satisfied */
-      bool vram_ok = cur_vram <= vram_limit;
+      bool vram_ok = cur_gpu <= vram_limit;
       bool r32_ok = !over_r32 || cur_r32 <= R32G32B32A32_BUDGET;
 
       if (over_vram && !over_r32) {
-         /* Rule 1 only: stop when VRAM is OK */
+         /* Rule 1 only: stop when GPU usage is OK */
          if (vram_ok) break;
       } else if (!over_vram && over_r32) {
-         /* Rule 2 only: stop when VRAM is OK OR R32 is OK */
-         if (vram_ok || r32_ok) break;
+         /* Rule 2 only: stop when R32 total is under budget */
+         if (r32_ok) break;
       } else {
-         /* Both rules: stop when VRAM is OK AND R32 is OK */
+         /* Both rules: stop when both are satisfied */
          if (vram_ok && r32_ok) break;
       }
 
       evict_texture(st, sd.list[i].tex);
-      cur_vram -= sd.list[i].size;
+      cur_gpu -= sd.list[i].size;
       if (sd.list[i].is_r32)
          cur_r32 -= sd.list[i].size;
       freed += sd.list[i].size;
@@ -264,25 +329,27 @@ st_texture_gc_free_if_over_limit(struct st_context *st,
 
    if (evicted > 0) {
       fprintf(stderr, "[TEX GC] evicted %u textures (freed %.0f MiB). "
-              "VRAM: %.0f->%.0f MiB (limit %.0f), "
+              "GPU: %.0f->%.0f MiB (limit %.0f), "
               "R32: %.0f->%.0f MiB (limit %.0f)\n",
               evicted, freed / (1024.0 * 1024.0),
-              sd.total_vram / (1024.0 * 1024.0),
-              cur_vram / (1024.0 * 1024.0),
+              gpu_used / (1024.0 * 1024.0),
+              cur_gpu / (1024.0 * 1024.0),
               vram_limit / (1024.0 * 1024.0),
               sd.total_r32 / (1024.0 * 1024.0),
               cur_r32 / (1024.0 * 1024.0),
               R32G32B32A32_BUDGET / (1024.0 * 1024.0));
 
       mesa_logi("JUICE TEX GC: evicted %u (freed %.0f MiB), "
-                "VRAM %.0f->%.0f/%.0f MiB, R32 %.0f->%.0f/%.0f MiB",
+                "GPU %.0f->%.0f/%.0f MiB, R32 %.0f->%.0f/%.0f MiB",
                 evicted, freed / (1024.0 * 1024.0),
-                sd.total_vram / (1024.0 * 1024.0),
-                cur_vram / (1024.0 * 1024.0),
+                gpu_used / (1024.0 * 1024.0),
+                cur_gpu / (1024.0 * 1024.0),
                 vram_limit / (1024.0 * 1024.0),
                 sd.total_r32 / (1024.0 * 1024.0),
                 cur_r32 / (1024.0 * 1024.0),
                 R32G32B32A32_BUDGET / (1024.0 * 1024.0));
+
+      log_gpu_memory(st, "after-evict");
    }
 
    free(sd.list);

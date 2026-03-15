@@ -66,6 +66,7 @@
 #include "state_tracker/st_atom.h"
 #include "state_tracker/st_sampler_view.h"
 #include "state_tracker/st_util.h"
+#include "util/log.h"
 
 #include "pipe/p_context.h"
 #include "pipe/p_defines.h"
@@ -2211,6 +2212,25 @@ st_TexImage(struct gl_context * ctx, GLuint dims,
 
    if (texImage->Width == 0 || texImage->Height == 0 || texImage->Depth == 0)
       return;
+
+   /* Defer GPU resource allocation when no pixel data is provided and the
+    * texture is mutable (not glTexStorage).  st_finalize_texture will
+    * create the pipe_resource on first actual use (draw, sample, FBO
+    * attach, CUDA interop).  This avoids VRAM consumption for textures
+    * that the application defines but never renders with.
+    */
+   if (!pixels && !texImage->TexObject->Immutable) {
+      struct gl_texture_object *stObj = texImage->TexObject;
+      stObj->needs_validation = true;
+      if (stObj->pt) {
+         pipe_resource_reference(&stObj->pt, NULL);
+         st_texture_release_all_sampler_views(st_context(ctx), stObj);
+      }
+      mesa_logi("JUICE LAZY ALLOC: deferring tex name=%u %ux%ux%u level=%d",
+                stObj->Name, texImage->Width, texImage->Height,
+                texImage->Depth, texImage->Level);
+      return;
+   }
 
    /* allocate storage for texture data */
    if (!st_AllocTextureImageBuffer(ctx, texImage)) {

@@ -38,6 +38,8 @@
 #include "main/format_utils.h"
 #include "state_tracker/st_context.h"
 #include "state_tracker/st_texture.h"
+#include "state_tracker/st_cb_texture.h"
+#include "state_tracker/st_format.h"
 
 #ifdef VK_USE_PLATFORM_METAL_EXT
 #include "QuartzCore/CAMetalLayer.h"
@@ -2540,8 +2542,60 @@ zink_cuda_recreate_gl_texture_for_export(uint32_t gl_texture_id, uint32_t gl_tar
 
    struct pipe_resource *pipe_res = st_get_texobj_resource(tex_obj);
    if (!pipe_res) {
-      if (error_msg) snprintf(error_msg, error_msg_size, "No pipe resource for GL texture %u", gl_texture_id);
-      return false;
+      /* Lazy-init texture -- create the exportable resource directly
+       * instead of materializing a non-exportable intermediate that
+       * add_resource_bind would immediately replace.
+       */
+      struct gl_texture_image *firstImage =
+         tex_obj->Image[0][tex_obj->Attrib.BaseLevel];
+      if (!firstImage) {
+         if (error_msg) snprintf(error_msg, error_msg_size,
+            "No base image for lazy GL texture %u", gl_texture_id);
+         return false;
+      }
+
+      enum pipe_format fmt =
+         st_mesa_format_to_pipe_format(st_ctx, firstImage->TexFormat);
+
+      struct pipe_resource templ;
+      memset(&templ, 0, sizeof(templ));
+      templ.target = gl_target_to_pipe(tex_obj->Target);
+      templ.format = fmt;
+      templ.width0 = firstImage->Width;
+      templ.height0 = firstImage->Height;
+      templ.depth0 = firstImage->Depth ? firstImage->Depth : 1;
+      templ.array_size = 1;
+      templ.last_level = 0;
+      templ.nr_samples = firstImage->NumSamples;
+      templ.nr_storage_samples = firstImage->NumSamples;
+      templ.bind = PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_RENDER_TARGET
+                 | PIPE_BIND_SHARED | ZINK_BIND_CUDA_EXPORT;
+
+      struct winsys_handle whandle;
+      memset(&whandle, 0, sizeof(whandle));
+      whandle.type = ZINK_EXTERNAL_MEMORY_HANDLE;
+      whandle.format = fmt;
+
+      pipe_res = resource_create(pipe_screen, &templ, &whandle,
+                                 0, NULL, 0, NULL, NULL);
+      if (!pipe_res) {
+         if (error_msg) snprintf(error_msg, error_msg_size,
+            "Failed to create exportable resource for lazy GL texture %u",
+            gl_texture_id);
+         return false;
+      }
+
+      struct zink_resource *zres = zink_resource(pipe_res);
+      zres->obj->exportable = true;
+
+      pipe_resource_reference(&tex_obj->pt, pipe_res);
+      pipe_resource_reference(&firstImage->pt, pipe_res);
+      pipe_resource_reference(&pipe_res, NULL);
+      pipe_res = tex_obj->pt;
+
+      tex_obj->needs_validation = false;
+      tex_obj->validated_first_level = tex_obj->Attrib.BaseLevel;
+      tex_obj->validated_last_level = tex_obj->lastLevel;
    }
 
    // Now recreate with export capabilities

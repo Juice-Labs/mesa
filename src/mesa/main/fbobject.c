@@ -54,6 +54,7 @@
 
 #include "util/u_memory.h"
 #include "state_tracker/st_cb_eglimage.h"
+#include "state_tracker/st_cb_texture.h"
 #include "state_tracker/st_context.h"
 #include "state_tracker/st_format.h"
 
@@ -512,9 +513,21 @@ driver_RenderTexture_is_safe(const struct gl_renderbuffer_attachment *att)
       att->Texture->Image[att->CubeMapFace][att->TextureLevel];
 
    if (!texImage ||
-       !texImage->pt ||
        texImage->Width == 0 || texImage->Height == 0 || texImage->Depth == 0)
       return false;
+
+   /* Lazy-init texture: force materialization now that it's being
+    * attached to an FBO -- it needs a real pipe_resource.
+    */
+   if (!texImage->pt) {
+      struct gl_context *ctx = _mesa_get_current_context();
+      if (ctx) {
+         struct st_context *st = st_context(ctx);
+         st_finalize_texture(ctx, st->pipe, att->Texture, 0);
+      }
+      if (!texImage->pt)
+         return false;
+   }
 
    if ((texImage->TexObject->Target == GL_TEXTURE_1D_ARRAY
         && att->Zoffset >= texImage->Height)

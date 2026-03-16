@@ -122,7 +122,6 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
    } else if (obj->dt) {
       zink_kopper_displaytarget_destroy(screen, obj->dt);
    } else if (!obj->is_aux) {
-      mesa_logi("JUICE DESTROY: vkDestroyImage image=%p obj=%p", (void*)obj->image, (void*)obj);
       VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
    } else {
 #if defined(ZINK_USE_DMABUF) && !defined(_WIN32)
@@ -134,7 +133,6 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
    if (obj->dt) {
       FREE(obj->bo); //this is a dummy struct
    } else {
-      mesa_logi("JUICE DESTROY: zink_bo_unref obj=%p bo_uid=%u", (void*)obj, obj->bo ? obj->bo->unique_id : 0);
       zink_bo_unref(screen, obj->bo);
    }
    FREE(obj);
@@ -146,12 +144,6 @@ zink_resource_destroy(struct pipe_screen *pscreen,
 {
    struct zink_screen *screen = zink_screen(pscreen);
    struct zink_resource *res = zink_resource(pres);
-   if (pres->target != PIPE_BUFFER && res->obj) {
-      mesa_logi("JUICE RESDESTROY: pipe_resource=%p target=%d %ux%u obj=%p obj_refcnt=%d image=%p",
-                (void*)pres, pres->target, pres->width0, pres->height0,
-                (void*)res->obj, p_atomic_read(&res->obj->reference.count),
-                (void*)res->obj->image);
-   }
    if (pres->target == PIPE_BUFFER) {
       util_range_destroy(&res->valid_buffer_range);
       util_idalloc_mt_free(&screen->buffer_ids, res->base.buffer_id_unique);

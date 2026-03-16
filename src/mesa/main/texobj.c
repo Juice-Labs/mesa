@@ -1601,10 +1601,6 @@ delete_textures(struct gl_context *ctx, GLsizei n, const GLuint *textures)
 
             st_texture_release_all_sampler_views(st_context(ctx), delObj);
 
-            mesa_logi("JUICE TEXDELETE: ctx=%p name=%u pt=%p refcnt=%d",
-                      (void*)ctx, textures[i], (void*)delObj->pt,
-                      delObj->pt ? p_atomic_read(&delObj->pt->reference.count) : -1);
-
             /* Unreference the texobj.  If refcount hits zero, the texture
              * will be deleted.
              */

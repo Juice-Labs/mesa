@@ -15,7 +15,33 @@
 #endif
 #include "wsi_common.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #define MAX_VIEW_COUNT 500
+
+/* #define JUICE_LEAK_MARKERS 1 */
+
+#if defined(_WIN32) && defined(JUICE_LEAK_MARKERS)
+static void
+juice_check_leak_markers(struct zink_context *ctx)
+{
+   static bool mark_active = false;
+
+   DWORD attr = GetFileAttributesA("C:\\temp\\juice_mark");
+   if (attr == INVALID_FILE_ATTRIBUTES)
+      return;
+
+   DeleteFileA("C:\\temp\\juice_mark");
+
+   mark_active = !mark_active;
+   if (mark_active)
+      mesa_logi("JUICE MARK: ctx=%p ===== START =====", (void*)ctx);
+   else
+      mesa_logi("JUICE MARK: ctx=%p ===== END =====", (void*)ctx);
+}
+#endif
 
 void
 debug_describe_zink_batch_state(char *buf, const struct zink_batch_state *ptr)
@@ -200,10 +226,12 @@ unref_resources(struct zink_screen *screen, struct zink_batch_state *bs)
          }
          simple_mtx_unlock(&obj->view_lock);
       }
+#ifdef JUICE_LEAK_MARKERS
       if (!obj->is_buffer) {
-         mesa_logi("JUICE BATCH UNREF: obj=%p image=%p refcnt=%d",
-                   (void*)obj, (void*)obj->image, p_atomic_read(&obj->reference.count));
+         mesa_logi("JUICE BATCH UNREF: ctx=%p obj=%p image=%p refcnt=%d",
+                   (void*)bs->ctx, (void*)obj, (void*)obj->image, p_atomic_read(&obj->reference.count));
       }
+#endif
       zink_resource_object_reference(screen, &obj, NULL);
    }
    while (util_dynarray_contains(&bs->unref_semaphores, VkSemaphore))
@@ -572,6 +600,9 @@ end:
 void
 zink_end_batch(struct zink_context *ctx, struct zink_batch *batch)
 {
+#if defined(_WIN32) && defined(JUICE_LEAK_MARKERS)
+   juice_check_leak_markers(ctx);
+#endif
    if (!ctx->queries_disabled)
       zink_suspend_queries(ctx, batch);
 

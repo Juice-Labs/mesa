@@ -207,6 +207,10 @@ _mesa_lookup_or_create_texture(struct gl_context *ctx, GLenum target,
 void
 _mesa_update_texture_object_swizzle(struct gl_context *ctx,
                                     struct gl_texture_object *texObj);
+
+extern void
+_mesa_catia_set_orphan_watch(GLuint trigger_name, GLuint orphan_name);
+
 /*@}*/
 
 #ifdef __cplusplus

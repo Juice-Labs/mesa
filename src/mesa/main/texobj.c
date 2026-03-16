@@ -46,6 +46,7 @@
 #include "texturebindless.h"
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
+#include "util/log.h"
 #include "api_exec_decl.h"
 
 #include "state_tracker/st_cb_texture.h"
@@ -1476,6 +1477,66 @@ unbind_textures_from_unit(struct gl_context *ctx, GLuint unit)
 }
 
 
+/*
+ * 3DExperience / stellar.dll RGBA32F orphan cleanup.
+ *
+ * stellar.dll creates four RGBA32F textures {N, N+1, N+2, N+3} where N+3 is
+ * the CUDA interop target.  On resize it deletes N+1, N+2, N+3 but never N,
+ * leaking ~56-128 MiB per cycle.
+ *
+ * The CUDA layer detects the resize via a memorySize change in
+ * cuGraphicsGLRegisterImage, then calls _mesa_catia_set_orphan_watch() with
+ * trigger = old_interop_image - 2  and  orphan = old_interop_image - 3.
+ * When glDeleteTextures processes the trigger name, we also force-delete
+ * the orphan.
+ */
+
+static GLuint s_stellar_trigger = 0;
+static GLuint s_stellar_orphan  = 0;
+
+void
+_mesa_catia_set_orphan_watch(GLuint trigger_name, GLuint orphan_name)
+{
+   s_stellar_trigger = trigger_name;
+   s_stellar_orphan  = orphan_name;
+   mesa_logi("JUICE STELLAR WATCH: trigger=%u orphan=%u", trigger_name, orphan_name);
+}
+
+static void
+stellar_try_autodelete(struct gl_context *ctx, GLuint deleted_name)
+{
+   if (s_stellar_trigger == 0 || deleted_name != s_stellar_trigger)
+      return;
+
+   GLuint orphan_name = s_stellar_orphan;
+   s_stellar_trigger = 0;
+   s_stellar_orphan  = 0;
+
+   struct gl_texture_object *obj = _mesa_lookup_texture(ctx, orphan_name);
+   if (!obj)
+      return;
+
+   mesa_logi("JUICE STELLAR AUTODELETE: ctx=%p name=%u %ux%u pt=%p (trigger=%u deleted)",
+             (void*)ctx, orphan_name,
+             obj->pt ? obj->pt->width0 : 0,
+             obj->pt ? obj->pt->height0 : 0,
+             (void*)obj->pt, deleted_name);
+
+   _mesa_lock_texture(ctx, obj);
+   unbind_texobj_from_fbo(ctx, obj);
+   unbind_texobj_from_texunits(ctx, obj);
+   unbind_texobj_from_image_units(ctx, obj);
+   _mesa_make_texture_handles_non_resident(ctx, obj);
+   _mesa_unlock_texture(ctx, obj);
+
+   ctx->NewState |= _NEW_TEXTURE_OBJECT;
+   ctx->PopAttribState |= GL_TEXTURE_BIT;
+
+   _mesa_HashRemove(ctx->Shared->TexObjects, obj->Name);
+   st_texture_release_all_sampler_views(st_context(ctx), obj);
+   _mesa_reference_texobj(&obj, NULL);
+}
+
 /**
  * Delete named textures.
  *
@@ -1540,10 +1601,16 @@ delete_textures(struct gl_context *ctx, GLsizei n, const GLuint *textures)
 
             st_texture_release_all_sampler_views(st_context(ctx), delObj);
 
+            mesa_logi("JUICE TEXDELETE: ctx=%p name=%u pt=%p refcnt=%d",
+                      (void*)ctx, textures[i], (void*)delObj->pt,
+                      delObj->pt ? p_atomic_read(&delObj->pt->reference.count) : -1);
+
             /* Unreference the texobj.  If refcount hits zero, the texture
              * will be deleted.
              */
             _mesa_reference_texobj(&delObj, NULL);
+
+            stellar_try_autodelete(ctx, textures[i]);
          }
       }
    }

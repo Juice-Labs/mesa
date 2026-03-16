@@ -134,7 +134,7 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
    if (obj->dt) {
       FREE(obj->bo); //this is a dummy struct
    } else {
-      mesa_logi("JUICE DESTROY: zink_bo_unref obj=%p bo=%p bo_mem=%p", (void*)obj, (void*)obj->bo, obj->bo ? (void*)obj->bo->mem : NULL);
+      mesa_logi("JUICE DESTROY: zink_bo_unref obj=%p bo_uid=%u", (void*)obj, obj->bo ? obj->bo->unique_id : 0);
       zink_bo_unref(screen, obj->bo);
    }
    FREE(obj);
@@ -1356,8 +1356,11 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
    res->obj->access_stage = 0;
    bool needs_unref = true;
    if (zink_resource_has_usage(res)) {
-      zink_batch_reference_resource_move(&ctx->batch, res);
-      needs_unref = false;
+      /* _move returns true if the batch already tracked old_obj (no-op move),
+       * in which case we still need to drop the resource's own reference.
+       * Only when _move returns false was the reference actually transferred.
+       */
+      needs_unref = zink_batch_reference_resource_move(&ctx->batch, res);
    }
    res->obj = new_obj;
 
@@ -1723,7 +1726,11 @@ invalidate_buffer(struct zink_context *ctx, struct zink_resource *res)
       return false;
    }
    /* this ref must be transferred before rebind or else BOOM */
-   zink_batch_reference_resource_move(&ctx->batch, res);
+   struct zink_resource_object *old_obj = res->obj;
+   if (zink_batch_reference_resource_move(&ctx->batch, res)) {
+      /* batch already tracked old_obj — drop the resource's own reference */
+      zink_resource_object_reference(screen, &old_obj, NULL);
+   }
    res->obj = new_obj;
    zink_resource_rebind(ctx, res);
    return true;
@@ -2945,4 +2952,19 @@ zink_cuda_wait_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
    if (error_msg) snprintf(error_msg, error_msg_size, "Platform not supported");
    return false;
 #endif
+}
+
+/*
+ * Called from the CUDA interop layer when cuGraphicsGLRegisterImage detects
+ * a memorySize change (viewport resolution transition).  Sets a watch so that
+ * when glDeleteTextures processes trigger_name, the orphan is also deleted.
+ */
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_set_stellar_orphan_watch(uint32_t trigger_name, uint32_t orphan_name)
+{
+   _mesa_catia_set_orphan_watch((GLuint)trigger_name, (GLuint)orphan_name);
+   return true;
 }

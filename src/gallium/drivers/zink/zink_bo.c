@@ -36,6 +36,33 @@
 #include "util/u_hash_table.h"
 #include "util/log.h"
 
+#ifdef _WIN32
+#include <windows.h>
+typedef uint64_t (*PFN_juice_get_memory_uuid)(VkDeviceMemory);
+static PFN_juice_get_memory_uuid pfn_juice_get_memory_uuid;
+static bool juice_uuid_resolved = false;
+
+static uint64_t get_mem_uuid(VkDeviceMemory mem, PFN_vkVoidFunction any_icd_func)
+{
+   if (!juice_uuid_resolved) {
+      juice_uuid_resolved = true;
+      HMODULE hMod = NULL;
+      if (any_icd_func)
+         GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCSTR)any_icd_func, &hMod);
+      if (hMod)
+         pfn_juice_get_memory_uuid = (PFN_juice_get_memory_uuid)
+            GetProcAddress(hMod, "juice_get_memory_uuid");
+   }
+   if (pfn_juice_get_memory_uuid && mem)
+      return pfn_juice_get_memory_uuid(mem);
+   return 0;
+}
+#else
+static uint64_t get_mem_uuid(VkDeviceMemory mem, PFN_vkVoidFunction f) { (void)f; return 0; }
+#endif
+
 #if !defined(__APPLE__) && !defined(_WIN32)
 #define ZINK_USE_DMABUF
 #include <xf86drm.h>
@@ -147,7 +174,10 @@ bo_destroy(struct zink_screen *screen, struct pb_buffer *pbuf)
       zink_bo_unmap(screen, bo);
    }
 
-   mesa_logi("JUICE BO FREEMEM: bo=%p vkFreeMemory mem=%p size=%"PRIu64, (void*)bo, (void*)bo->mem, bo->base.size);
+   mesa_logi("JUICE BO FREEMEM: uid=%u muuid=%"PRIu64" size=%"PRIu64,
+             bo->unique_id,
+             get_mem_uuid(bo->mem, (PFN_vkVoidFunction)screen->vk.AllocateMemory),
+             bo->base.size);
    VKSCR(FreeMemory)(screen->dev, bo->mem, NULL);
 
    simple_mtx_destroy(&bo->lock);
@@ -233,12 +263,10 @@ bo_destroy_or_cache(struct zink_screen *screen, struct pb_buffer *pbuf)
    bo->writes = NULL;
 
    if (bo->u.real.use_reusable_pool) {
-      mesa_logi("JUICE BO CACHE: bo=%p mem=%p size=%"PRIu64" -> cached (not freed)",
-                (void*)bo, (void*)bo->mem, bo->base.size);
+      mesa_logi("JUICE BO CACHE: uid=%u size=%"PRIu64, bo->unique_id, bo->base.size);
       pb_cache_add_buffer(bo->cache_entry);
    } else {
-      mesa_logi("JUICE BO FREE: bo=%p mem=%p size=%"PRIu64" -> destroying",
-                (void*)bo, (void*)bo->mem, bo->base.size);
+      mesa_logi("JUICE BO FREE: uid=%u size=%"PRIu64, bo->unique_id, bo->base.size);
       bo_destroy(screen, pbuf);
    }
 }
@@ -325,6 +353,11 @@ bo_create_internal(struct zink_screen *screen,
    bo->base.usage = flags;
    bo->unique_id = p_atomic_inc_return(&screen->pb.next_bo_unique_id);
    bo->heap = heap;
+
+   mesa_logi("JUICE BO ALLOC: uid=%u muuid=%"PRIu64" size=%"PRIu64" heap=%u",
+             bo->unique_id,
+             get_mem_uuid(bo->mem, (PFN_vkVoidFunction)screen->vk.AllocateMemory),
+             bo->base.size, heap);
 
    return bo;
 

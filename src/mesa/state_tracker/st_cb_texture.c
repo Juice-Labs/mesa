@@ -2222,8 +2222,8 @@ st_TexImage(struct gl_context * ctx, GLuint dims,
    {
       struct gl_texture_object *stObj = texImage->TexObject;
       bool can_defer = !pixels && !stObj->Immutable;
-      mesa_logi("JUICE TEX DECISION: name=%u %ux%ux%u level=%d pixels=%s immutable=%s -> %s",
-                stObj->Name, texImage->Width, texImage->Height,
+      mesa_logi("JUICE TEX DECISION: ctx=%p name=%u %ux%ux%u level=%d pixels=%s immutable=%s -> %s",
+                (void*)ctx, stObj->Name, texImage->Width, texImage->Height,
                 texImage->Depth, texImage->Level,
                 pixels ? "YES" : "NULL",
                 stObj->Immutable ? "YES" : "NO",
@@ -2244,6 +2244,15 @@ st_TexImage(struct gl_context * ctx, GLuint dims,
                   dims, _mesa_enum_to_string(texImage->InternalFormat));
 
       return;
+   }
+
+   {
+      struct gl_texture_object *stObj = texImage->TexObject;
+      mesa_logi("JUICE TEX IMAGE: ctx=%p name=%u %ux%ux%u level=%d fmt=0x%x target=0x%x pt=%p obj_pt=%p",
+                (void*)ctx, stObj->Name, texImage->Width, texImage->Height,
+                texImage->Depth, texImage->Level,
+                (unsigned)texImage->InternalFormat, stObj->Target,
+                (void*)texImage->pt, (void*)stObj->pt);
    }
 
    st_TexSubImage(ctx, dims, texImage, 0, 0, 0,
@@ -3129,6 +3138,10 @@ st_finalize_texture(struct gl_context *ctx,
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "glTexImage");
          return GL_FALSE;
       }
+
+      mesa_logi("JUICE TEX FINALIZE: ctx=%p name=%u %ux%ux%u lastLevel=%d fmt=%u target=0x%x pt=%p",
+                (void*)ctx, tObj->Name, ptWidth, ptHeight, ptDepth, tObj->lastLevel,
+                (unsigned)firstImageFormat, tObj->Target, (void*)tObj->pt);
    }
 
    /* Pull in any images not in the object's texture:
@@ -3339,8 +3352,8 @@ st_texture_storage(struct gl_context *ctx,
    if (!texObj->pt)
       return GL_FALSE;
 
-   mesa_logi("JUICE TEX STORAGE: name=%u %ux%ux%u levels=%d fmt=%u target=0x%x bind=0x%x samples=%u sparse=%d memObj=%s pt=%p",
-             texObj->Name, ptWidth, ptHeight, ptDepth, levels,
+   mesa_logi("JUICE TEX STORAGE: ctx=%p name=%u %ux%ux%u levels=%d fmt=%u target=0x%x bind=0x%x samples=%u sparse=%d memObj=%s pt=%p",
+             (void*)ctx, texObj->Name, ptWidth, ptHeight, ptDepth, levels,
              (unsigned)fmt, texObj->Target, bindings, num_samples,
              texObj->IsSparse, memObj ? "YES" : "NO",
              (void*)texObj->pt);

@@ -45,6 +45,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+extern HMODULE mesa_juice_load_remote_gpu_vlk(void);
 #endif
 
 // Wine/Juice logging support - similar to vkd3d and dxvk
@@ -62,16 +63,9 @@ init_juice_logging(void)
       return;
       
 #if defined(_WIN32)
-   // Try to get juice logging from RemoteGPUVlk.dll
-   const char* juiceLib = "RemoteGPUVlk.dll";
-   HMODULE juicevlk = LoadLibraryA(juiceLib);
+   HMODULE juicevlk = mesa_juice_load_remote_gpu_vlk();
    if (juicevlk)
       juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
-
-   if (!juice_log_output) {
-      MessageBoxA(NULL, "Juice logging is not available (RemoteGPUVlk.dll not loaded or __wine_dbg_output not found).", "Mesa Error", MB_OK | MB_ICONWARNING);
-   }
-   
 #endif
    
    juice_log_initialized = 1;

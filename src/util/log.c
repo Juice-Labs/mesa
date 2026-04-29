@@ -42,6 +42,76 @@
 
 #if DETECT_OS_WINDOWS
 #include <windows.h>
+#include <wchar.h>
+
+/* Load RemoteGPUVlk.dll the same way as KnownPaths (shim dir / graphics / DLL). */
+HMODULE
+mesa_juice_load_remote_gpu_vlk(void)
+{
+   static HMODULE s_mod;
+   static int s_tried;
+   if (s_tried)
+      return s_mod;
+   s_tried = 1;
+
+   s_mod = GetModuleHandleA("RemoteGPUVlk.dll");
+   if (s_mod)
+      return s_mod;
+
+   s_mod = LoadLibraryA("RemoteGPUVlk.dll");
+   if (s_mod)
+      return s_mod;
+
+   {
+      HMODULE self = NULL;
+      static int s_addr_cookie;
+      if (!GetModuleHandleExA(
+             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+             (LPCSTR)&s_addr_cookie, &self))
+         return NULL;
+
+      wchar_t module_path[MAX_PATH + 1];
+      if (!GetModuleFileNameW(self, module_path, MAX_PATH))
+         return NULL;
+      module_path[MAX_PATH] = 0;
+
+      /* Directory containing this DLL (e.g. .../graphics) */
+      {
+         wchar_t *last = wcsrchr(module_path, L'\\');
+         if (!last)
+            last = wcsrchr(module_path, L'/');
+         if (!last)
+            return NULL;
+         *last = 0;
+      }
+
+      /* If that folder is x86, compute, or graphics, use parent (install root). */
+      {
+         wchar_t *last = wcsrchr(module_path, L'\\');
+         if (!last)
+            last = wcsrchr(module_path, L'/');
+         const wchar_t *leaf = last ? last + 1 : module_path;
+         if (!_wcsicmp(leaf, L"x86") || !_wcsicmp(leaf, L"compute") ||
+             !_wcsicmp(leaf, L"graphics")) {
+            if (last)
+               *last = 0;
+         }
+      }
+
+      {
+         wchar_t full_path[MAX_PATH + 40];
+         const wchar_t *suffix = L"\\graphics\\RemoteGPUVlk.dll";
+         size_t n = wcslen(module_path);
+         size_t slen = wcslen(suffix);
+         if (n + slen + 1 > sizeof(full_path) / sizeof(full_path[0]))
+            return NULL;
+         memcpy(full_path, module_path, n * sizeof(wchar_t));
+         memcpy(full_path + n, suffix, (slen + 1) * sizeof(wchar_t));
+         s_mod = LoadLibraryW(full_path);
+      }
+   }
+   return s_mod;
+}
 
 /* Wine/Juice logging support - similar to vkd3d and dxvk */
 typedef int (*PFN_juice_log)(const char *);
@@ -53,17 +123,13 @@ init_juice_logging(void)
 {
    if (juice_log_initialized)
       return;
-
-   /* Try to get juice logging from RemoteGPUVlk.dll */
-   const char* juiceLib = "RemoteGPUVlk.dll";
-   HMODULE juicevlk = LoadLibraryA(juiceLib);
+      
+#if defined(_WIN32)
+   HMODULE juicevlk = mesa_juice_load_remote_gpu_vlk();
    if (juicevlk)
       juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
-
-   if (!juice_log_output) {
-      MessageBoxA(NULL, "Juice logging is not available (RemoteGPUVlk.dll not loaded or __wine_dbg_output not found).", "Mesa Log Error", MB_OK | MB_ICONWARNING);
-   }
-
+#endif
+   
    juice_log_initialized = 1;
 }
 #endif

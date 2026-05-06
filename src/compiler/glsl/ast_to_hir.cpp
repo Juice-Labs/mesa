@@ -384,6 +384,63 @@ apply_implicit_conversion(const glsl_type *to, ir_rvalue * &from,
 }
 
 
+/**
+ * JUICE: Permissive coercion of an if/while/for/do-while/?: condition to bool.
+ *
+ * Mesa's GLSL frontend strictly requires scalar-bool conditions. NVIDIA's
+ * proprietary GLSL compiler is much more lenient and silently treats any
+ * scalar numeric expression as `expr != 0`. A number of real-world shaders
+ * (Autodesk VRED's OpenSG raytracer fragment program among them) rely on
+ * that behaviour, so without this coercion they fail to compile on the Juice
+ * client (Mesa/zink). For non-scalar (vector/matrix) conditions we leave the
+ * value untouched so the caller still emits the spec-mandated error -- NVIDIA
+ * rejects those too.
+ */
+static ir_rvalue *
+juice_coerce_condition_to_bool(void *ctx, ir_rvalue *condition)
+{
+   const bool is_bool   = condition->type->is_boolean();
+   const bool is_scalar = condition->type->is_scalar();
+   const bool is_num    = condition->type->is_numeric();
+   const bool needs_coerce = !is_bool && is_scalar && is_num;
+
+   if (!needs_coerce)
+      return condition;
+
+   switch (condition->type->base_type) {
+   case GLSL_TYPE_INT:
+   case GLSL_TYPE_INT8:
+   case GLSL_TYPE_INT16:
+      return new(ctx) ir_expression(ir_unop_i2b, glsl_type::bool_type,
+                                    condition, NULL);
+   case GLSL_TYPE_UINT:
+   case GLSL_TYPE_UINT8:
+   case GLSL_TYPE_UINT16:
+      return new(ctx) ir_expression(ir_unop_i2b,
+                                    new(ctx) ir_expression(ir_unop_u2i,
+                                                           condition));
+   case GLSL_TYPE_FLOAT:
+      return new(ctx) ir_expression(ir_unop_f2b, glsl_type::bool_type,
+                                    condition, NULL);
+   case GLSL_TYPE_FLOAT16:
+      return new(ctx) ir_expression(ir_unop_f162b, glsl_type::bool_type,
+                                    condition, NULL);
+   case GLSL_TYPE_DOUBLE:
+      return new(ctx) ir_expression(ir_unop_d2b, glsl_type::bool_type,
+                                    condition, NULL);
+   case GLSL_TYPE_INT64:
+      return new(ctx) ir_expression(ir_unop_i642b, glsl_type::bool_type,
+                                    condition, NULL);
+   case GLSL_TYPE_UINT64:
+      return new(ctx) ir_expression(ir_unop_i642b,
+                                    new(ctx) ir_expression(ir_unop_u642i64,
+                                                           condition));
+   default:
+      return condition;
+   }
+}
+
+
 static const struct glsl_type *
 arithmetic_result_type(ir_rvalue * &value_a, ir_rvalue * &value_b,
                        bool multiply,
@@ -1783,17 +1840,21 @@ ast_expression::do_hir(exec_list *instructions,
       if (error_emitted) {
          result = new(ctx) ir_constant(false);
       } else {
-         /* For vector operands, use component-wise comparison operations that
-          * return vector results, matching native hardware behavior.
-          * For scalar operands, use the traditional all_equal/any_nequal.
+         /* JUICE: GLSL spec (1.10 §5.9 onwards) requires the binary `==' and
+          * `!=' operators to produce a *scalar* bool regardless of whether the
+          * operands are scalars or vectors (component-wise comparisons are
+          * what `equal()'/`notEqual()' built-ins are for). A previous local
+          * customization here forced `==`/`!=` on vectors to use the
+          * component-wise IR opcodes (returning bvec), with the comment
+          * "matching native hardware behavior". That is incorrect — the
+          * hardware indeed does component-wise compares, but GLSL semantics
+          * require an all/any reduction afterwards, which is exactly what
+          * ir_binop_all_equal / ir_binop_any_nequal model. Reverting to the
+          * upstream-Mesa behaviour also fixes real-world shaders such as
+          * VRED's OpenSG raytracer, which relies on `if (uvec2 != uvec2)'.
           */
-         if (op[0]->type->is_vector()) {
-            int vector_op = (this->oper == ast_equal) ? ir_binop_equal : ir_binop_nequal;
-            result = new(ctx) ir_expression(vector_op, op[0], op[1]);
-         } else {
-            result = do_comparison(ctx, operations[this->oper], op[0], op[1]);
-            assert(result->type == glsl_type::bool_type);
-         }
+         result = do_comparison(ctx, operations[this->oper], op[0], op[1]);
+         assert(result->type == glsl_type::bool_type);
       }
       break;
 
@@ -6885,7 +6946,7 @@ ast_selection_statement::hir(exec_list *instructions,
 {
    void *ctx = state;
 
-   ir_rvalue *const condition = this->condition->hir(instructions, state);
+   ir_rvalue *condition = this->condition->hir(instructions, state);
 
    /* From page 66 (page 72 of the PDF) of the GLSL 1.50 spec:
     *
@@ -6895,7 +6956,14 @@ ast_selection_statement::hir(exec_list *instructions,
     *
     * The checks are separated so that higher quality diagnostics can be
     * generated for cases where both rules are violated.
+    *
+    * JUICE: see juice_coerce_condition_to_bool() — we silently promote scalar
+    * numeric expressions to bool here to match NVIDIA's permissive behaviour
+    * (real-world shaders, e.g. VRED's OpenSG raytracer fragment program,
+    * depend on it).
     */
+   condition = juice_coerce_condition_to_bool(ctx, condition);
+
    if (!condition->type->is_boolean() || !condition->type->is_scalar()) {
       YYLTYPE loc = this->condition->get_location();
 
@@ -7360,8 +7428,14 @@ ast_iteration_statement::condition_to_hir(exec_list *instructions,
    void *ctx = state;
 
    if (condition != NULL) {
-      ir_rvalue *const cond =
+      ir_rvalue *cond =
          condition->hir(instructions, state);
+
+      /* JUICE: same NVIDIA-permissive scalar-numeric -> bool coercion as the
+       * if-statement path; see juice_coerce_condition_to_bool().
+       */
+      if (cond != NULL)
+         cond = juice_coerce_condition_to_bool(ctx, cond);
 
       if ((cond == NULL)
           || !cond->type->is_boolean() || !cond->type->is_scalar()) {

@@ -3490,6 +3490,27 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
       goto fail;
    }
 
+   screen->instance_info.loader_version = VK_API_VERSION_1_1;
+
+   /* Bump loader_version to whatever the loader/ICD actually supports so
+    * info.have_vulkan12 / info.have_vulkan13 reflect reality and the
+    * matching Vulkan11/12/13Features chains get queried. Without this the
+    * version stays pinned at 1.1, which silently disables several feature
+    * paths that gate GL 4.6 in compute_version. */
+   {
+      PFN_vkEnumerateInstanceVersion enumerate_instance_version =
+         (PFN_vkEnumerateInstanceVersion)screen->vk_GetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion");
+      if (enumerate_instance_version) {
+         uint32_t loader_version = VK_API_VERSION_1_0;
+         if (enumerate_instance_version(&loader_version) == VK_SUCCESS &&
+             loader_version > screen->instance_info.loader_version) {
+            /* Cap at 1.3 since that's the highest VERSIONS entry we model. */
+            uint32_t capped = MIN2(loader_version, VK_API_VERSION_1_3);
+            screen->instance_info.loader_version = capped;
+         }
+      }
+   }
+
    if (config) {
       driParseConfigFiles(config->options, config->options_info,
                           &(driConfigFileParseParams) { .driverName = "zink" });

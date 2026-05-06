@@ -3080,6 +3080,31 @@ emit_get_ssbo_size(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    store_def(ctx, intr->def.index, result, nir_type_uint);
 }
 
+/* Resolve the SPIR-V image type to use for an image_deref_* intrinsic.
+ *
+ * For non-bindless images (including regular arrays of images) we use the
+ * per-driver_location ctx->image_types[] cache populated by emit_image().
+ *
+ * For bindless images we cannot use the cache: the user-visible bindless
+ * variable is rewritten by zink_compiler.c into a synthetic "container"
+ * variable of type image[ZINK_MAX_BINDLESS_HANDLES], and multiple such
+ * containers can share one driver_location/binding when the shader uses
+ * heterogeneous bindless image types (e.g. image2D + image3D both mapping
+ * to VK_DESCRIPTOR_TYPE_STORAGE_IMAGE). emit_image() deliberately skips
+ * populating image_types[] for those, so we resolve the type directly
+ * from the variable's GLSL type, which is what the legacy var->data.bindless
+ * code path already did for ARB_bindless_texture user variables. */
+static SpvId
+get_image_type_for_deref(struct ntv_context *ctx, struct nir_variable *var)
+{
+   bool is_bindless_container = glsl_type_is_array(var->type) &&
+                                glsl_get_length(var->type) == 1024 /* ZINK_MAX_BINDLESS_HANDLES */ &&
+                                glsl_type_is_image(glsl_without_array(var->type));
+   if (var->data.bindless || is_bindless_container)
+      return get_bare_image_type(ctx, var, false);
+   return ctx->image_types[var->data.driver_location];
+}
+
 static SpvId
 get_image_coords(struct ntv_context *ctx, const struct glsl_type *type, nir_src *src)
 {
@@ -3116,6 +3141,7 @@ emit_image_deref_store(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    SpvId img_var = get_src(ctx, &intr->src[0], &atype);
    nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
    nir_variable *var = find_vulkan_deref_var(ctx, deref);
+   SpvId img_type = get_image_type_for_deref(ctx, var);
    const struct glsl_type *type = glsl_without_array(var->type);
    SpvId base_type = get_glsl_basetype(ctx, glsl_get_sampler_result_type(type));
    SpvId coord = get_image_coords(ctx, type, &intr->src[1]);
@@ -3185,6 +3211,7 @@ emit_image_deref_load(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
    nir_variable *var = find_vulkan_deref_var(ctx, deref);
    bool mediump = (var->data.precision == GLSL_PRECISION_MEDIUM || var->data.precision == GLSL_PRECISION_LOW);
+   SpvId img_type = get_image_type_for_deref(ctx, var);
    const struct glsl_type *type = glsl_without_array(var->type);
    SpvId base_type = get_glsl_basetype(ctx, glsl_get_sampler_result_type(type));
    SpvId coord = get_image_coords(ctx, type, &intr->src[1]);
@@ -3226,7 +3253,7 @@ emit_image_deref_size(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    SpvId img_var = get_src(ctx, &intr->src[0], &atype);
    nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
    nir_variable *var = find_vulkan_deref_var(ctx, deref);
-   SpvId img_type = find_image_type(ctx, var);
+   SpvId img_type = get_image_type_for_deref(ctx, var);
    const struct glsl_type *type = glsl_without_array(var->type);
    SpvId img = spirv_builder_emit_load(&ctx->builder, img_type, img_var, false);
    unsigned num_components = glsl_get_sampler_coordinate_components(type);
@@ -3246,8 +3273,8 @@ emit_image_deref_samples(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    SpvId img_var = get_src(ctx, &intr->src[0], &atype);
    nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
    nir_variable *var = find_vulkan_deref_var(ctx, deref);
-   SpvId img_type = find_image_type(ctx, var);
    SpvId img = spirv_builder_emit_load(&ctx->builder, img_type, img_var, false);
+   SpvId img_type = get_image_type_for_deref(ctx, var);
 
    spirv_builder_emit_cap(&ctx->builder, SpvCapabilityImageQuery);
    SpvId result = spirv_builder_emit_unop(&ctx->builder, SpvOpImageQuerySamples, get_def_type(ctx, &intr->def, nir_type_uint), img);

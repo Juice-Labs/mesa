@@ -4543,37 +4543,112 @@ analyze_io(struct zink_shader *zs, nir_shader *shader)
    return ret;
 }
 
+/* A shader can use bindless samplers/images of multiple SPIR-V image types
+ * (e.g. sampler2D and samplerCube) that all map to the same Vulkan descriptor
+ * type (here, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER). For correct SPIR-V
+ * we need a separate container nir_variable per distinct leaf image type,
+ * each emitting its own SPIR-V image variable but aliasing the same Vulkan
+ * descriptor set + binding (descriptor aliasing is allowed for descriptors of
+ * matching VkDescriptorType).
+ *
+ * Containers are tracked per Vulkan descriptor type binding (0..3). 8 slots
+ * is plenty for all real-world shaders.
+ */
+#define ZINK_BINDLESS_MAX_ALIASES 8
+
 struct zink_bindless_info {
+   /* containers[binding][i] -> nir_variable*, all sharing data.descriptor_set
+    * and data.binding == binding. Index 0 in each binding is the "primary"
+    * (kept as bindless[binding] for back-compat with callers that look up by
+    * binding without caring about type).
+    */
+   nir_variable *containers[4][ZINK_BINDLESS_MAX_ALIASES];
+   unsigned container_count[4];
+   /* Convenience: first container per binding (== containers[binding][0]). */
    nir_variable *bindless[4];
    unsigned bindless_set;
 };
 
+static bool
+sampler_image_leaves_match(const struct glsl_type *a, const struct glsl_type *b)
+{
+   if (a == b)
+      return true;
+   if (glsl_type_is_sampler(a) != glsl_type_is_sampler(b))
+      return false;
+   if (glsl_type_is_image(a) != glsl_type_is_image(b))
+      return false;
+   if (glsl_get_sampler_dim(a) != glsl_get_sampler_dim(b))
+      return false;
+   if (glsl_sampler_type_is_array(a) != glsl_sampler_type_is_array(b))
+      return false;
+   if (glsl_type_is_sampler(a) &&
+       glsl_sampler_type_is_shadow(a) != glsl_sampler_type_is_shadow(b))
+      return false;
+   if (glsl_get_sampler_result_type(a) != glsl_get_sampler_result_type(b))
+      return false;
+   return true;
+}
+
+static nir_variable *
+find_bindless_container(struct zink_bindless_info *bindless, unsigned binding,
+                        const struct glsl_type *leaf)
+{
+   for (unsigned i = 0; i < bindless->container_count[binding]; i++) {
+      const struct glsl_type *cleaf =
+         glsl_without_array(bindless->containers[binding][i]->type);
+      if (sampler_image_leaves_match(cleaf, leaf))
+         return bindless->containers[binding][i];
+   }
+   return NULL;
+}
+
+static void
+register_bindless_container(struct zink_bindless_info *bindless, unsigned binding,
+                            nir_variable *var)
+{
+   assert(bindless->container_count[binding] < ZINK_BINDLESS_MAX_ALIASES);
+   bindless->containers[binding][bindless->container_count[binding]++] = var;
+   if (!bindless->bindless[binding])
+      bindless->bindless[binding] = var;
+}
+
 /* this is a "default" bindless texture used if the shader has no texture variables */
 static nir_variable *
-create_bindless_texture(nir_shader *nir, nir_tex_instr *tex, unsigned descriptor_set)
+create_bindless_texture(nir_shader *nir, nir_tex_instr *tex, struct zink_bindless_info *bindless)
 {
    unsigned binding = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 1 : 0;
-   nir_variable *var;
 
    const struct glsl_type *sampler_type = glsl_sampler_type(tex->sampler_dim, tex->is_shadow, tex->is_array, GLSL_TYPE_FLOAT);
-   var = nir_variable_create(nir, nir_var_uniform, glsl_array_type(sampler_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_texture");
-   var->data.descriptor_set = descriptor_set;
+   /* Re-use an existing container with a matching leaf type if one already exists. */
+   nir_variable *existing = find_bindless_container(bindless, binding, sampler_type);
+   if (existing)
+      return existing;
+
+   nir_variable *var = nir_variable_create(nir, nir_var_uniform, glsl_array_type(sampler_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_texture");
+   var->data.descriptor_set = bindless->bindless_set;
    var->data.driver_location = var->data.binding = binding;
+   register_bindless_container(bindless, binding, var);
    return var;
 }
 
 /* this is a "default" bindless image used if the shader has no image variables */
 static nir_variable *
-create_bindless_image(nir_shader *nir, enum glsl_sampler_dim dim, unsigned descriptor_set)
+create_bindless_image(nir_shader *nir, enum glsl_sampler_dim dim, bool is_array,
+                      struct zink_bindless_info *bindless)
 {
    unsigned binding = dim == GLSL_SAMPLER_DIM_BUF ? 3 : 2;
-   nir_variable *var;
 
-   const struct glsl_type *image_type = glsl_image_type(dim, false, GLSL_TYPE_FLOAT);
-   var = nir_variable_create(nir, nir_var_image, glsl_array_type(image_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_image");
-   var->data.descriptor_set = descriptor_set;
+   const struct glsl_type *image_type = glsl_image_type(dim, is_array, GLSL_TYPE_FLOAT);
+   nir_variable *existing = find_bindless_container(bindless, binding, image_type);
+   if (existing)
+      return existing;
+
+   nir_variable *var = nir_variable_create(nir, nir_var_image, glsl_array_type(image_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_image");
+   var->data.descriptor_set = bindless->bindless_set;
    var->data.driver_location = var->data.binding = binding;
    var->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;
+   register_bindless_container(bindless, binding, var);
    return var;
 }
 
@@ -4589,14 +4664,25 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
       if (idx == -1)
          return false;
 
-      nir_variable *var = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? bindless->bindless[1] : bindless->bindless[0];
-      if (!var) {
-         var = create_bindless_texture(b->shader, tex, bindless->bindless_set);
-         if (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF)
-            bindless->bindless[1] = var;
-         else
-            bindless->bindless[0] = var;
+      /* Pick the container whose leaf SPIR-V image type matches this tex
+       * instruction's (dim, is_array, is_shadow, dest_type). Falling back
+       * to bindless[0]/bindless[1] when the shader has no matching variable
+       * yet is wrong because handle_bindless_var may have already created a
+       * container with a different leaf type.
+       */
+      const unsigned binding = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 1 : 0;
+      enum glsl_base_type result_base;
+      switch (nir_alu_type_get_base_type(tex->dest_type)) {
+      case nir_type_float: result_base = GLSL_TYPE_FLOAT; break;
+      case nir_type_int:   result_base = GLSL_TYPE_INT;   break;
+      case nir_type_uint:  result_base = GLSL_TYPE_UINT;  break;
+      default:             result_base = GLSL_TYPE_FLOAT; break;
       }
+      const struct glsl_type *want_leaf =
+         glsl_sampler_type(tex->sampler_dim, tex->is_shadow, tex->is_array, result_base);
+      nir_variable *var = find_bindless_container(bindless, binding, want_leaf);
+      if (!var)
+         var = create_bindless_texture(b->shader, tex, bindless);
       b->cursor = nir_before_instr(in);
       nir_deref_instr *deref = nir_build_deref_var(b, var);
       if (glsl_type_is_array(var->type))
@@ -4649,9 +4735,12 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
    }
 
    enum glsl_sampler_dim dim = nir_intrinsic_image_dim(instr);
-   nir_variable *var = dim == GLSL_SAMPLER_DIM_BUF ? bindless->bindless[3] : bindless->bindless[2];
+   bool is_array = nir_intrinsic_image_array(instr);
+   const unsigned img_binding = dim == GLSL_SAMPLER_DIM_BUF ? 3 : 2;
+   const struct glsl_type *want_img_leaf = glsl_image_type(dim, is_array, GLSL_TYPE_FLOAT);
+   nir_variable *var = find_bindless_container(bindless, img_binding, want_img_leaf);
    if (!var)
-      var = create_bindless_image(b->shader, dim, bindless->bindless_set);
+      var = create_bindless_image(b->shader, dim, is_array, bindless);
    instr->intrinsic = op;
    b->cursor = nir_before_instr(in);
    nir_deref_instr *deref = nir_build_deref_var(b, var);
@@ -4781,17 +4870,22 @@ handle_bindless_var(nir_shader *nir, nir_variable *var, const struct glsl_type *
       default:
          UNREACHABLE("unknown");
    }
-   if (!bindless->bindless[binding]) {
-      bindless->bindless[binding] = nir_variable_clone(var, nir);
-      bindless->bindless[binding]->data.bindless = 0;
-      bindless->bindless[binding]->data.descriptor_set = bindless->bindless_set;
-      bindless->bindless[binding]->type = glsl_array_type(type, ZINK_MAX_BINDLESS_HANDLES, 0);
-      bindless->bindless[binding]->data.driver_location = bindless->bindless[binding]->data.binding = binding;
-      if (!bindless->bindless[binding]->data.image.format)
-         bindless->bindless[binding]->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;
-      nir_shader_add_variable(nir, bindless->bindless[binding]);
-   } else {
-      assert(glsl_get_sampler_dim(glsl_without_array(bindless->bindless[binding]->type)) == glsl_get_sampler_dim(glsl_without_array(var->type)));
+   /* Find or create a container whose leaf SPIR-V image type matches `type`.
+    * Multiple containers can share one Vulkan binding when the shader uses
+    * heterogeneous bindless image types (e.g. sampler2D and samplerCube both
+    * map to VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) - they alias the same
+    * descriptor set + binding, but emit distinct SPIR-V image variables.
+    */
+   if (!find_bindless_container(bindless, binding, type)) {
+      nir_variable *container = nir_variable_clone(var, nir);
+      container->data.bindless = 0;
+      container->data.descriptor_set = bindless->bindless_set;
+      container->type = glsl_array_type(type, ZINK_MAX_BINDLESS_HANDLES, 0);
+      container->data.driver_location = container->data.binding = binding;
+      if (!container->data.image.format)
+         container->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;
+      nir_shader_add_variable(nir, container);
+      register_bindless_container(bindless, binding, container);
    }
    var->data.mode = nir_var_shader_temp;
 }

@@ -1100,8 +1100,22 @@ allocate_bo(struct zink_screen *screen, const struct pipe_resource *templ,
       emai.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
       emai.handleTypes = alloc_info->export_types;
 
-      emai.pNext = mai.pNext;
-      mai.pNext = &emai;
+      /* JUICE-VRED black-screen fix: do NOT push VkExportMemoryAllocateInfo
+       * onto the pNext chain when this allocation is also wrapping an
+       * imported external handle (whandle->handle != NULL). NVIDIA's
+       * Vulkan driver silently allocates fresh device memory if a single
+       * vkAllocateMemory carries both VkImportMemoryWin32HandleInfoKHR
+       * and VkExportMemoryAllocateInfo -- the call returns VK_SUCCESS but
+       * the import alias is dropped, so the importer reads zeros forever
+       * (the VRED main viewport black-screen bug). The imported memory's
+       * underlying kernel object is already shareable via the exporter's
+       * NT handle, so re-export from this VkDeviceMemory is unnecessary
+       * in VRED's flow.
+       */
+      if (!(whandle && whandle->handle)) {
+         emai.pNext = mai.pNext;
+         mai.pNext = &emai;
+      }
       obj->exportable = true;
       obj->exportable_dmabuf = !!(alloc_info->export_types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT);
    }

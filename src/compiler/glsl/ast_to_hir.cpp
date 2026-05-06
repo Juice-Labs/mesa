@@ -259,6 +259,12 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
       switch (from->base_type) {
       case GLSL_TYPE_INT: return ir_unop_i2f16;
       case GLSL_TYPE_UINT: return ir_unop_u2f16;
+      /* GL_NV_gpu_shader5: only smaller types promote to float16 (little->big pattern) */
+      case GLSL_TYPE_INT8: return state->NV_gpu_shader5_enable ? ir_unop_i82f16 : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT8: return state->NV_gpu_shader5_enable ? ir_unop_u82f16 : (ir_expression_operation)0;
+      case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162f16 : (ir_expression_operation)0;
+      case GLSL_TYPE_UINT16: return state->NV_gpu_shader5_enable ? ir_unop_u162f16 : (ir_expression_operation)0;
+      /* float->float16 requires explicit cast (not implicit conversion) */
       default: return (ir_expression_operation)0;
       }
 
@@ -300,7 +306,6 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
       case GLSL_TYPE_UINT8: return state->NV_gpu_shader5_enable ? ir_unop_u82d : (ir_expression_operation)0;
       case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162d : (ir_expression_operation)0;
       case GLSL_TYPE_UINT16: return state->NV_gpu_shader5_enable ? ir_unop_u162d : (ir_expression_operation)0;
-      case GLSL_TYPE_FLOAT16: return state->NV_gpu_shader5_enable ? ir_unop_f162d : (ir_expression_operation)0;
       default: return (ir_expression_operation)0;
       }
 
@@ -335,19 +340,6 @@ get_implicit_conversion_operation(const glsl_type *to, const glsl_type *from,
       case GLSL_TYPE_INT16: return state->NV_gpu_shader5_enable ? ir_unop_i162i : (ir_expression_operation)0;
       default: return (ir_expression_operation)0;
       }
-
-   case GLSL_TYPE_FLOAT16:
-      if (!state->NV_gpu_shader5_enable)
-         return (ir_expression_operation)0;
-      switch (from->base_type) {
-      /* GL_NV_gpu_shader5: only smaller types promote to float16 (little->big pattern) */
-      case GLSL_TYPE_INT8: return ir_unop_i82f16;
-      case GLSL_TYPE_UINT8: return ir_unop_u82f16;
-      case GLSL_TYPE_INT16: return ir_unop_i162f16;
-      case GLSL_TYPE_UINT16: return ir_unop_u162f16;
-      /* float->float16 requires explicit cast (not implicit conversion) */
-      default: return (ir_expression_operation)0;
-      }      
 
    default: return (ir_expression_operation)0;
    }
@@ -400,6 +392,63 @@ apply_implicit_conversion(const glsl_type *to, ir_rvalue * &from,
       return true;
    } else {
       return false;
+   }
+}
+
+
+/**
+ * JUICE: Permissive coercion of an if/while/for/do-while/?: condition to bool.
+ *
+ * Mesa's GLSL frontend strictly requires scalar-bool conditions. NVIDIA's
+ * proprietary GLSL compiler is much more lenient and silently treats any
+ * scalar numeric expression as `expr != 0`. A number of real-world shaders
+ * (Autodesk VRED's OpenSG raytracer fragment program among them) rely on
+ * that behaviour, so without this coercion they fail to compile on the Juice
+ * client (Mesa/zink). For non-scalar (vector/matrix) conditions we leave the
+ * value untouched so the caller still emits the spec-mandated error -- NVIDIA
+ * rejects those too.
+ */
+static ir_rvalue *
+juice_coerce_condition_to_bool(linear_ctx *ctx, ir_rvalue *condition)
+{
+   const bool is_bool   = glsl_type_is_boolean(condition->type);
+   const bool is_scalar = glsl_type_is_scalar(condition->type);
+   const bool is_num    = glsl_type_is_numeric(condition->type);
+   const bool needs_coerce = !is_bool && is_scalar && is_num;
+
+   if (!needs_coerce)
+      return condition;
+
+   switch (condition->type->base_type) {
+   case GLSL_TYPE_INT:
+   case GLSL_TYPE_INT8:
+   case GLSL_TYPE_INT16:
+      return new(ctx) ir_expression(ir_unop_i2b, &glsl_type_builtin_bool,
+                                    condition, NULL);
+   case GLSL_TYPE_UINT:
+   case GLSL_TYPE_UINT8:
+   case GLSL_TYPE_UINT16:
+      return new(ctx) ir_expression(ir_unop_i2b,
+                                    new(ctx) ir_expression(ir_unop_u2i,
+                                                           condition));
+   case GLSL_TYPE_FLOAT:
+      return new(ctx) ir_expression(ir_unop_f2b, &glsl_type_builtin_bool,
+                                    condition, NULL);
+   case GLSL_TYPE_FLOAT16:
+      return new(ctx) ir_expression(ir_unop_f162b, &glsl_type_builtin_bool,
+                                    condition, NULL);
+   case GLSL_TYPE_DOUBLE:
+      return new(ctx) ir_expression(ir_unop_d2b, &glsl_type_builtin_bool,
+                                    condition, NULL);
+   case GLSL_TYPE_INT64:
+      return new(ctx) ir_expression(ir_unop_i642b, &glsl_type_builtin_bool,
+                                    condition, NULL);
+   case GLSL_TYPE_UINT64:
+      return new(ctx) ir_expression(ir_unop_i642b,
+                                    new(ctx) ir_expression(ir_unop_u642i64,
+                                                           condition));
+   default:
+      return condition;
    }
 }
 
@@ -1195,10 +1244,10 @@ ast_aggregate_initializer::hir_no_rvalue(ir_exec_list *instructions,
 }
 
 ir_rvalue *
-ast_cstyle_cast_expression::hir(exec_list *instructions,
+ast_cstyle_cast_expression::hir(ir_exec_list *instructions,
                                 struct _mesa_glsl_parse_state *state)
 {
-   void *ctx = state;
+   linear_ctx *ctx = state->linalloc;
    YYLTYPE loc = this->get_location();
    const char *name;
 
@@ -1211,66 +1260,66 @@ ast_cstyle_cast_expression::hir(exec_list *instructions,
 
    /* Get the expression to be cast */
    ir_rvalue *expr = subexpressions[0]->hir(instructions, state);
-   if (expr == NULL || expr->type->is_error()) {
+   if (expr == NULL || glsl_type_is_error(expr->type)) {
       return ir_rvalue::error_value(ctx);
    }
 
    /* C-style casting is only supported with NV_gpu_shader5 */
    if (!state->NV_gpu_shader5_enable) {
       _mesa_glsl_error(&loc, state, "C-style cast from `%s' to `%s' requires GL_NV_gpu_shader5",
-                       expr->type->name, target_type->name);
+                       glsl_get_type_name(expr->type), glsl_get_type_name(target_type));
       return ir_rvalue::error_value(ctx);
    }
 
    /* Handle bindless texture samplers (uint64_t <-> sampler2D) */
-   if (target_type->is_sampler() && expr->type->is_integer_64()) {
+   if (glsl_type_is_sampler(target_type) && glsl_type_is_integer_64(expr->type)) {
       /* uint64_t -> sampler2D */
       return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
                                    target_type, expr, NULL);
-   } else if (expr->type->is_sampler() && target_type->is_integer_64()) {
+   } else if (glsl_type_is_sampler(expr->type) && glsl_type_is_integer_64(target_type)) {
       /* sampler2D -> uint64_t */
       return new(ctx) ir_expression(ir_unop_bitcast_sampler_to_uint64,
                                    target_type, expr, NULL);
    }
    
    /* Handle vector types to sampler casts for bindless textures */
-   if (target_type->is_sampler() && expr->type->is_vector() && 
-       expr->type->is_integer_64()) {
+   if (glsl_type_is_sampler(target_type) && glsl_type_is_vector(expr->type) && 
+       glsl_type_is_integer_64(expr->type)) {
       /* u64vec2/u64vec3/u64vec4 -> sampler2D: use first component */
       /* For bindless textures, we typically use the first component as the handle */
       ir_rvalue *first_component = new(ctx) ir_swizzle(expr, 0, 0, 0, 0, 1);
       return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
                                    target_type, first_component, NULL);
-   } else if (target_type->is_sampler() && expr->type->is_vector() && 
-              expr->type->is_integer_32()) {
+   } else if (glsl_type_is_sampler(target_type) && glsl_type_is_vector(expr->type) && 
+              glsl_type_is_integer_32(expr->type)) {
       /* uvec2/uvec3/uvec4 -> sampler2D: pack to uint64_t first, then cast */
       /* For bindless textures, we pack the vector components into a uint64_t handle */
       if (expr->type->vector_elements == 2) {
          /* uvec2 -> uint64_t -> sampler2D */
          ir_rvalue *packed = new(ctx) ir_expression(ir_unop_pack_uint_2x32,
-                                                    glsl_type::uint64_t_type, expr, NULL);
+                                                    &glsl_type_builtin_uint64_t, expr, NULL);
          return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
                                       target_type, packed, NULL);
       } else {
          /* For uvec3/uvec4, use first two components */
          ir_rvalue *first_two = new(ctx) ir_swizzle(expr, 0, 1, 0, 0, 2);
          ir_rvalue *packed = new(ctx) ir_expression(ir_unop_pack_uint_2x32,
-                                                   glsl_type::uint64_t_type, first_two, NULL);
+                                                   &glsl_type_builtin_uint64_t, first_two, NULL);
          return new(ctx) ir_expression(ir_unop_bitcast_uint64_to_sampler,
                                       target_type, packed, NULL);
       }
-   } else if (expr->type->is_sampler() && target_type->is_vector() &&
-              target_type->is_integer_64()) {
+   } else if (glsl_type_is_sampler(expr->type) && glsl_type_is_vector(target_type) &&
+              glsl_type_is_integer_64(target_type)) {
       /* sampler2D -> u64vec2/u64vec3/u64vec4: expand to vector */
       ir_rvalue *handle = new(ctx) ir_expression(ir_unop_bitcast_sampler_to_uint64,
-                                                target_type->get_base_type(), expr, NULL);
+                                                glsl_get_base_glsl_type(target_type), expr, NULL);
       /* For now, just return the handle as a scalar - the vector construction
        * would need more complex logic to create a proper vector */
       return handle;
       }
 
    /* Handle primitive type conversions */
-   if (target_type->is_numeric() && expr->type->is_numeric()) {
+   if (glsl_type_is_numeric(target_type) && glsl_type_is_numeric(expr->type)) {
       /* For numeric types, we can use implicit conversion */
       if (apply_implicit_conversion(target_type, expr, state)) {
          return expr;
@@ -1278,63 +1327,63 @@ ast_cstyle_cast_expression::hir(exec_list *instructions,
    }
 
    /* Handle bitcasting for same-size types */
-   if (target_type->bit_size() == expr->type->bit_size()) {
+   if (glsl_base_type_bit_size(target_type->base_type) == glsl_base_type_bit_size(expr->type->base_type)) {
       /* For same-size types, we can use bitcasting */
-      if (target_type->is_integer_64() && expr->type->is_double()) {
+      if (glsl_type_is_integer_64(target_type) && glsl_type_is_double(expr->type)) {
          return new(ctx) ir_expression(ir_unop_double_bits_to_int64,
                                       target_type, expr, NULL);
-      } else if (target_type->is_double() && expr->type->is_integer_64()) {
+      } else if (glsl_type_is_double(target_type) && glsl_type_is_integer_64(expr->type)) {
          return new(ctx) ir_expression(ir_unop_int64_bits_to_double,
                                       target_type, expr, NULL);
-      } else if (target_type->is_integer_32() && expr->type->is_float()) {
+      } else if (glsl_type_is_integer_32(target_type) && glsl_type_is_float(expr->type)) {
          return new(ctx) ir_expression(ir_unop_bitcast_f2i,
                                       target_type, expr, NULL);
-      } else if (target_type->is_float() && expr->type->is_integer_32()) {
+      } else if (glsl_type_is_float(target_type) && glsl_type_is_integer_32(expr->type)) {
          return new(ctx) ir_expression(ir_unop_bitcast_i2f,
                                       target_type, expr, NULL);
       }
    }
 
    /* Handle vector to uint64_t casts for bindless textures */
-   if (target_type->is_integer_64() && expr->type->is_vector() && 
-       expr->type->vector_elements == 2 && expr->type->is_float()) {
+   if (glsl_type_is_integer_64(target_type) && glsl_type_is_vector(expr->type) && 
+       expr->type->vector_elements == 2 && glsl_type_is_float(expr->type)) {
       /* vec2 -> uint64_t: pack the two float components into uint64 */
       /* This is commonly used for bindless texture handles */
       return new(ctx) ir_expression(ir_unop_pack_double_2x32,
                                    target_type, expr, NULL);
-   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
-              target_type->vector_elements == 2 && target_type->is_float()) {
+   } else if (glsl_type_is_integer_64(expr->type) && glsl_type_is_vector(target_type) &&
+              target_type->vector_elements == 2 && glsl_type_is_float(target_type)) {
       /* uint64_t -> vec2: unpack uint64 into two float components */
       return new(ctx) ir_expression(ir_unop_unpack_double_2x32,
                                    target_type, expr, NULL);
-   } else if (target_type->is_integer_64() && expr->type->is_vector() &&
-              expr->type->vector_elements == 3 && expr->type->is_float()) {
+   } else if (glsl_type_is_integer_64(target_type) && glsl_type_is_vector(expr->type) &&
+              expr->type->vector_elements == 3 && glsl_type_is_float(expr->type)) {
       /* vec3 -> uint64_t: pack three float components into uint64 */
       /* Note: This packs the first two components, the third is truncated */
       return new(ctx) ir_expression(ir_unop_pack_double_2x32,
                                    target_type, expr, NULL);
-   } else if (target_type->is_integer_64() && expr->type->is_vector() &&
-              expr->type->vector_elements == 4 && expr->type->is_float()) {
+   } else if (glsl_type_is_integer_64(target_type) && glsl_type_is_vector(expr->type) &&
+              expr->type->vector_elements == 4 && glsl_type_is_float(expr->type)) {
       /* vec4 -> uint64_t: pack four float components into uint64 */
       /* Note: This packs the first two components, the last two are truncated */
       return new(ctx) ir_expression(ir_unop_pack_double_2x32,
                                    target_type, expr, NULL);
-   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
-              target_type->vector_elements == 3 && target_type->is_float()) {
+   } else if (glsl_type_is_integer_64(expr->type) && glsl_type_is_vector(target_type) &&
+              target_type->vector_elements == 3 && glsl_type_is_float(target_type)) {
       /* uint64_t -> vec3: unpack uint64 into three float components */
       /* The third component will be zero */
       return new(ctx) ir_expression(ir_unop_unpack_double_2x32,
                                    target_type, expr, NULL);
-   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
-              target_type->vector_elements == 4 && target_type->is_float()) {
+   } else if (glsl_type_is_integer_64(expr->type) && glsl_type_is_vector(target_type) &&
+              target_type->vector_elements == 4 && glsl_type_is_float(target_type)) {
       /* uint64_t -> vec4: unpack uint64 into four float components */
       /* The last two components will be zero */
       return new(ctx) ir_expression(ir_unop_unpack_double_2x32,
                                    target_type, expr, NULL);
-   } else if (target_type->is_integer_64() && expr->type->is_vector() &&
-              expr->type->vector_elements == 2 && expr->type->is_integer_32()) {
+   } else if (glsl_type_is_integer_64(target_type) && glsl_type_is_vector(expr->type) &&
+              expr->type->vector_elements == 2 && glsl_type_is_integer_32(expr->type)) {
       /* ivec2/uvec2 -> uint64_t: pack two integer components into uint64 */
-      if (expr->type->get_base_type()->base_type == GLSL_TYPE_UINT) {
+      if (glsl_get_base_glsl_type(expr->type)->base_type == GLSL_TYPE_UINT) {
          /* uvec2 -> uint64_t */
          return new(ctx) ir_expression(ir_unop_pack_uint_2x32,
                                       target_type, expr, NULL);
@@ -1343,10 +1392,10 @@ ast_cstyle_cast_expression::hir(exec_list *instructions,
          return new(ctx) ir_expression(ir_unop_pack_int_2x32,
                                       target_type, expr, NULL);
       }
-   } else if (expr->type->is_integer_64() && target_type->is_vector() &&
-              target_type->vector_elements == 2 && target_type->is_integer_32()) {
+   } else if (glsl_type_is_integer_64(expr->type) && glsl_type_is_vector(target_type) &&
+              target_type->vector_elements == 2 && glsl_type_is_integer_32(target_type)) {
       /* uint64_t -> ivec2/uvec2: unpack uint64 into two integer components */
-      if (target_type->get_base_type()->base_type == GLSL_TYPE_UINT) {
+      if (glsl_get_base_glsl_type(target_type)->base_type == GLSL_TYPE_UINT) {
          /* uint64_t -> uvec2 */
          return new(ctx) ir_expression(ir_unop_unpack_uint_2x32,
                                       target_type, expr, NULL);
@@ -1359,12 +1408,12 @@ ast_cstyle_cast_expression::hir(exec_list *instructions,
 
    /* If we get here, the cast is not supported */
    _mesa_glsl_error(&loc, state, "C-style cast from `%s' to `%s' is not supported",
-                    expr->type->name, target_type->name);
+                    glsl_get_type_name(expr->type), glsl_get_type_name(target_type));
    return ir_rvalue::error_value(ctx);
 }
 
 void
-ast_cstyle_cast_expression::hir_no_rvalue(exec_list *instructions,
+ast_cstyle_cast_expression::hir_no_rvalue(ir_exec_list *instructions,
                                           struct _mesa_glsl_parse_state *state)
 {
    (void)hir(instructions, state);
@@ -1845,17 +1894,21 @@ ast_expression::do_hir(ir_exec_list *instructions,
       if (error_emitted) {
          result = new(linalloc) ir_constant(false);
       } else {
-         /* For vector operands, use component-wise comparison operations that
-          * return vector results, matching native hardware behavior.
-          * For scalar operands, use the traditional all_equal/any_nequal.
+         /* JUICE: GLSL spec (1.10 §5.9 onwards) requires the binary `==' and
+          * `!=' operators to produce a *scalar* bool regardless of whether the
+          * operands are scalars or vectors (component-wise comparisons are
+          * what `equal()'/`notEqual()' built-ins are for). A previous local
+          * customization here forced `==`/`!=` on vectors to use the
+          * component-wise IR opcodes (returning bvec), with the comment
+          * "matching native hardware behavior". That is incorrect — the
+          * hardware indeed does component-wise compares, but GLSL semantics
+          * require an all/any reduction afterwards, which is exactly what
+          * ir_binop_all_equal / ir_binop_any_nequal model. Reverting to the
+          * upstream-Mesa behaviour also fixes real-world shaders such as
+          * VRED's OpenSG raytracer, which relies on `if (uvec2 != uvec2)'.
           */
-         if (glsl_type_is_vector(op[0]->type)) {
-            int vector_op = (this->oper == ast_equal) ? ir_binop_equal : ir_binop_nequal;
-            result = new(state->linalloc) ir_expression(vector_op, op[0], op[1]);
-         } else {
-            result = do_comparison(state->linalloc, operations[this->oper], op[0], op[1]);
-            assert(result->type == &glsl_type_builtin_bool);
-         }
+         result = do_comparison(state->linalloc, operations[this->oper], op[0], op[1]);
+         assert(result->type == &glsl_type_builtin_bool);
       }
       break;
 
@@ -7102,7 +7155,7 @@ ast_selection_statement::hir(ir_exec_list *instructions,
 {
    linear_ctx *linalloc = state->linalloc;
 
-   ir_rvalue *const condition = this->condition->hir(instructions, state);
+   ir_rvalue *condition = this->condition->hir(instructions, state);
 
    /* From page 66 (page 72 of the PDF) of the GLSL 1.50 spec:
     *
@@ -7112,7 +7165,14 @@ ast_selection_statement::hir(ir_exec_list *instructions,
     *
     * The checks are separated so that higher quality diagnostics can be
     * generated for cases where both rules are violated.
+    *
+    * JUICE: see juice_coerce_condition_to_bool() — we silently promote scalar
+    * numeric expressions to bool here to match NVIDIA's permissive behaviour
+    * (real-world shaders, e.g. VRED's OpenSG raytracer fragment program,
+    * depend on it).
     */
+   condition = juice_coerce_condition_to_bool(state->linalloc, condition);
+
    if (!glsl_type_is_boolean(condition->type) || !glsl_type_is_scalar(condition->type)) {
       YYLTYPE loc = this->condition->get_location();
 
@@ -7568,8 +7628,14 @@ ast_iteration_statement::condition_to_hir(ir_exec_list *instructions,
    linear_ctx *linalloc = state->linalloc;
 
    if (condition != NULL) {
-      ir_rvalue *const cond =
+      ir_rvalue *cond =
          condition->hir(instructions, state);
+
+      /* JUICE: same NVIDIA-permissive scalar-numeric -> bool coercion as the
+       * if-statement path; see juice_coerce_condition_to_bool().
+       */
+      if (cond != NULL)
+         cond = juice_coerce_condition_to_bool(state->linalloc, cond);
 
       if ((cond == NULL)
           || !glsl_type_is_boolean(cond->type) || !glsl_type_is_scalar(cond->type)) {

@@ -1021,8 +1021,11 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       emai.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
       emai.handleTypes = export_types;
 
-      emai.pNext = mai.pNext;
-      mai.pNext = &emai;
+      // if imported do not re-export
+      if (!(whandle && whandle->handle)) {
+         emai.pNext = mai.pNext;
+         mai.pNext = &emai;
+      }
       obj->exportable = true;
    }
 

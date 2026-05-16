@@ -18,6 +18,7 @@
 #include "util/u_inlines.h"
 #include "util/u_prim.h"
 #include "util/u_prim_restart.h"
+#include "util/juice_diag_log.h"
 
 static void
 zink_emit_xfb_counter_barrier(struct zink_context *ctx)
@@ -763,6 +764,134 @@ zink_draw(struct pipe_context *pctx,
        zink_program_has_descriptors(&ctx->curr_program->base) &&
        ctx->curr_program->base.dd.bindless)
       zink_descriptors_update_bindless(ctx);
+
+   /* JUICE: per-draw bindless table snapshot. Logs:
+    *   - program identity (frag NIR name == "GLSL<gl-program-id>")
+    *   - whether the program advertises bindless and whether the
+    *     bindless descriptor set is currently bound to the cmdbuf
+    *   - the full resident-table contents (sampler/view/layout per slot)
+    * Limited to programs that actually use bindless to keep the log small.
+    */
+   if (ctx->curr_program && ctx->curr_program->base.dd.bindless) {
+      const char *vert_name = "?";
+      const char *frag_name = "?";
+      struct zink_shader *vs = ctx->curr_program->shaders[MESA_SHADER_VERTEX];
+      struct zink_shader *fs = ctx->curr_program->shaders[MESA_SHADER_FRAGMENT];
+      if (vs && vs->nir && vs->nir->info.name)
+         vert_name = vs->nir->info.name;
+      if (fs && fs->nir && fs->nir->info.name)
+         frag_name = fs->nir->info.name;
+      juice_diag_logf("DRAW_PRE",
+                      "vs=%s fs=%s has_bindless=%d bindless_bound=%d any_dirty=%u "
+                      "cmdbuf=0x%llx bindless_set=0x%llx pl_layout=0x%llx "
+                      "compat_id=0x%08x bs_compat_id=0x%08x",
+                      vert_name, frag_name,
+                      (int)ctx->curr_program->base.dd.bindless,
+                      (int)ctx->dd.bindless_bound,
+                      (unsigned)ctx->di.any_bindless_dirty,
+                      (unsigned long long)(uintptr_t)batch->state->cmdbuf,
+                      (unsigned long long)(uintptr_t)ctx->dd.bindless_set,
+                      (unsigned long long)(uintptr_t)ctx->curr_program->base.layout,
+                      (unsigned)ctx->curr_program->base.compat_id,
+                      (unsigned)batch->state->dd.compat_id[0]);
+
+      for (unsigned bi = 0; bi < 2; bi++) {
+         util_dynarray_foreach(&ctx->di.bindless[bi].resident,
+                               struct zink_bindless_descriptor *, pbd) {
+            struct zink_bindless_descriptor *bd = *pbd;
+            uint64_t reported_handle = (uint64_t)bd->handle;
+            bool is_buffer_h = ZINK_BINDLESS_IS_BUFFER(bd->handle);
+            uint32_t elem = is_buffer_h ? bd->handle - ZINK_MAX_BINDLESS_HANDLES
+                                        : bd->handle;
+            struct zink_resource *res = zink_descriptor_surface_resource(&bd->ds);
+            if (is_buffer_h) {
+               VkBufferView bv = ctx->di.bindless[bi].buffer_infos[elem];
+               juice_diag_logf("RES_TABLE",
+                               "kind=%s handle=0x%llx elem=%u res=%p "
+                               "vk_buffer=0x%llx bufview=0x%llx access=%u",
+                               bi ? "img" : "tex",
+                               (unsigned long long)reported_handle,
+                               (unsigned)elem,
+                               (void *)res,
+                               (unsigned long long)(uintptr_t)(res && res->obj ? res->obj->buffer : VK_NULL_HANDLE),
+                               (unsigned long long)(uintptr_t)bv,
+                               (unsigned)bd->access);
+            } else {
+               const VkDescriptorImageInfo *ii = &ctx->di.bindless[bi].img_infos[elem];
+               /* JUICE: ii->imageLayout is what the descriptor was WRITTEN with.
+                * res->layout is what Zink currently thinks the image is in.
+                * If these don't match at draw time, that means the image is
+                * still in (say) COLOR_ATTACHMENT_OPTIMAL but the descriptor was
+                * recorded with SHADER_READ_ONLY_OPTIMAL -> reads are undefined.
+                * res->obj->access_stage tells us the pipeline stage of the last
+                * barrier on this resource. */
+               juice_diag_logf("RES_TABLE",
+                               "kind=%s handle=0x%llx elem=%u res=%p "
+                               "vk_image=0x%llx surface=%p view=0x%llx sampler=0x%llx "
+                               "ds_layout=%d res_layout=%d access_stage=0x%x res_access=0x%x access=%u",
+                               bi ? "img" : "tex",
+                               (unsigned long long)reported_handle,
+                               (unsigned)elem,
+                               (void *)res,
+                               (unsigned long long)(uintptr_t)(res && res->obj ? res->obj->image : VK_NULL_HANDLE),
+                               (void *)bd->ds.surface,
+                               (unsigned long long)(uintptr_t)ii->imageView,
+                               (unsigned long long)(uintptr_t)ii->sampler,
+                               (int)ii->imageLayout,
+                               (int)(res ? res->layout : 0),
+                               (unsigned)(res && res->obj ? res->obj->access_stage : 0u),
+                               (unsigned)(res && res->obj ? res->obj->access : 0u),
+                               (unsigned)bd->access);
+            }
+         }
+      }
+
+      /* JUICE: replay snapshot. For every bindless draw, write to
+       * c:\\temp\\replay\\<frag>_<seq>.ubo.bin a verbatim copy of the live
+       * fragment-stage default UBO contents the GPU will read for this draw.
+       * Combined with the SPIRV_DUMP path, the SAMP_PROPS/VIEW_PROPS/IMG_PROPS
+       * lines, and DS_WRITE/RES_TABLE rows already in the diag log, this is
+       * enough state for a standalone Vulkan replay program to recreate the
+       * draw and prove whether the hang is data-dependent. */
+      static unsigned juice_rply_seq = 0;
+      unsigned rply_seq = juice_rply_seq++;
+      const char *prog_name = frag_name;
+      /* Snapshot the live FRAGMENT default UBO if present. */
+      struct pipe_constant_buffer *fcb = NULL;
+      if (ctx->ubos[MESA_SHADER_FRAGMENT][0].buffer || ctx->ubos[MESA_SHADER_FRAGMENT][0].user_buffer)
+         fcb = &ctx->ubos[MESA_SHADER_FRAGMENT][0];
+      unsigned ubo_offset = fcb ? fcb->buffer_offset : 0;
+      unsigned ubo_size = fcb ? fcb->buffer_size : 0;
+      bool ubo_from_user = fcb && fcb->user_buffer != NULL;
+      void *ubo_user = fcb ? const_cast<void*>(fcb->user_buffer) : NULL;
+      char rel[160];
+      snprintf(rel, sizeof(rel), "%s_%04u.ubo.bin", prog_name, rply_seq);
+      int wrote_rc = -2;
+      if (ubo_user && ubo_size) {
+         wrote_rc = juice_diag_replay_write(rel, ubo_user, ubo_size);
+      } else if (fcb && fcb->buffer && ubo_size) {
+         struct pipe_transfer *t = NULL;
+         void *map = pipe_buffer_map_range(&ctx->base, fcb->buffer,
+                                           ubo_offset, ubo_size,
+                                           PIPE_MAP_READ, &t);
+         if (map) {
+            wrote_rc = juice_diag_replay_write(rel, map, ubo_size);
+            pipe_buffer_unmap(&ctx->base, t);
+         } else {
+            wrote_rc = -3;
+         }
+      }
+      juice_diag_logf("RPLY_DRAW",
+                      "seq=%u vs=%s fs=%s ubo_offset=%u ubo_size=%u "
+                      "ubo_from_user=%d ubo_path=replay/%s wrote_rc=%d "
+                      "cmdbuf=0x%llx bindless_set=0x%llx pl_layout=0x%llx",
+                      rply_seq, vert_name, frag_name,
+                      ubo_offset, ubo_size, (int)ubo_from_user,
+                      rel, wrote_rc,
+                      (unsigned long long)(uintptr_t)batch->state->cmdbuf,
+                      (unsigned long long)(uintptr_t)ctx->dd.bindless_set,
+                      (unsigned long long)(uintptr_t)ctx->curr_program->base.layout);
+   }
 
    if (reads_basevertex) {
       unsigned draw_mode_is_indexed = index_size > 0;

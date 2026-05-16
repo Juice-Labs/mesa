@@ -48,6 +48,7 @@
 #include "util/u_debug.h"
 #include "util/format_srgb.h"
 #include "util/format/u_format.h"
+#include "util/juice_diag_log.h"
 #include "util/u_helpers.h"
 #include "util/u_inlines.h"
 #include "util/u_thread.h"
@@ -182,6 +183,8 @@ zink_context_destroy(struct pipe_context *pctx)
       util_idalloc_fini(&ctx->di.bindless[i].img_slots);
       free(ctx->di.bindless[i].buffer_infos);
       free(ctx->di.bindless[i].img_infos);
+      free(ctx->di.bindless[i].img_handle_bindings);
+      free(ctx->di.bindless[i].buf_handle_bindings);
       util_dynarray_fini(&ctx->di.bindless[i].updates);
       util_dynarray_fini(&ctx->di.bindless[i].resident);
    }
@@ -504,6 +507,67 @@ zink_create_sampler_state(struct pipe_context *pctx,
       mesa_loge("ZINK: vkCreateSampler failed (%s)", vk_Result_to_str(result));
       FREE(sampler);
       return NULL;
+   }
+   /* JUICE: dump full VkSamplerCreateInfo so we can correlate a particular
+    * VkSampler pointer (seen in H_CREATE/DS_WRITE) with the exact filter,
+    * wrap, lod, anisotropy, compare, border, and pNext-chain state. The
+    * border-color custom struct is logged separately so the replay tool can
+    * rebuild it byte-for-byte. */
+   {
+      uint32_t bc_uint[4] = {0,0,0,0};
+      float bc_float[4] = {0.f,0.f,0.f,0.f};
+      VkFormat bc_format = VK_FORMAT_UNDEFINED;
+      int has_custom_bc = 0;
+      const VkSamplerReductionModeCreateInfo *rci_log = NULL;
+      const VkSamplerCustomBorderColorCreateInfoEXT *cbci_log = NULL;
+      for (const VkBaseInStructure *n = (const VkBaseInStructure *)sci.pNext;
+           n != NULL;
+           n = (const VkBaseInStructure *)n->pNext) {
+         if (n->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO)
+            rci_log = (const VkSamplerReductionModeCreateInfo *)n;
+         else if (n->sType == VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT) {
+            cbci_log = (const VkSamplerCustomBorderColorCreateInfoEXT *)n;
+            bc_format = cbci_log->format;
+            memcpy(bc_uint, cbci_log->customBorderColor.uint32, sizeof(bc_uint));
+            memcpy(bc_float, cbci_log->customBorderColor.float32, sizeof(bc_float));
+            has_custom_bc = 1;
+         }
+      }
+      juice_diag_logf("SAMP_PROPS",
+                      "sampler=0x%llx flags=0x%x magFilter=%d minFilter=%d "
+                      "mipmapMode=%d addrU=%d addrV=%d addrW=%d "
+                      "mipLodBias=%.6f anisoEn=%d maxAniso=%.6f "
+                      "compareEn=%d compareOp=%d minLod=%.6f maxLod=%.6f "
+                      "borderColor=%d unnormCoords=%d "
+                      "reductionMode=%d "
+                      "customBC=%d customBCFmt=%d customBCu=%08x,%08x,%08x,%08x "
+                      "customBCf=%.6f,%.6f,%.6f,%.6f "
+                      "need_custom=%d need_clamped=%d "
+                      "pipe_wrap=%d,%d,%d pipe_min=%d pipe_mag=%d pipe_mip=%d "
+                      "pipe_cmpmode=%d pipe_cmpfunc=%d pipe_max_aniso=%u "
+                      "pipe_bc_fmt=%d pipe_bc_is_int=%d",
+                      (unsigned long long)(uintptr_t)sampler->sampler,
+                      (unsigned)sci.flags,
+                      (int)sci.magFilter, (int)sci.minFilter,
+                      (int)sci.mipmapMode,
+                      (int)sci.addressModeU, (int)sci.addressModeV, (int)sci.addressModeW,
+                      (double)sci.mipLodBias,
+                      (int)sci.anisotropyEnable, (double)sci.maxAnisotropy,
+                      (int)sci.compareEnable, (int)sci.compareOp,
+                      (double)sci.minLod, (double)sci.maxLod,
+                      (int)sci.borderColor, (int)sci.unnormalizedCoordinates,
+                      rci_log ? (int)rci_log->reductionMode : -1,
+                      has_custom_bc, (int)bc_format,
+                      bc_uint[0], bc_uint[1], bc_uint[2], bc_uint[3],
+                      (double)bc_float[0], (double)bc_float[1], (double)bc_float[2], (double)bc_float[3],
+                      (int)need_custom, (int)need_clamped_border_color,
+                      (int)state->wrap_s, (int)state->wrap_t, (int)state->wrap_r,
+                      (int)state->min_img_filter, (int)state->mag_img_filter,
+                      (int)state->min_mip_filter,
+                      (int)state->compare_mode, (int)state->compare_func,
+                      (unsigned)state->max_anisotropy,
+                      (int)state->border_color_format,
+                      (int)state->border_color_is_integer);
    }
    if (need_clamped_border_color) {
       sci.pNext = &cbci_clamped;
@@ -1412,7 +1476,53 @@ zink_set_constant_buffer(struct pipe_context *pctx,
    struct zink_resource *res = zink_resource(ctx->ubos[shader][index].buffer);
    
    mesa_logi("ZINK UBO SET: shader=%d, index=%d, take_ownership=%d", shader, index, take_ownership);
-   
+
+   /* JUICE: log every set_constant_buffer so we always know it was called,
+    * and dump default-UBO bytes when they are CPU-visible.
+    * Bindless handles for sampler uniforms land in this buffer at the byte
+    * offset Mesa assigned to each `decl_var bindless uniform sampler*` decl
+    * (see zink_GLSL<N>_*.nir for the per-uniform storage offsets). */
+   if (cb && index == 0) {
+      juice_diag_logf("UBO0_SET",
+                      "stage=%d index=%d size=%u offset=%u user_buffer=%p buffer=%p",
+                      (int)shader, (int)index, (unsigned)cb->buffer_size,
+                      (unsigned)cb->buffer_offset, cb->user_buffer,
+                      (void *)cb->buffer);
+      if (cb->user_buffer) {
+         char prefix[64];
+         snprintf(prefix, sizeof(prefix),
+                  "stage=%d index=%d size=%u",
+                  (int)shader, (int)index, (unsigned)cb->buffer_size);
+         size_t dump_len = cb->buffer_size < 2048u ? cb->buffer_size : 2048u;
+         juice_diag_log_hex("UBO0_BYTES", prefix,
+                           cb->user_buffer, dump_len);
+      } else if (cb->buffer) {
+         /* Try to map and read the GPU-resident default UBO. */
+         struct zink_resource *map_res = zink_resource(cb->buffer);
+         if (map_res && map_res->obj) {
+            struct pipe_transfer *t = NULL;
+            void *map = pipe_buffer_map_range(
+               pctx, cb->buffer,
+               cb->buffer_offset, cb->buffer_size,
+               PIPE_MAP_READ, &t);
+            if (map) {
+               char prefix[80];
+               snprintf(prefix, sizeof(prefix),
+                        "stage=%d index=%d size=%u source=gpu_buf",
+                        (int)shader, (int)index, (unsigned)cb->buffer_size);
+               size_t dump_len = cb->buffer_size < 2048u ? cb->buffer_size : 2048u;
+               juice_diag_log_hex("UBO0_BYTES", prefix, map, dump_len);
+               pipe_buffer_unmap(pctx, t);
+            } else {
+               juice_diag_logf("UBO0_BYTES",
+                               "stage=%d index=%d size=%u source=gpu_buf map_failed",
+                               (int)shader, (int)index,
+                               (unsigned)cb->buffer_size);
+            }
+         }
+      }
+   }
+
    if (cb) {
       mesa_logi("ZINK UBO CB: buffer=%p, buffer_size=%u, buffer_offset=%u, user_buffer=%p", 
                 cb->buffer, cb->buffer_size, cb->buffer_offset, cb->user_buffer);
@@ -1979,6 +2089,31 @@ zink_set_sampler_views(struct pipe_context *pctx,
    }
 }
 
+/* JUICE FIX: map a gallium pipe_texture_target to the glsl_sampler_dim and
+ * is_array values used by the bindless binding-id encoding in
+ * zink_bindless_get_binding(). PIPE_BUFFER is the caller's responsibility.
+ */
+static void
+pipe_target_to_sampler_dim(enum pipe_texture_target target, unsigned nr_samples,
+                           enum glsl_sampler_dim *out_dim, bool *out_is_array)
+{
+   bool is_array = false;
+   enum glsl_sampler_dim dim;
+   switch (target) {
+   case PIPE_TEXTURE_1D:        dim = GLSL_SAMPLER_DIM_1D; break;
+   case PIPE_TEXTURE_1D_ARRAY:  dim = GLSL_SAMPLER_DIM_1D; is_array = true; break;
+   case PIPE_TEXTURE_2D:        dim = (nr_samples > 1) ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D; break;
+   case PIPE_TEXTURE_2D_ARRAY:  dim = (nr_samples > 1) ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D; is_array = true; break;
+   case PIPE_TEXTURE_RECT:      dim = GLSL_SAMPLER_DIM_RECT; break;
+   case PIPE_TEXTURE_3D:        dim = GLSL_SAMPLER_DIM_3D; break;
+   case PIPE_TEXTURE_CUBE:      dim = GLSL_SAMPLER_DIM_CUBE; break;
+   case PIPE_TEXTURE_CUBE_ARRAY:dim = GLSL_SAMPLER_DIM_CUBE; is_array = true; break;
+   default:                     dim = GLSL_SAMPLER_DIM_2D; break;
+   }
+   *out_dim = dim;
+   *out_is_array = is_array;
+}
+
 static uint64_t
 zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *view, const struct pipe_sampler_state *state)
 {
@@ -2006,6 +2141,119 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
       handle += ZINK_MAX_BINDLESS_HANDLES;
    bd->handle = handle;
    _mesa_hash_table_insert(&ctx->di.bindless[bd->ds.is_buffer].tex_handles, (void*)(uintptr_t)handle, bd);
+
+   /* JUICE FIX: route this handle to its tuple-specific Vulkan binding. For
+    * a texture-handle (bindless[0]) the type is COMBINED_IMAGE_SAMPLER or
+    * UNIFORM_TEXEL_BUFFER depending on the underlying resource.
+    */
+   {
+      uint32_t slot = bd->ds.is_buffer ? handle - ZINK_MAX_BINDLESS_HANDLES : handle;
+      unsigned bind;
+      if (bd->ds.is_buffer) {
+         bind = zink_bindless_get_binding(VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+                                          GLSL_SAMPLER_DIM_BUF, false, false);
+         ctx->di.bindless[0].buf_handle_bindings[slot] = bind;
+      } else {
+         enum glsl_sampler_dim dim;
+         bool is_array;
+         pipe_target_to_sampler_dim(res->base.b.target, res->base.b.nr_samples,
+                                    &dim, &is_array);
+         bool is_shadow = state->compare_mode != PIPE_TEX_COMPARE_NONE;
+         bind = zink_bindless_get_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                          dim, is_array, is_shadow);
+         ctx->di.bindless[0].img_handle_bindings[slot] = bind;
+      }
+   }
+   /* JUICE: bindless texture handle lifecycle. */
+   juice_diag_logf("H_CREATE",
+                   "kind=tex handle=0x%llx is_buffer=%d res=%p texture=%p "
+                   "surface=%p view=0x%llx bufview=0x%llx sampler=0x%llx fmt=%u target=%u",
+                   (unsigned long long)handle,
+                   (int)bd->ds.is_buffer,
+                   (void *)res,
+                   (void *)view->texture,
+                   (void *)(bd->ds.is_buffer ? NULL : (void *)bd->ds.surface),
+                   bd->ds.is_buffer ? 0ull
+                                    : (unsigned long long)(uintptr_t)(bd->ds.surface ? bd->ds.surface->image_view : VK_NULL_HANDLE),
+                   bd->ds.is_buffer ? (unsigned long long)(uintptr_t)(bd->ds.bufferview ? bd->ds.bufferview->buffer_view : VK_NULL_HANDLE)
+                                    : 0ull,
+                   (unsigned long long)(uintptr_t)(bd->sampler ? bd->sampler->sampler : VK_NULL_HANDLE),
+                   (unsigned)view->format,
+                   (unsigned)view->target);
+
+   /* JUICE: full VkImageViewCreateInfo for the bindless view AND the
+    * underlying VkImage's tracked properties. These are the most likely
+    * source of GPU misbehavior (wrong aspect, wrong VkFormat, wrong swizzle,
+    * stale layout) so we log every field on the spot. */
+   if (!bd->ds.is_buffer && bd->ds.surface) {
+      const VkImageViewCreateInfo *ivci = &bd->ds.surface->ivci;
+      juice_diag_logf("VIEW_PROPS",
+                      "handle=0x%llx surface=%p view=0x%llx "
+                      "flags=0x%x vkImage=0x%llx viewType=%d vkFormat=%d "
+                      "swizR=%d swizG=%d swizB=%d swizA=%d "
+                      "aspectMask=0x%x baseMip=%u levelCount=%u "
+                      "baseLayer=%u layerCount=%u "
+                      "pipe_swiz=%d,%d,%d,%d pipe_first_level=%u pipe_last_level=%u "
+                      "pipe_first_layer=%u pipe_last_layer=%u",
+                      (unsigned long long)handle,
+                      (void *)bd->ds.surface,
+                      (unsigned long long)(uintptr_t)bd->ds.surface->image_view,
+                      (unsigned)ivci->flags,
+                      (unsigned long long)(uintptr_t)ivci->image,
+                      (int)ivci->viewType, (int)ivci->format,
+                      (int)ivci->components.r, (int)ivci->components.g,
+                      (int)ivci->components.b, (int)ivci->components.a,
+                      (unsigned)ivci->subresourceRange.aspectMask,
+                      (unsigned)ivci->subresourceRange.baseMipLevel,
+                      (unsigned)ivci->subresourceRange.levelCount,
+                      (unsigned)ivci->subresourceRange.baseArrayLayer,
+                      (unsigned)ivci->subresourceRange.layerCount,
+                      (int)view->swizzle_r, (int)view->swizzle_g,
+                      (int)view->swizzle_b, (int)view->swizzle_a,
+                      (unsigned)view->u.tex.first_level,
+                      (unsigned)view->u.tex.last_level,
+                      (unsigned)view->u.tex.first_layer,
+                      (unsigned)view->u.tex.last_layer);
+
+      /* zink_resource tracks the live VkFormat/aspect/layout for the image;
+       * pipe_resource has the logical extent and PIPE_FORMAT. */
+      const struct pipe_resource *pr = &res->base.b;
+      juice_diag_logf("IMG_PROPS",
+                      "handle=0x%llx res=%p vkImage=0x%llx "
+                      "vkFormat=%d aspect=0x%x layout=%d "
+                      "pipe_format=%d pipe_target=%d "
+                      "width0=%u height0=%u depth0=%u array_size=%u "
+                      "last_level=%u nr_samples=%u nr_storage_samples=%u "
+                      "bind=0x%x usage=%d flags=0x%x "
+                      "render_target=%d storage_init=%d transfer_dst=%d",
+                      (unsigned long long)handle,
+                      (void *)res,
+                      (unsigned long long)(uintptr_t)(res->obj ? res->obj->image : VK_NULL_HANDLE),
+                      (int)res->format, (unsigned)res->aspect, (int)res->layout,
+                      (int)pr->format, (int)pr->target,
+                      (unsigned)pr->width0, (unsigned)pr->height0,
+                      (unsigned)pr->depth0, (unsigned)pr->array_size,
+                      (unsigned)pr->last_level,
+                      (unsigned)pr->nr_samples, (unsigned)pr->nr_storage_samples,
+                      (unsigned)pr->bind, (int)pr->usage, (unsigned)pr->flags,
+                      res->obj ? (int)res->obj->render_target : -1,
+                      res->obj ? (int)res->obj->storage_init : -1,
+                      res->obj ? (int)res->obj->transfer_dst : -1);
+   } else if (bd->ds.is_buffer && bd->ds.bufferview) {
+      const VkBufferViewCreateInfo *bvci = &bd->ds.bufferview->bvci;
+      juice_diag_logf("BVIEW_PROPS",
+                      "handle=0x%llx bufview=0x%llx flags=0x%x "
+                      "vkBuffer=0x%llx vkFormat=%d offset=%llu range=%llu "
+                      "pipe_format=%d",
+                      (unsigned long long)handle,
+                      (unsigned long long)(uintptr_t)bd->ds.bufferview->buffer_view,
+                      (unsigned)bvci->flags,
+                      (unsigned long long)(uintptr_t)bvci->buffer,
+                      (int)bvci->format,
+                      (unsigned long long)bvci->offset,
+                      (unsigned long long)bvci->range,
+                      (int)view->format);
+   }
    return handle;
 }
 
@@ -2049,6 +2297,11 @@ rebind_bindless_bufferview(struct zink_context *ctx, struct zink_resource *res, 
 static void
 zero_bindless_descriptor(struct zink_context *ctx, uint32_t handle, bool is_buffer, bool is_image)
 {
+   /* JUICE: descriptor being zeroed -> either no-residency or image deleted. */
+   juice_diag_logf("H_ZERO",
+                   "elem=%u is_buffer=%d is_image=%d nullDesc=%d",
+                   (unsigned)handle, (int)is_buffer, (int)is_image,
+                   (int)zink_screen(ctx->base.screen)->info.rb2_feats.nullDescriptor);
    if (likely(zink_screen(ctx->base.screen)->info.rb2_feats.nullDescriptor)) {
       if (is_buffer) {
          VkBufferView *bv = &ctx->di.bindless[is_image].buffer_infos[handle];
@@ -2122,6 +2375,34 @@ zink_make_texture_handle_resident(struct pipe_context *pctx, uint64_t handle, bo
       }
    }
    ctx->di.bindless_dirty[0] = true;
+   /* JUICE: log the final resident-table state for this handle. */
+   {
+      uint64_t reported_handle = is_buffer ? handle + ZINK_MAX_BINDLESS_HANDLES : handle;
+      if (is_buffer) {
+         VkBufferView bv = ctx->di.bindless[0].buffer_infos[handle];
+         juice_diag_logf("H_RESIDENT",
+                         "kind=tex handle=0x%llx elem=%u resident=%d is_buffer=1 "
+                         "res=%p vk_buffer=0x%llx bufview=0x%llx bind_count=%u",
+                         (unsigned long long)reported_handle, (unsigned)handle,
+                         (int)resident, (void *)res,
+                         (unsigned long long)(uintptr_t)(res->obj ? res->obj->buffer : VK_NULL_HANDLE),
+                         (unsigned long long)(uintptr_t)bv,
+                         (unsigned)res->bindless[0]);
+      } else {
+         const VkDescriptorImageInfo *ii = &ctx->di.bindless[0].img_infos[handle];
+         juice_diag_logf("H_RESIDENT",
+                         "kind=tex handle=0x%llx elem=%u resident=%d is_buffer=0 "
+                         "res=%p vk_image=0x%llx surface=%p view=0x%llx sampler=0x%llx layout=%d bind_count=%u",
+                         (unsigned long long)reported_handle, (unsigned)handle,
+                         (int)resident, (void *)res,
+                         (unsigned long long)(uintptr_t)(res->obj ? res->obj->image : VK_NULL_HANDLE),
+                         (void *)ds->surface,
+                         (unsigned long long)(uintptr_t)ii->imageView,
+                         (unsigned long long)(uintptr_t)ii->sampler,
+                         (int)ii->imageLayout,
+                         (unsigned)res->bindless[0]);
+      }
+   }
 }
 
 static uint64_t
@@ -2149,6 +2430,27 @@ zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view
       handle += ZINK_MAX_BINDLESS_HANDLES;
    bd->handle = handle;
    _mesa_hash_table_insert(&ctx->di.bindless[bd->ds.is_buffer].img_handles, (void*)(uintptr_t)handle, bd);
+
+   /* JUICE FIX: route this image-handle to its tuple-specific Vulkan binding
+    * in bindless[1] (STORAGE_IMAGE / STORAGE_TEXEL_BUFFER). No shadow for
+    * storage images. */
+   {
+      uint32_t slot = bd->ds.is_buffer ? handle - ZINK_MAX_BINDLESS_HANDLES : handle;
+      unsigned bind;
+      if (bd->ds.is_buffer) {
+         bind = zink_bindless_get_binding(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+                                          GLSL_SAMPLER_DIM_BUF, false, false);
+         ctx->di.bindless[1].buf_handle_bindings[slot] = bind;
+      } else {
+         enum glsl_sampler_dim dim;
+         bool is_array;
+         pipe_target_to_sampler_dim(res->base.b.target, res->base.b.nr_samples,
+                                    &dim, &is_array);
+         bind = zink_bindless_get_binding(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                          dim, is_array, false);
+         ctx->di.bindless[1].img_handle_bindings[slot] = bind;
+      }
+   }
    return handle;
 }
 
@@ -2229,6 +2531,33 @@ zink_make_image_handle_resident(struct pipe_context *pctx, uint64_t handle, unsi
          res->obj->unordered_read = res->obj->unordered_write = false;
       else
          res->obj->unordered_read = false;
+      /* JUICE: bindless image-handle resident path. */
+      {
+         uint64_t reported_handle = is_buffer ? handle + ZINK_MAX_BINDLESS_HANDLES : handle;
+         if (is_buffer) {
+            VkBufferView bv = ctx->di.bindless[1].buffer_infos[handle];
+            juice_diag_logf("H_RESIDENT",
+                            "kind=img handle=0x%llx elem=%u resident=1 is_buffer=1 "
+                            "res=%p vk_buffer=0x%llx bufview=0x%llx access=%u",
+                            (unsigned long long)reported_handle, (unsigned)handle,
+                            (void *)res,
+                            (unsigned long long)(uintptr_t)(res->obj ? res->obj->buffer : VK_NULL_HANDLE),
+                            (unsigned long long)(uintptr_t)bv,
+                            (unsigned)paccess);
+         } else {
+            const VkDescriptorImageInfo *ii = &ctx->di.bindless[1].img_infos[handle];
+            juice_diag_logf("H_RESIDENT",
+                            "kind=img handle=0x%llx elem=%u resident=1 is_buffer=0 "
+                            "res=%p vk_image=0x%llx surface=%p view=0x%llx layout=%d access=%u",
+                            (unsigned long long)reported_handle, (unsigned)handle,
+                            (void *)res,
+                            (unsigned long long)(uintptr_t)(res->obj ? res->obj->image : VK_NULL_HANDLE),
+                            (void *)ds->surface,
+                            (unsigned long long)(uintptr_t)ii->imageView,
+                            (int)ii->imageLayout,
+                            (unsigned)paccess);
+         }
+      }
    } else {
       zero_bindless_descriptor(ctx, handle, is_buffer, true);
       util_dynarray_delete_unordered(&ctx->di.bindless[1].resident, struct zink_bindless_descriptor *, bd);
@@ -3472,6 +3801,22 @@ zink_resource_image_barrier(struct zink_context *ctx, struct zink_resource *res,
       1, &imb
    );
 
+   /* JUICE: log every image layout transition so we can correlate the
+    * pre-draw state of bindless-resident images with what the shader expects.
+    * This is critical because the bindless DS_WRITE records layout=5 but the
+    * actual image must be transitioned to SHADER_READ_ONLY_OPTIMAL before the
+    * sampling draw, or reads are undefined. */
+   juice_diag_logf("BARRIER",
+                   "kind=img1 cmdbuf=%p res=%p image=0x%llx oldLayout=%u newLayout=%u "
+                   "srcAccess=0x%x dstAccess=0x%x srcStage=0x%x dstStage=0x%x is_write=%d",
+                   (void *)cmdbuf, (void *)res,
+                   (unsigned long long)(uintptr_t)imb.image,
+                   (unsigned)imb.oldLayout, (unsigned)imb.newLayout,
+                   (unsigned)imb.srcAccessMask, (unsigned)imb.dstAccessMask,
+                   (unsigned)(res->obj->access_stage ? res->obj->access_stage : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
+                   (unsigned)pipeline,
+                   (int)is_write);
+
    resource_check_defer_image_barrier(ctx, res, new_layout, pipeline);
 
    res->obj->access = imb.dstAccessMask;
@@ -3514,6 +3859,19 @@ zink_resource_image_barrier2(struct zink_context *ctx, struct zink_resource *res
       &imb
    };
    VKCTX(CmdPipelineBarrier2)(cmdbuf, &dep);
+
+   /* JUICE: log every image layout transition (sync2 variant). */
+   juice_diag_logf("BARRIER",
+                   "kind=img2 cmdbuf=%p res=%p image=0x%llx oldLayout=%u newLayout=%u "
+                   "srcAccess=0x%llx dstAccess=0x%llx srcStage=0x%llx dstStage=0x%llx is_write=%d",
+                   (void *)cmdbuf, (void *)res,
+                   (unsigned long long)(uintptr_t)imb.image,
+                   (unsigned)imb.oldLayout, (unsigned)imb.newLayout,
+                   (unsigned long long)imb.srcAccessMask,
+                   (unsigned long long)imb.dstAccessMask,
+                   (unsigned long long)imb.srcStageMask,
+                   (unsigned long long)imb.dstStageMask,
+                   (int)is_write);
 
    resource_check_defer_image_barrier(ctx, res, new_layout, pipeline);
 
@@ -5041,6 +5399,10 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
          util_idalloc_alloc(&ctx->di.bindless[i].img_slots);
          ctx->di.bindless[i].buffer_infos = malloc(sizeof(VkBufferView) * ZINK_MAX_BINDLESS_HANDLES);
          ctx->di.bindless[i].img_infos = malloc(sizeof(VkDescriptorImageInfo) * ZINK_MAX_BINDLESS_HANDLES);
+         /* JUICE FIX: per-handle bindless binding (one Vulkan binding per
+          * (descriptor type, dim, is_array, is_shadow) tuple). */
+         ctx->di.bindless[i].img_handle_bindings = calloc(ZINK_MAX_BINDLESS_HANDLES, sizeof(unsigned));
+         ctx->di.bindless[i].buf_handle_bindings = calloc(ZINK_MAX_BINDLESS_HANDLES, sizeof(unsigned));
          util_dynarray_init(&ctx->di.bindless[i].updates, NULL);
          util_dynarray_init(&ctx->di.bindless[i].resident, NULL);
       }

@@ -34,6 +34,7 @@
 
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
+#include "util/juice_diag_log.h"
 
 static VkDescriptorSetLayout
 descriptor_layout_create(struct zink_screen *screen, enum zink_descriptor_type t, VkDescriptorSetLayoutBinding *bindings, unsigned num_bindings)
@@ -951,7 +952,47 @@ zink_descriptors_update(struct zink_context *ctx, bool is_compute)
    }
    ctx->dd.push_state_changed[is_compute] = false;
    zink_descriptors_update_masked(ctx, is_compute, changed_sets, bind_sets);
-   if (pg->dd.bindless && unlikely(!ctx->dd.bindless_bound)) {
+   /* JUICE FIX (Pipeline Layout Compatibility, docs.vulkan.org/spec/latest
+    * §"Pipeline Layout Compatibility"):
+    *
+    *   "When binding a pipeline, the pipeline can correctly access any
+    *    previously bound descriptor set N if it was bound with compatible
+    *    pipeline layout for set N, and it was not disturbed."
+    *
+    * "Compatible for set N" requires identical descriptor set layouts for
+    * sets 0..N (plus identical push constant ranges).  Zink's
+    * `pg->compat_id` is the hash of `pg->dsl[0..num_dsl)`, so two programs
+    * with the same `compat_id` are pairwise layout-compatible for every
+    * set, including ZINK_DESCRIPTOR_BINDLESS.  Conversely, when
+    * `compat_id` differs (i.e. `bind_sets != 0`), the new pipeline's layout
+    * is NOT guaranteed to be compatible-for-set-5 with the layout that
+    * the bindless set was bound under, so the new pipeline cannot legally
+    * access the bindless set until it is re-bound with the new layout.
+    *
+    * Upstream Zink only checks `!ctx->dd.bindless_bound` here, treating
+    * "bound once during this batch" as sufficient; that is wrong for any
+    * batch that switches between programs whose non-bindless DSL sets
+    * differ (which is essentially every nontrivial app using bindless
+    * across multiple shaders).  Strict drivers fault the offending draw
+    * (Linux: device-lost / cmdbuf never retires / vkWaitSemaphores
+    * deadlock); lenient drivers (NV/Windows) may keep the stale binding
+    * alive but render garbage.  Our GLSL57 stall on cmdbuf 0x...12262B00
+    * is exactly this: bindless was bound at line 694 with GLSL54's
+    * pl_layout 0x...87F68750; the GLSL57 draw at line 743 uses a different
+    * pl_layout 0x...8AC2BCE0 and no rebind happens, so the FS's bindless
+    * sampler reads dereference invalid descriptors and hang the GPU.
+    *
+    * Fix: also rebind on `compat_id` change.  `bind_sets` (set by the same
+    * test above for the non-bindless sets) is the exact right signal. */
+   if (pg->dd.bindless && (unlikely(!ctx->dd.bindless_bound) || bind_sets)) {
+      juice_diag_logf("BIND_DS",
+                      "kind=bindless cmdbuf=%p pl_layout=%p set_idx=%u set=%p is_compute=%d reason=%s",
+                      (void *)ctx->batch.state->cmdbuf,
+                      (void *)pg->layout,
+                      (unsigned)ZINK_DESCRIPTOR_BINDLESS,
+                      (void *)ctx->dd.bindless_set,
+                      (int)is_compute,
+                      ctx->dd.bindless_bound ? "compat_change" : "first_bind");
       VKCTX(CmdBindDescriptorSets)(ctx->batch.state->cmdbuf, is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
                                    pg->layout, ZINK_DESCRIPTOR_BINDLESS, 1, &ctx->dd.bindless_set,
                                    0, NULL);
@@ -1166,19 +1207,6 @@ zink_descriptor_util_init_fbfetch(struct zink_context *ctx)
    ctx->dd.has_fbfetch = true;
 }
 
-ALWAYS_INLINE static VkDescriptorType
-type_from_bindless_index(unsigned idx)
-{
-   switch (idx) {
-   case 0: return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-   case 1: return VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
-   case 2: return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-   case 3: return VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-   default:
-      unreachable("unknown index");
-   }
-}
-
 void
 zink_descriptors_init_bindless(struct zink_context *ctx)
 {
@@ -1186,43 +1214,58 @@ zink_descriptors_init_bindless(struct zink_context *ctx)
       return;
 
    struct zink_screen *screen = zink_screen(ctx->base.screen);
-   VkDescriptorSetLayoutBinding bindings[4];
-   const unsigned num_bindings = 4;
-   VkDescriptorSetLayoutCreateInfo dcslci = {0};
-   dcslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-   dcslci.pNext = NULL;
-   VkDescriptorSetLayoutBindingFlagsCreateInfo fci = {0};
-   VkDescriptorBindingFlags flags[4];
-   dcslci.pNext = &fci;
-   dcslci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
-   fci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
-   fci.bindingCount = num_bindings;
-   fci.pBindingFlags = flags;
+
+   /* JUICE FIX: one binding per (VkDescriptorType, dim, is_array, is_shadow)
+    * tuple instead of one binding per descriptor type. See
+    * zink_bindless_get_binding() in zink_descriptors.h for the encoding.
+    */
+   VkDescriptorSetLayoutBinding bindings[ZINK_BINDLESS_NUM_BINDINGS];
+   VkDescriptorBindingFlags flags[ZINK_BINDLESS_NUM_BINDINGS];
+   const unsigned num_bindings = ZINK_BINDLESS_NUM_BINDINGS;
+
    for (unsigned i = 0; i < num_bindings; i++) {
-      flags[i] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
-   }
-   for (unsigned i = 0; i < num_bindings; i++) {
+      flags[i] = VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                 VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
       bindings[i].binding = i;
-      bindings[i].descriptorType = type_from_bindless_index(i);
+      bindings[i].descriptorType = zink_bindless_binding_type(i);
       bindings[i].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
       bindings[i].stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
       bindings[i].pImmutableSamplers = NULL;
    }
-   
+
+   VkDescriptorSetLayoutBindingFlagsCreateInfo fci = {0};
+   fci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+   fci.bindingCount = num_bindings;
+   fci.pBindingFlags = flags;
+
+   VkDescriptorSetLayoutCreateInfo dcslci = {0};
+   dcslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+   dcslci.pNext = &fci;
+   dcslci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
    dcslci.bindingCount = num_bindings;
    dcslci.pBindings = bindings;
+
    VkResult result = VKSCR(CreateDescriptorSetLayout)(screen->dev, &dcslci, 0, &ctx->dd.bindless_layout);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkCreateDescriptorSetLayout failed (%s)", vk_Result_to_str(result));
       return;
    }
 
-   VkDescriptorPoolCreateInfo dpci = {0};
+   /* Pool sized to cover every binding's worst-case descriptor count. */
+   unsigned n_sampler_bindings = ZINK_BINDLESS_SAMPLER_LAST - ZINK_BINDLESS_SAMPLER_FIRST + 1;
+   unsigned n_image_bindings   = ZINK_BINDLESS_IMAGE_LAST   - ZINK_BINDLESS_IMAGE_FIRST   + 1;
    VkDescriptorPoolSize sizes[4];
-   for (unsigned i = 0; i < 4; i++) {
-      sizes[i].type = type_from_bindless_index(i);
-      sizes[i].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
-   }
+   sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+   sizes[0].descriptorCount = ZINK_MAX_BINDLESS_HANDLES * n_sampler_bindings;
+   sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+   sizes[1].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
+   sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+   sizes[2].descriptorCount = ZINK_MAX_BINDLESS_HANDLES * n_image_bindings;
+   sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+   sizes[3].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
+
+   VkDescriptorPoolCreateInfo dpci = {0};
    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
    dpci.pPoolSizes = sizes;
    dpci.poolSizeCount = 4;
@@ -1257,18 +1300,53 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
       while (util_dynarray_contains(&ctx->di.bindless[i].updates, uint32_t)) {
          uint32_t handle = util_dynarray_pop(&ctx->di.bindless[i].updates, uint32_t);
          bool is_buffer = ZINK_BINDLESS_IS_BUFFER(handle);
-         VkWriteDescriptorSet wd;
+         uint32_t slot = is_buffer ? handle - ZINK_MAX_BINDLESS_HANDLES : handle;
+         /* JUICE FIX: zero-init wd so unused union members (pImageInfo /
+          * pBufferInfo / pTexelBufferView) are always NULL. Vulkan only
+          * requires the one matching descriptorType, but Juice's RPC
+          * serializer eagerly walks all three and dereferences whichever is
+          * non-NULL, which on uninitialized stacks could read garbage.
+          */
+         VkWriteDescriptorSet wd = {0};
          wd.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
          wd.pNext = NULL;
          wd.dstSet = ctx->dd.bindless_set;
-         wd.dstBinding = is_buffer ? i * 2 + 1: i * 2;
-         wd.dstArrayElement = is_buffer ? handle - ZINK_MAX_BINDLESS_HANDLES : handle;
+         /* JUICE FIX: pick the binding recorded at handle-create time so the
+          * shader's container (which has its own tuple-specific binding) and
+          * this write land on the same Vulkan binding.
+          */
+         unsigned *bind_arr = is_buffer ? ctx->di.bindless[i].buf_handle_bindings
+                                        : ctx->di.bindless[i].img_handle_bindings;
+         wd.dstBinding = bind_arr ? bind_arr[slot] :
+                                    (is_buffer ? (i * 2 + 1) : (i * 2)); /* legacy fallback */
+         wd.dstArrayElement = slot;
          wd.descriptorCount = 1;
-         wd.descriptorType = type_from_bindless_index(wd.dstBinding);
+         wd.descriptorType = zink_bindless_binding_type(wd.dstBinding);
          if (is_buffer)
-            wd.pTexelBufferView = &ctx->di.bindless[i].buffer_infos[wd.dstArrayElement];
+            wd.pTexelBufferView = &ctx->di.bindless[i].buffer_infos[slot];
          else
             wd.pImageInfo = &ctx->di.bindless[i].img_infos[handle];
+         /* JUICE: log every bindless descriptor write going to the GPU. */
+         if (is_buffer) {
+            juice_diag_logf("DS_WRITE",
+                            "set=0x%llx bind=%u elem=%u type=%d bufview=0x%llx",
+                            (unsigned long long)(uintptr_t)wd.dstSet,
+                            (unsigned)wd.dstBinding,
+                            (unsigned)wd.dstArrayElement,
+                            (int)wd.descriptorType,
+                            (unsigned long long)(uintptr_t)ctx->di.bindless[i].buffer_infos[wd.dstArrayElement]);
+         } else {
+            const VkDescriptorImageInfo *ii = &ctx->di.bindless[i].img_infos[handle];
+            juice_diag_logf("DS_WRITE",
+                            "set=0x%llx bind=%u elem=%u type=%d sampler=0x%llx view=0x%llx layout=%d",
+                            (unsigned long long)(uintptr_t)wd.dstSet,
+                            (unsigned)wd.dstBinding,
+                            (unsigned)wd.dstArrayElement,
+                            (int)wd.descriptorType,
+                            (unsigned long long)(uintptr_t)ii->sampler,
+                            (unsigned long long)(uintptr_t)ii->imageView,
+                            (int)ii->imageLayout);
+         }
          VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd, 0, NULL);
       }
    }

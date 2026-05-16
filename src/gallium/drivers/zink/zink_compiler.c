@@ -33,6 +33,9 @@
 #include "nir.h"
 #include "compiler/nir/nir_builder.h"
 
+#include "util/juice_diag_log.h"
+#include <stdio.h>
+
 #include "nir/tgsi_to_nir.h"
 #include "tgsi/tgsi_dump.h"
 #include "tgsi/tgsi_from_mesa.h"
@@ -41,6 +44,8 @@
 
 #include "compiler/spirv/nir_spirv.h"
 #include "vulkan/util/vk_util.h"
+
+#include "zink_descriptors.h"
 
 bool
 zink_lower_cubemap_to_array(nir_shader *s, uint32_t nonseamless_cube_mask);
@@ -2011,6 +2016,9 @@ zink_shader_dump(void *words, size_t size, const char *file)
       fwrite(words, 1, size, fp);
       fclose(fp);
       fprintf(stderr, "wrote '%s'...\n", file);
+      /* JUICE: emit a juice_diag line so the replay manifest can find the
+       * latest SPIR-V file for each (program, stage). */
+      juice_diag_logf("SPIRV_DUMP", "path=%s size=%zu", file, size);
    }
 }
 
@@ -2023,10 +2031,19 @@ zink_shader_spirv_compile(struct zink_screen *screen, struct zink_shader *zs, st
    if (!spirv)
       spirv = zs->spirv;
 
-   if (zink_debug & ZINK_DEBUG_SPIRV) {
-      char buf[256];
+   /* JUICE: always dump SPIR-V to c:\temp for diagnostics. */
+   {
+      char buf[512];
       static int i;
-      snprintf(buf, sizeof(buf), "dump%02d.spv", i++);
+      const char *name = zs && zs->nir && zs->nir->info.name ? zs->nir->info.name : "shader";
+      const char *stage = zs && zs->nir
+                          ? _mesa_shader_stage_to_abbrev(zs->nir->info.stage)
+                          : "??";
+#if defined(_WIN32)
+      snprintf(buf, sizeof(buf), "c:\\temp\\zink_%s_%s_%04d.spv", name, stage, i++);
+#else
+      snprintf(buf, sizeof(buf), "/tmp/zink_%s_%s_%04d.spv", name, stage, i++);
+#endif
       zink_shader_dump(spirv->words, spirv->num_words * sizeof(uint32_t), buf);
    }
 
@@ -2282,8 +2299,45 @@ zink_shader_compile(struct zink_screen *screen, struct zink_shader *zs, nir_shad
    NIR_PASS_V(nir, nir_convert_from_ssa, true);
 
    struct spirv_shader *spirv = nir_to_spirv(nir, sinfo, screen->spirv_version);
-   if (spirv)
+   if (spirv) {
+      /* JUICE: dump SPIR-V for every bindless-using shader so we can disassemble
+       * and inspect what the GPU actually executes. Files go to c:\temp. */
+      if (zs->bindless) {
+         static unsigned juice_spirv_seq = 0;
+         unsigned seq = juice_spirv_seq++;
+         const char *stage_name = "unknown";
+         switch (nir->info.stage) {
+         case MESA_SHADER_VERTEX: stage_name = "vs"; break;
+         case MESA_SHADER_TESS_CTRL: stage_name = "tcs"; break;
+         case MESA_SHADER_TESS_EVAL: stage_name = "tes"; break;
+         case MESA_SHADER_GEOMETRY: stage_name = "gs"; break;
+         case MESA_SHADER_FRAGMENT: stage_name = "fs"; break;
+         case MESA_SHADER_COMPUTE: stage_name = "cs"; break;
+         default: break;
+         }
+         char path[256];
+         snprintf(path, sizeof(path),
+                  "c:\\temp\\zink_spirv_%03u_%s_zs%p.spv",
+                  seq, stage_name, (void *)zs);
+         FILE *f = fopen(path, "wb");
+         if (f) {
+            fwrite(spirv->words, sizeof(uint32_t), spirv->num_words, f);
+            fclose(f);
+            juice_diag_logf("SPIRV_DUMP",
+                            "seq=%u stage=%s zs=%p path=%s "
+                            "num_words=%zu bindless=%d "
+                            "num_textures=%u num_images=%u num_ubos=%u",
+                            seq, stage_name, (void *)zs, path,
+                            spirv->num_words,
+                            (int)zs->bindless,
+                            (unsigned)nir->info.num_textures,
+                            (unsigned)nir->info.num_images,
+                            (unsigned)nir->info.num_ubos);
+         }
+      }
+
       mod = zink_shader_spirv_compile(screen, zs, spirv);
+   }
 
    ralloc_free(nir);
 
@@ -2487,92 +2541,82 @@ analyze_io(struct zink_shader *zs, nir_shader *shader)
    return ret;
 }
 
-/* A shader can use bindless samplers/images of multiple SPIR-V image types
- * (e.g. sampler2D and samplerCube) that all map to the same Vulkan descriptor
- * type (here, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER). For correct SPIR-V
- * we need a separate container nir_variable per distinct leaf image type,
- * each emitting its own SPIR-V image variable but aliasing the same Vulkan
- * descriptor set + binding (descriptor aliasing is allowed for descriptors of
- * matching VkDescriptorType).
+/* JUICE FIX: a shader can use bindless samplers/images of multiple SPIR-V
+ * image types (e.g. sampler1D, sampler2D, samplerCube) that all share the
+ * VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER descriptor type. The previous
+ * code put them all on the SAME Vulkan binding ("aliasing"), but Vulkan
+ * requires aliased descriptors to have matching OpTypeImage Dim/Sampled/
+ * Format. Mixing e.g. 1D and 2D triggers undefined behavior (RADV faults,
+ * NVIDIA renders black).
  *
- * Containers are tracked per Vulkan descriptor type binding (0..3). 8 slots
- * is plenty for all real-world shaders.
+ * We now route each (VkDescriptorType, dim, is_array, is_shadow) tuple to a
+ * unique Vulkan binding inside the bindless descriptor set. The mapping is
+ * defined in zink_descriptors.h (zink_bindless_get_binding). This eliminates
+ * aliasing entirely - each binding has at most one container.
  */
-#define ZINK_BINDLESS_MAX_ALIASES 8
-
 struct zink_bindless_info {
-   /* containers[binding][i] -> nir_variable*, all sharing data.descriptor_set
-    * and data.binding == binding. Index 0 in each binding is the "primary"
-    * (kept as bindless[binding] for back-compat with callers that look up by
-    * binding without caring about type).
-    */
-   nir_variable *containers[4][ZINK_BINDLESS_MAX_ALIASES];
-   unsigned container_count[4];
-   /* Convenience: first container per binding (== containers[binding][0]). */
-   nir_variable *bindless[4];
+   /* One container nir_variable per Vulkan binding within the bindless set.
+    * Indexed by zink_bindless_get_binding(...). */
+   nir_variable *containers[ZINK_BINDLESS_NUM_BINDINGS];
    unsigned bindless_set;
 };
 
-static bool
-sampler_image_leaves_match(const struct glsl_type *a, const struct glsl_type *b)
+/* JUICE FIX: compute the bindless binding from a tex instr's (sampler_dim,
+ * is_array, is_shadow) tuple directly. The previous version of this code went
+ * through `glsl_sampler_type(dim, shadow, array, result_base)` and then
+ * extracted dim/array/shadow back out via `glsl_get_sampler_dim` etc. That
+ * round trip is fragile: `glsl_sampler_type` returns `error_type` for several
+ * (dim, shadow, result_base) combos that real shaders DO produce - in
+ * particular, NIR `txs` (textureSize) on a shadow sampler has result_base=INT,
+ * and `glsl_sampler_type(dim, shadow=true, ..., INT)` returns `error_type`.
+ * Calling `glsl_get_sampler_dim(error_type)` then trips the assert at
+ * `nir_types.cpp:229` and the program dies during compilation of any FS that
+ * does `textureSize(samplerXShadow, ...)` on a bindless shadow sampler. The
+ * binding ID does not depend on the result base at all, so just compute it
+ * directly from the tex instr's fields. */
+static unsigned
+binding_for_tex_instr(const nir_tex_instr *tex)
 {
-   if (a == b)
-      return true;
-   if (glsl_type_is_sampler(a) != glsl_type_is_sampler(b))
-      return false;
-   if (glsl_type_is_image(a) != glsl_type_is_image(b))
-      return false;
-   if (glsl_get_sampler_dim(a) != glsl_get_sampler_dim(b))
-      return false;
-   if (glsl_sampler_type_is_array(a) != glsl_sampler_type_is_array(b))
-      return false;
-   if (glsl_type_is_sampler(a) &&
-       glsl_sampler_type_is_shadow(a) != glsl_sampler_type_is_shadow(b))
-      return false;
-   if (glsl_get_sampler_result_type(a) != glsl_get_sampler_result_type(b))
-      return false;
-   return true;
+   VkDescriptorType type = (tex->sampler_dim == GLSL_SAMPLER_DIM_BUF)
+                              ? VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
+                              : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+   return zink_bindless_get_binding(type, tex->sampler_dim,
+                                    tex->is_array, tex->is_shadow);
 }
 
-static nir_variable *
-find_bindless_container(struct zink_bindless_info *bindless, unsigned binding,
-                        const struct glsl_type *leaf)
+static unsigned
+binding_for_img_dim(enum glsl_sampler_dim dim, bool is_array)
 {
-   for (unsigned i = 0; i < bindless->container_count[binding]; i++) {
-      const struct glsl_type *cleaf =
-         glsl_without_array(bindless->containers[binding][i]->type);
-      if (sampler_image_leaves_match(cleaf, leaf))
-         return bindless->containers[binding][i];
-   }
-   return NULL;
-}
-
-static void
-register_bindless_container(struct zink_bindless_info *bindless, unsigned binding,
-                            nir_variable *var)
-{
-   assert(bindless->container_count[binding] < ZINK_BINDLESS_MAX_ALIASES);
-   bindless->containers[binding][bindless->container_count[binding]++] = var;
-   if (!bindless->bindless[binding])
-      bindless->bindless[binding] = var;
+   VkDescriptorType type = (dim == GLSL_SAMPLER_DIM_BUF)
+                              ? VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
+                              : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+   return zink_bindless_get_binding(type, dim, is_array, false);
 }
 
 /* this is a "default" bindless texture used if the shader has no texture variables */
 static nir_variable *
 create_bindless_texture(nir_shader *nir, nir_tex_instr *tex, struct zink_bindless_info *bindless)
 {
-   unsigned binding = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 1 : 0;
+   unsigned binding = binding_for_tex_instr(tex);
 
-   const struct glsl_type *sampler_type = glsl_sampler_type(tex->sampler_dim, tex->is_shadow, tex->is_array, GLSL_TYPE_FLOAT);
-   /* Re-use an existing container with a matching leaf type if one already exists. */
-   nir_variable *existing = find_bindless_container(bindless, binding, sampler_type);
-   if (existing)
-      return existing;
+   if (bindless->containers[binding])
+      return bindless->containers[binding];
 
-   nir_variable *var = nir_variable_create(nir, nir_var_uniform, glsl_array_type(sampler_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_texture");
+   /* Construct the container element type with the binding's canonical
+    * (dim, shadow, array) tuple and a FLOAT result base. FLOAT is the only
+    * base that's guaranteed to map to a non-error GLSL sampler type for every
+    * (dim, shadow, array) tuple zink supports (the binding-id encoding) - see
+    * `glsl_type::get_sampler_instance` in glsl_types.cpp for the matrix of
+    * which combos return error_type. The actual result_base of each
+    * referencing tex instruction doesn't affect the descriptor layout. */
+   const struct glsl_type *sampler_type =
+      glsl_sampler_type(tex->sampler_dim, tex->is_shadow, tex->is_array, GLSL_TYPE_FLOAT);
+   nir_variable *var = nir_variable_create(nir, nir_var_uniform,
+                                           glsl_array_type(sampler_type, ZINK_MAX_BINDLESS_HANDLES, 0),
+                                           "bindless_texture");
    var->data.descriptor_set = bindless->bindless_set;
    var->data.driver_location = var->data.binding = binding;
-   register_bindless_container(bindless, binding, var);
+   bindless->containers[binding] = var;
    return var;
 }
 
@@ -2581,18 +2625,19 @@ static nir_variable *
 create_bindless_image(nir_shader *nir, enum glsl_sampler_dim dim, bool is_array,
                       struct zink_bindless_info *bindless)
 {
-   unsigned binding = dim == GLSL_SAMPLER_DIM_BUF ? 3 : 2;
+   unsigned binding = binding_for_img_dim(dim, is_array);
+
+   if (bindless->containers[binding])
+      return bindless->containers[binding];
 
    const struct glsl_type *image_type = glsl_image_type(dim, is_array, GLSL_TYPE_FLOAT);
-   nir_variable *existing = find_bindless_container(bindless, binding, image_type);
-   if (existing)
-      return existing;
-
-   nir_variable *var = nir_variable_create(nir, nir_var_image, glsl_array_type(image_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_image");
+   nir_variable *var = nir_variable_create(nir, nir_var_image,
+                                           glsl_array_type(image_type, ZINK_MAX_BINDLESS_HANDLES, 0),
+                                           "bindless_image");
    var->data.descriptor_set = bindless->bindless_set;
    var->data.driver_location = var->data.binding = binding;
    var->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;
-   register_bindless_container(bindless, binding, var);
+   bindless->containers[binding] = var;
    return var;
 }
 
@@ -2608,23 +2653,18 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
       if (idx == -1)
          return false;
 
-      /* Pick the container whose leaf SPIR-V image type matches this tex
-       * instruction's (dim, is_array, is_shadow, dest_type). Falling back
-       * to bindless[0]/bindless[1] when the shader has no matching variable
-       * yet is wrong because handle_bindless_var may have already created a
-       * container with a different leaf type.
-       */
-      const unsigned binding = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 1 : 0;
-      enum glsl_base_type result_base;
-      switch (nir_alu_type_get_base_type(tex->dest_type)) {
-      case nir_type_float: result_base = GLSL_TYPE_FLOAT; break;
-      case nir_type_int:   result_base = GLSL_TYPE_INT;   break;
-      case nir_type_uint:  result_base = GLSL_TYPE_UINT;  break;
-      default:             result_base = GLSL_TYPE_FLOAT; break;
-      }
-      const struct glsl_type *want_leaf =
-         glsl_sampler_type(tex->sampler_dim, tex->is_shadow, tex->is_array, result_base);
-      nir_variable *var = find_bindless_container(bindless, binding, want_leaf);
+      /* JUICE FIX: pick the container at this tex's tuple binding. Each tuple
+       * lives at a unique binding now, so binding lookup uniquely identifies
+       * the container (no more aliasing chains). The binding is a function of
+       * (sampler_dim, is_array, is_shadow) ONLY; the result_base
+       * (float/int/uint) does not affect descriptor layout. We deliberately
+       * avoid going through `glsl_sampler_type(...)` here because for
+       * shadow+int (e.g. `textureSize(sampler2DArrayShadow, ...)` after NIR
+       * lowering, which carries the underlying shadow flag but an int32 dest
+       * type) it returns `error_type`, and unpacking that with
+       * `glsl_get_sampler_dim` trips the nir_types.cpp:229 assert. */
+      unsigned binding = binding_for_tex_instr(tex);
+      nir_variable *var = bindless->containers[binding];
       if (!var)
          var = create_bindless_texture(b->shader, tex, bindless);
       b->cursor = nir_before_instr(in);
@@ -2691,11 +2731,14 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
       return false;
    }
 
+   /* JUICE FIX: same rationale as the tex path above - compute the binding
+    * directly from the intrinsic's (dim, is_array) so we never need
+    * `glsl_image_type(dim, is_array, FLOAT)` (which returns `error_type` for
+    * RECT+array, BUF+array, and EXTERNAL) just to derive the binding id. */
    enum glsl_sampler_dim dim = nir_intrinsic_image_dim(instr);
    bool is_array = nir_intrinsic_image_array(instr);
-   const unsigned img_binding = dim == GLSL_SAMPLER_DIM_BUF ? 3 : 2;
-   const struct glsl_type *want_img_leaf = glsl_image_type(dim, is_array, GLSL_TYPE_FLOAT);
-   nir_variable *var = find_bindless_container(bindless, img_binding, want_img_leaf);
+   unsigned img_binding = binding_for_img_dim(dim, is_array);
+   nir_variable *var = bindless->containers[img_binding];
    if (!var)
       var = create_bindless_image(b->shader, dim, is_array, bindless);
    instr->intrinsic = op;
@@ -2808,30 +2851,15 @@ handle_bindless_var(nir_shader *nir, nir_variable *var, const struct glsl_type *
       return;
 
    VkDescriptorType vktype = glsl_type_is_image(type) ? zink_image_type(type) : zink_sampler_type(type);
-   unsigned binding;
-   switch (vktype) {
-      case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-         binding = 0;
-         break;
-      case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-         binding = 1;
-         break;
-      case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-         binding = 2;
-         break;
-      case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-         binding = 3;
-         break;
-      default:
-         unreachable("unknown");
-   }
-   /* Find or create a container whose leaf SPIR-V image type matches `type`.
-    * Multiple containers can share one Vulkan binding when the shader uses
-    * heterogeneous bindless image types (e.g. sampler2D and samplerCube both
-    * map to VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) - they alias the same
-    * descriptor set + binding, but emit distinct SPIR-V image variables.
-    */
-   if (!find_bindless_container(bindless, binding, type)) {
+   /* JUICE FIX: each (vktype, dim, is_array, is_shadow) tuple gets its own
+    * Vulkan binding so the emitted SPIR-V never aliases incompatible
+    * OpTypeImage Dim/Sampled/Format. */
+   enum glsl_sampler_dim dim = glsl_get_sampler_dim(type);
+   bool is_array = glsl_sampler_type_is_array(type);
+   bool is_shadow = glsl_type_is_sampler(type) && glsl_sampler_type_is_shadow(type);
+   unsigned binding = zink_bindless_get_binding(vktype, dim, is_array, is_shadow);
+
+   if (!bindless->containers[binding]) {
       nir_variable *container = nir_variable_clone(var, nir);
       container->data.bindless = 0;
       container->data.descriptor_set = bindless->bindless_set;
@@ -2840,7 +2868,7 @@ handle_bindless_var(nir_shader *nir, nir_variable *var, const struct glsl_type *
       if (!container->data.image.format)
          container->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;
       nir_shader_add_variable(nir, container);
-      register_bindless_container(bindless, binding, container);
+      bindless->containers[binding] = container;
    }
    var->data.mode = nir_var_shader_temp;
 }
@@ -3198,6 +3226,24 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
 
    ret->sinfo.have_vulkan_memory_model = screen->info.have_KHR_vulkan_memory_model;
 
+   /* JUICE: dump NIR as Zink first received it (pre-transformation). */
+   {
+      char buf[512];
+      static int k;
+      const char *name = nir->info.name ? nir->info.name : "shader";
+      const char *stage = _mesa_shader_stage_to_abbrev(nir->info.stage);
+#if defined(_WIN32)
+      snprintf(buf, sizeof(buf), "c:\\temp\\zink_%s_%s_%04d.entry.nir", name, stage, k++);
+#else
+      snprintf(buf, sizeof(buf), "/tmp/zink_%s_%s_%04d.entry.nir", name, stage, k++);
+#endif
+      FILE *fp = fopen(buf, "w");
+      if (fp) {
+         nir_print_shader(nir, fp);
+         fclose(fp);
+      }
+   }
+
    ret->hash = _mesa_hash_pointer(ret);
 
    ret->programs = _mesa_pointer_set_create(NULL);
@@ -3273,6 +3319,24 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
       fprintf(stderr, "NIR shader:\n---8<---\n");
       nir_print_shader(nir, stderr);
       fprintf(stderr, "---8<---\n");
+   }
+
+   /* JUICE: always dump post-link NIR to c:\temp for diagnostics. */
+   {
+      char buf[512];
+      static int j;
+      const char *name = nir->info.name ? nir->info.name : "shader";
+      const char *stage = _mesa_shader_stage_to_abbrev(nir->info.stage);
+#if defined(_WIN32)
+      snprintf(buf, sizeof(buf), "c:\\temp\\zink_%s_%s_%04d.nir", name, stage, j++);
+#else
+      snprintf(buf, sizeof(buf), "/tmp/zink_%s_%s_%04d.nir", name, stage, j++);
+#endif
+      FILE *fp = fopen(buf, "w");
+      if (fp) {
+         nir_print_shader(nir, fp);
+         fclose(fp);
+      }
    }
 
    struct zink_bindless_info bindless = {0};

@@ -1623,6 +1623,13 @@ struct zink_context {
          struct hash_table img_handles;
          VkBufferView *buffer_infos; //tex, img
          VkDescriptorImageInfo *img_infos; //tex, img
+         /* JUICE FIX: per-handle Vulkan binding within the bindless set,
+          * computed at handle creation from the (descriptor type, dim,
+          * is_array, is_shadow) tuple. Sized to ZINK_MAX_BINDLESS_HANDLES.
+          * One array per (image/buffer) axis to mirror img_infos/buffer_infos.
+          */
+         unsigned *img_handle_bindings;
+         unsigned *buf_handle_bindings;
          struct util_dynarray updates;
          struct util_dynarray resident;
       } bindless[2];  //img, buffer

@@ -114,6 +114,13 @@ bool
 zink_cuda_wait_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
                                  char* error_msg, size_t error_msg_size);
 
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_destroy_timeline_semaphore(uint64_t semaphore,
+                                    char* error_msg, size_t error_msg_size);
+
 static ALWAYS_INLINE void
 zink_resource_object_reference(struct zink_screen *screen,
                              struct zink_resource_object **dst,

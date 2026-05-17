@@ -4141,3 +4141,46 @@ zink_cuda_recreate_gl_buffer_for_export(uint32_t gl_buffer_id,
 /**
  * Signal a timeline semaphore with the specified value
  * This function submits a signal operation to the Vulkan queue
+
+/**
+ * Destroy a timeline semaphore created for CUDA interop.
+ */
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+bool
+zink_cuda_destroy_timeline_semaphore(uint64_t semaphore,
+                                    char* error_msg, size_t error_msg_size)
+{
+   if (!semaphore) {
+      return true;
+   }
+
+#ifdef _WIN32
+   // Get the current Mesa GL context
+   struct gl_context *gl_ctx = _mesa_get_current_context();
+   if (!gl_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No current GL context");
+      return false;
+   }
+
+   // Get the Mesa state tracker context
+   struct st_context *st_ctx = (struct st_context*)gl_ctx->st;
+   if (!st_ctx) {
+      if (error_msg) snprintf(error_msg, error_msg_size, "No Mesa state tracker context");
+      return false;
+   }
+
+   struct pipe_context *pipe_ctx = st_ctx->pipe;
+   struct zink_screen *screen = zink_screen(pipe_ctx->screen);
+   VkSemaphore vk_semaphore = (VkSemaphore)(uintptr_t)semaphore;
+
+   VKSCR(QueueWaitIdle)(screen->queue);
+   VKSCR(DestroySemaphore)(screen->dev, vk_semaphore, NULL);
+
+   return true;
+#else
+   if (error_msg) snprintf(error_msg, error_msg_size, "Platform not supported");
+   return false;
+#endif
+}

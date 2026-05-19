@@ -187,6 +187,15 @@ _mesa_get_shader_capture_path(void)
          path = p;
       }
 #endif
+
+      /* JUICE: force-on shader capture for diagnostics; env var still wins. */
+      if (!path) {
+#if defined(_WIN32)
+         path = "c:\\temp";
+#else
+         path = "/tmp";
+#endif
+      }
    }
 
    return path;
@@ -1982,8 +1991,12 @@ _mesa_dump_shader_source(const mesa_shader_stage stage, const char *source,
 
    dump_path = os_get_option_secure("MESA_SHADER_DUMP_PATH");
    if (!dump_path) {
-      path_exists = false;
-      return;
+      /* JUICE: force-on per-stage GLSL source dumps. */
+#if defined(_WIN32)
+      dump_path = (char *)"c:\\temp";
+#else
+      dump_path = (char *)"/tmp";
+#endif
    }
 
    _mesa_blake3_format(blake3_str, blake3);

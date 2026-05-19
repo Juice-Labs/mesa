@@ -40,6 +40,8 @@
 
 #include "state_tracker/st_context.h"
 
+#include "util/juice_diag_log.h"
+
 /* This is one of the few glGet that can be called from the app thread safely.
  * Only these conditions must be met:
  * - There are no unfinished glLinkProgram and glDeleteProgram calls
@@ -1477,6 +1479,23 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
    int size_mul = glsl_base_type_is_64bit(basicType) ? 2 : 1;
 
    struct gl_uniform_storage *uni;
+
+   {
+      /* JUICE: log every entry, especially uint64 paths and bindless writes,
+       * before any validation/early return so we see all upload attempts.
+       * Some apps set bindless handles via glUniform1ui64vARB (generic path)
+       * rather than glUniformHandleui64vARB, which routes here. */
+      if (basicType == GLSL_TYPE_UINT64 ||
+          basicType == GLSL_TYPE_INT64) {
+         const uint64_t *u64 = (const uint64_t *)values;
+         juice_diag_logf("U64_ENTRY",
+                         "prog=%u loc=%d count=%d src_comp=%u type=%d v0=0x%llx",
+                         shProg ? shProg->Name : 0u,
+                         (int)location, (int)count, src_components,
+                         (int)basicType,
+                         (count > 0 && values) ? (unsigned long long)u64[0] : 0ull);
+      }
+   }
    if (_mesa_is_no_error_enabled(ctx)) {
       /* From Seciton 7.6 (UNIFORM VARIABLES) of the OpenGL 4.5 spec:
        *
@@ -1507,6 +1526,36 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
    }
 
    const unsigned components = uni->type->vector_elements;
+
+   {
+      /* JUICE: log the resolved uniform metadata so we can correlate handle
+       * writes with the post-link uniform layout, especially is_bindless and
+       * the underlying type. Limit volume to interesting (bindless/uint64)
+       * cases. */
+      if (uni->is_bindless ||
+          basicType == GLSL_TYPE_UINT64 ||
+          basicType == GLSL_TYPE_INT64) {
+         const uint64_t *u64 = (const uint64_t *)values;
+         const char *uname = uni->name.string ? uni->name.string : "?";
+         juice_diag_logf("U_RESOLVED",
+                         "prog=%u name=%s loc=%d offset=%u count=%d "
+                         "is_bindless=%d is_samp=%d is_img=%d "
+                         "type_base=%d components=%u array_elems=%u "
+                         "remap_loc=%u v0=0x%llx",
+                         shProg ? shProg->Name : 0u,
+                         uname,
+                         (int)location, (unsigned)offset, (int)count,
+                         (int)uni->is_bindless,
+                         (int)uni->type->is_sampler(),
+                         (int)uni->type->is_image(),
+                         (int)uni->type->base_type,
+                         (unsigned)uni->type->vector_elements,
+                         (unsigned)uni->array_elements,
+                         (unsigned)uni->remap_location,
+                         (count > 0 && values) ?
+                            (unsigned long long)u64[0] : 0ull);
+      }
+   }
 
    /* Page 82 (page 96 of the PDF) of the OpenGL 2.1 spec says:
     *
@@ -2052,6 +2101,17 @@ _mesa_uniform_handle(GLint location, GLsizei count, const GLvoid *values,
    unsigned offset;
    struct gl_uniform_storage *uni;
 
+   {
+      /* JUICE: log every entry, even when we will bail before storing. */
+      const GLuint64 *handles = (const GLuint64 *)values;
+      juice_diag_logf("UH_ENTRY",
+                      "prog=%u loc=%d count=%d handle0=0x%llx no_error=%d",
+                      shProg ? shProg->Name : 0u,
+                      (int)location, (int)count,
+                      (count > 0 && values) ? (unsigned long long)handles[0] : 0ull,
+                      (int)_mesa_is_no_error_enabled(ctx));
+   }
+
    if (_mesa_is_no_error_enabled(ctx)) {
       /* From Section 7.6 (UNIFORM VARIABLES) of the OpenGL 4.5 spec:
        *
@@ -2105,6 +2165,27 @@ _mesa_uniform_handle(GLint location, GLsizei count, const GLvoid *values,
    if (unlikely(ctx->_Shader->Flags & GLSL_UNIFORMS)) {
       log_uniform(values, GLSL_TYPE_UINT64, components, 1, count,
                   false, shProg, location, uni);
+   }
+
+   {
+      /* JUICE: log every glUniformHandleui64*ARB so we can correlate the
+       * app's bindless handles with Zink's resident-table updates. */
+      const GLuint64 *handles = (const GLuint64 *)values;
+      const char *uname = (uni && uni->name.string) ? uni->name.string : "?";
+      const int is_samp = (uni && uni->type) ? (int)uni->type->is_sampler() : -1;
+      const int is_img  = (uni && uni->type) ? (int)uni->type->is_image()   : -1;
+      for (int i = 0; i < count; i++) {
+         juice_diag_logf("H_UNIFORM",
+                         "prog=%u name=%s loc=%d offset=%u idx=%d handle=0x%" PRIx64
+                         " bindless_sampler=%d bindless_image=%d",
+                         shProg ? shProg->Name : 0u,
+                         uname,
+                         (int)location,
+                         (unsigned)offset,
+                         i,
+                         (uint64_t)handles[i],
+                         is_samp, is_img);
+      }
    }
 
    /* Page 82 (page 96 of the PDF) of the OpenGL 2.1 spec says:

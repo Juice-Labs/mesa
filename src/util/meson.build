@@ -62,6 +62,8 @@ files_mesa_util = files(
   'half_float.h',
   'hash_table.c',
   'hash_table.h',
+  'juice_diag_log.c',
+  'juice_diag_log.h',
   'u_idalloc.c',
   'u_idalloc.h',
   'list.h',

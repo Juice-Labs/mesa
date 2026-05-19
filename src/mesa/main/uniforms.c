@@ -47,6 +47,7 @@
 #include "program/program.h"
 #include "util/bitscan.h"
 #include "util/log.h"
+#include "util/juice_diag_log.h"
 #include "api_exec_decl.h"
 
 #ifdef _WIN32
@@ -329,6 +330,11 @@ void GLAPIENTRY
 _mesa_UniformHandleui64ARB(GLint location, GLuint64 value)
 {
    GET_CURRENT_CONTEXT(ctx);
+   juice_diag_logf("API_UNIFORM_HANDLE",
+                   "fn=UniformHandleui64ARB loc=%d count=1 handle=0x%llx active_prog=%u",
+                   (int)location, (unsigned long long)value,
+                   ctx && ctx->_Shader && ctx->_Shader->ActiveProgram
+                      ? ctx->_Shader->ActiveProgram->Name : 0u);
    _mesa_uniform_handle(location, 1, &value, ctx, ctx->_Shader->ActiveProgram);
 }
 
@@ -337,6 +343,12 @@ _mesa_UniformHandleui64vARB(GLint location, GLsizei count,
                             const GLuint64 *value)
 {
    GET_CURRENT_CONTEXT(ctx);
+   juice_diag_logf("API_UNIFORM_HANDLE",
+                   "fn=UniformHandleui64vARB loc=%d count=%d handle0=0x%llx active_prog=%u",
+                   (int)location, (int)count,
+                   (count > 0 && value) ? (unsigned long long)value[0] : 0ull,
+                   ctx && ctx->_Shader && ctx->_Shader->ActiveProgram
+                      ? ctx->_Shader->ActiveProgram->Name : 0u);
    _mesa_uniform_handle(location, count, value, ctx,
                         ctx->_Shader->ActiveProgram);
 }
@@ -538,6 +550,9 @@ _mesa_ProgramUniformHandleui64ARB(GLuint program, GLint location,
                                   GLuint64 value)
 {
    GET_CURRENT_CONTEXT(ctx);
+   juice_diag_logf("API_UNIFORM_HANDLE",
+                   "fn=ProgramUniformHandleui64ARB prog=%u loc=%d count=1 handle=0x%llx",
+                   (unsigned)program, (int)location, (unsigned long long)value);
    struct gl_shader_program *shProg =
       _mesa_lookup_shader_program_err(ctx, program,
             "glProgramUniformHandleui64ARB");
@@ -549,6 +564,10 @@ _mesa_ProgramUniformHandleui64vARB(GLuint program, GLint location,
                                    GLsizei count, const GLuint64 *values)
 {
    GET_CURRENT_CONTEXT(ctx);
+   juice_diag_logf("API_UNIFORM_HANDLE",
+                   "fn=ProgramUniformHandleui64vARB prog=%u loc=%d count=%d handle0=0x%llx",
+                   (unsigned)program, (int)location, (int)count,
+                   (count > 0 && values) ? (unsigned long long)values[0] : 0ull);
    struct gl_shader_program *shProg =
       _mesa_lookup_shader_program_err(ctx, program,
             "glProgramUniformHandleui64vARB");

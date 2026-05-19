@@ -40,6 +40,7 @@
 #include "util/u_rect.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
+#include "util/juice_diag_log.h"
 #include "tgsi/tgsi_from_mesa.h"
 
 
@@ -597,13 +598,42 @@ st_make_bound_samplers_resident(struct st_context *st,
    for (i = 0; i < prog->sh.NumBindlessSamplers; i++) {
       struct gl_bindless_sampler *sampler = &prog->sh.BindlessSamplers[i];
 
-      if (!sampler->bound)
+      uint64_t prev_data = 0;
+      if (sampler->data)
+         memcpy(&prev_data, sampler->data, sizeof(prev_data));
+
+      if (!sampler->bound) {
+         /* JUICE: a skipped sampler leaves whatever happens to be in
+          * sampler->data alone, which then gets uploaded to the GPU as a
+          * bindless handle. That's almost certainly wrong for any sampler
+          * whose unit isn't currently bound (e.g. the app uploaded a tagged
+          * handle via glUniform1ui64vARB but didn't also call glUniform1i
+          * to bind a unit, leaving sampler->bound=0). The result is a
+          * stale/garbage 64-bit "handle" in the FS default UBO that the
+          * shader will use to index the bindless container, hanging the
+          * GPU on strict drivers. */
+         juice_diag_logf("BSR_SKIP",
+                         "prog=%u stage=%d idx=%d sampler_unit=%u "
+                         "bound=0 prev_data=0x%llx data_ptr=%p",
+                         prog ? prog->Id : 0u, (int)prog->info.stage, i,
+                         (unsigned)sampler->unit,
+                         (unsigned long long)prev_data,
+                         (void *)sampler->data);
          continue;
+      }
 
       /* Request a new texture handle from the driver and make it resident. */
       handle = st_create_texture_handle_from_unit(st, prog, sampler->unit);
-      if (!handle)
+      if (!handle) {
+         juice_diag_logf("BSR_NOHANDLE",
+                         "prog=%u stage=%d idx=%d sampler_unit=%u "
+                         "bound=1 prev_data=0x%llx data_ptr=%p",
+                         prog ? prog->Id : 0u, (int)prog->info.stage, i,
+                         (unsigned)sampler->unit,
+                         (unsigned long long)prev_data,
+                         (void *)sampler->data);
          continue;
+      }
 
       pipe->make_texture_handle_resident(st->pipe, handle, true);
 
@@ -611,6 +641,15 @@ st_make_bound_samplers_resident(struct st_context *st,
        * uploading the constant buffer.
        */
       *(uint64_t *)sampler->data = handle;
+
+      juice_diag_logf("BSR_OK",
+                      "prog=%u stage=%d idx=%d sampler_unit=%u "
+                      "prev_data=0x%llx new_handle=0x%llx data_ptr=%p",
+                      prog ? prog->Id : 0u, (int)prog->info.stage, i,
+                      (unsigned)sampler->unit,
+                      (unsigned long long)prev_data,
+                      (unsigned long long)handle,
+                      (void *)sampler->data);
 
       /* Store the handle in the context. */
       bound_handles->handles = (uint64_t *)

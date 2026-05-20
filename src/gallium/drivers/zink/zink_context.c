@@ -2588,6 +2588,38 @@ zink_set_sampler_views(struct pipe_context *pctx,
    }
 }
 
+/* JUICE Step A.9: compute the (CIS, dim, is_array, is_shadow) tuple
+ * binding for a sampler-view bindless handle from the view target and
+ * sampler compare mode. This is what the per-handle binding write path
+ * needs to know to land each descriptor at its tuple binding. The A.7
+ * fanout still mirrors to every CIS tuple binding, so this value only
+ * shifts which binding is the "primary" write for now; A.10 will then
+ * shrink the write to just this binding.
+ */
+static unsigned
+juice_tex_handle_tuple_binding(struct pipe_sampler_view *view,
+                               const struct pipe_sampler_state *state)
+{
+   enum glsl_sampler_dim dim;
+   bool is_array = false;
+   bool is_shadow = state->compare_mode != PIPE_TEX_COMPARE_NONE;
+   switch (view->target) {
+   case PIPE_TEXTURE_1D:                         dim = GLSL_SAMPLER_DIM_1D; break;
+   case PIPE_TEXTURE_1D_ARRAY: is_array = true;  dim = GLSL_SAMPLER_DIM_1D; break;
+   case PIPE_TEXTURE_2D:                         dim = GLSL_SAMPLER_DIM_2D; break;
+   case PIPE_TEXTURE_2D_ARRAY: is_array = true;  dim = GLSL_SAMPLER_DIM_2D; break;
+   case PIPE_TEXTURE_RECT:                       dim = GLSL_SAMPLER_DIM_RECT; break;
+   case PIPE_TEXTURE_3D:                         dim = GLSL_SAMPLER_DIM_3D; break;
+   case PIPE_TEXTURE_CUBE:                       dim = GLSL_SAMPLER_DIM_CUBE; break;
+   case PIPE_TEXTURE_CUBE_ARRAY: is_array = true; dim = GLSL_SAMPLER_DIM_CUBE; break;
+   default:                                      dim = GLSL_SAMPLER_DIM_2D; break;
+   }
+   if (view->texture->nr_samples > 1)
+      dim = GLSL_SAMPLER_DIM_MS;
+   return zink_bindless_get_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    dim, is_array, is_shadow);
+}
+
 static uint64_t
 zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *view, const struct pipe_sampler_state *state)
 {
@@ -2623,6 +2655,13 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
       handle += ZINK_MAX_BINDLESS_HANDLES;
    bd->handle = handle;
    _mesa_hash_table_insert(&ctx->di.bindless[bd->ds.is_buffer].tex_handles, (void*)(uintptr_t)handle, bd);
+   /* JUICE Step A.9: record the CIS tuple binding for non-buffer handles.
+    * For buffer (texel-buffer) handles we leave the array at its Step A
+    * legacy fallback value; UTEX is single-binding and gets handled in a
+    * later step. */
+   if (!bd->ds.is_buffer)
+      ctx->di.bindless[0].img_handle_bindings[handle] =
+         juice_tex_handle_tuple_binding(view, state);
    return handle;
 }
 

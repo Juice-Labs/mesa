@@ -1975,6 +1975,22 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
                wd.pImageInfo = &ctx->di.bindless[i].img_infos[handle];
             /* this sucks, but sets must be singly updated to be handled correctly */
             VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd, 0, NULL);
+
+            /* JUICE Step A.5 (write-side mirror): for every non-buffer (CIS)
+             * bindless handle, ALSO lay down a duplicate descriptor at the
+             * tuple binding for (CIS, 2D, !array, !shadow) = binding 4. The
+             * shader still reads at the legacy binding 0 (no compiler change
+             * yet), so this descriptor is unread; it exists purely to prove
+             * the 38-binding DSL accepts writes at binding 4 without
+             * disturbing rendering. If this step regresses, the write-side is
+             * itself unsafe; if not, the regression in full Step B lives on
+             * the compiler/read side. */
+            if (!is_buffer) {
+               VkWriteDescriptorSet wd2 = wd;
+               wd2.dstBinding = 4;
+               wd2.descriptorType = zink_bindless_binding_type(wd2.dstBinding);
+               VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd2, 0, NULL);
+            }
          }
       }
    }

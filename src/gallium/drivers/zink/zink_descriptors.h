@@ -39,6 +39,77 @@ enum zink_pipeline_idx;
 
 #define ZINK_BINDLESS_IS_BUFFER(HANDLE) (HANDLE >= ZINK_MAX_BINDLESS_HANDLES)
 
+/* JUICE FIX: split the bindless descriptor set across multiple bindings, one
+ * per (VkDescriptorType, glsl_sampler_dim, is_array, is_shadow) tuple so that
+ * each SPIR-V OpTypeImage has its own dedicated Vulkan binding (no aliasing).
+ *
+ * The pre-rework layout (4 bindings, all dim/array/shadow aliased at one
+ * binding per descriptor type) produces invalid SPIR-V on shaders that mix
+ * e.g. sampler1D and sampler2D bindless: aliased descriptors must have
+ * matching OpTypeImage Dim/Sampled/Format, which they don't here. RADV faults,
+ * NVIDIA renders black/garbage.
+ *
+ * Encoding (binding number within set ZINK_DESCRIPTOR_BINDLESS):
+ *   COMBINED_IMAGE_SAMPLER:  0..23   (6 dims x 2 array x 2 shadow)
+ *   UNIFORM_TEXEL_BUFFER:    24
+ *   STORAGE_IMAGE:           25..36  (6 dims x 2 array; shadow N/A)
+ *   STORAGE_TEXEL_BUFFER:    37
+ */
+#define ZINK_BINDLESS_DIM_COUNT 6
+#define ZINK_BINDLESS_SAMPLER_FIRST 0
+#define ZINK_BINDLESS_SAMPLER_LAST  23
+#define ZINK_BINDLESS_UTEX_BINDING  24
+#define ZINK_BINDLESS_IMAGE_FIRST   25
+#define ZINK_BINDLESS_IMAGE_LAST    36
+#define ZINK_BINDLESS_STEX_BINDING  37
+#define ZINK_BINDLESS_NUM_BINDINGS  38
+
+static inline unsigned
+zink_bindless_dim_index(enum glsl_sampler_dim dim)
+{
+   switch (dim) {
+   case GLSL_SAMPLER_DIM_1D:   return 0;
+   case GLSL_SAMPLER_DIM_2D:   return 1;
+   case GLSL_SAMPLER_DIM_3D:   return 2;
+   case GLSL_SAMPLER_DIM_CUBE: return 3;
+   case GLSL_SAMPLER_DIM_RECT: return 4;
+   case GLSL_SAMPLER_DIM_MS:   return 5;
+   default:                    return 1; /* SUBPASS/EXTERNAL fall back to 2D */
+   }
+}
+
+static inline unsigned
+zink_bindless_get_binding(VkDescriptorType type, enum glsl_sampler_dim dim,
+                          bool is_array, bool is_shadow)
+{
+   switch (type) {
+   case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
+      unsigned d = zink_bindless_dim_index(dim);
+      return ZINK_BINDLESS_SAMPLER_FIRST + d * 4 + (is_array ? 2 : 0) + (is_shadow ? 1 : 0);
+   }
+   case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+      return ZINK_BINDLESS_UTEX_BINDING;
+   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: {
+      unsigned d = zink_bindless_dim_index(dim);
+      return ZINK_BINDLESS_IMAGE_FIRST + d * 2 + (is_array ? 1 : 0);
+   }
+   case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+      return ZINK_BINDLESS_STEX_BINDING;
+   default:
+      unreachable("unknown vk descriptor type for bindless");
+   }
+}
+
+static inline VkDescriptorType
+zink_bindless_binding_type(unsigned binding)
+{
+   if (binding <= ZINK_BINDLESS_SAMPLER_LAST) return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+   if (binding == ZINK_BINDLESS_UTEX_BINDING) return VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+   if (binding <= ZINK_BINDLESS_IMAGE_LAST)   return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+   if (binding == ZINK_BINDLESS_STEX_BINDING) return VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+   unreachable("unknown bindless binding");
+}
+
 static inline enum zink_descriptor_size_index
 zink_vktype_to_size_idx(VkDescriptorType type)
 {

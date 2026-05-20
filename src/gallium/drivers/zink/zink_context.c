@@ -182,6 +182,8 @@ zink_context_destroy(struct pipe_context *pctx)
       util_idalloc_fini(&ctx->di.bindless[i].img_slots);
       free(ctx->di.bindless[i].buffer_infos);
       free(ctx->di.bindless[i].img_infos);
+      free(ctx->di.bindless[i].img_handle_bindings);
+      free(ctx->di.bindless[i].buf_handle_bindings);
       util_dynarray_fini(&ctx->di.bindless[i].updates);
       util_dynarray_fini(&ctx->di.bindless[i].resident);
    }
@@ -5041,6 +5043,25 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
          util_idalloc_alloc(&ctx->di.bindless[i].img_slots);
          ctx->di.bindless[i].buffer_infos = malloc(sizeof(VkBufferView) * ZINK_MAX_BINDLESS_HANDLES);
          ctx->di.bindless[i].img_infos = malloc(sizeof(VkDescriptorImageInfo) * ZINK_MAX_BINDLESS_HANDLES);
+         /* JUICE FIX Step A: allocate the per-handle bindless binding arrays.
+          * The descriptor-write path in zink_descriptors_update_bindless
+          * consults bind_arr[slot] when bind_arr is non-NULL and otherwise
+          * falls back to the upstream (i*2)/(i*2+1) legacy binding. We
+          * initialize every slot to the legacy fallback value here so the
+          * end-to-end behavior is byte-identical to the "bind_arr==NULL"
+          * path. Subsequent steps will start overriding individual slots
+          * with their tuple-binding value, in lock-step with the matching
+          * compiler-side change so reads and writes always agree. */
+         ctx->di.bindless[i].img_handle_bindings = malloc(sizeof(unsigned) * ZINK_MAX_BINDLESS_HANDLES);
+         ctx->di.bindless[i].buf_handle_bindings = malloc(sizeof(unsigned) * ZINK_MAX_BINDLESS_HANDLES);
+         {
+            unsigned legacy_img = (i == 0) ? 0u : 2u; /* CIS or STORAGE_IMAGE */
+            unsigned legacy_buf = (i == 0) ? 1u : 3u; /* UTEX or STEX */
+            for (unsigned s = 0; s < ZINK_MAX_BINDLESS_HANDLES; s++) {
+               ctx->di.bindless[i].img_handle_bindings[s] = legacy_img;
+               ctx->di.bindless[i].buf_handle_bindings[s] = legacy_buf;
+            }
+         }
          util_dynarray_init(&ctx->di.bindless[i].updates, NULL);
          util_dynarray_init(&ctx->di.bindless[i].resident, NULL);
       }

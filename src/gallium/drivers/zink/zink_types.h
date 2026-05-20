@@ -87,6 +87,14 @@
 #define ZINK_MAX_SHADER_IMAGES 32
 /* total number of bindless ids that can be allocated */
 #define ZINK_MAX_BINDLESS_HANDLES 1024
+#define ZINK_BINDLESS_DIM_COUNT 6
+#define ZINK_BINDLESS_SAMPLER_FIRST 0
+#define ZINK_BINDLESS_SAMPLER_LAST  23
+#define ZINK_BINDLESS_UTEX_BINDING  24
+#define ZINK_BINDLESS_IMAGE_FIRST   25
+#define ZINK_BINDLESS_IMAGE_LAST    36
+#define ZINK_BINDLESS_STEX_BINDING  37
+#define ZINK_BINDLESS_NUM_BINDINGS  38
 
 /* enum zink_descriptor_type */
 #define ZINK_MAX_DESCRIPTOR_SETS 6
@@ -462,7 +470,7 @@ struct zink_descriptor_data {
          struct zink_resource *bindless_db;
          uint8_t *bindless_db_map;
          struct pipe_transfer *bindless_db_xfer;
-         uint32_t bindless_db_offsets[4];
+         uint32_t bindless_db_offsets[ZINK_BINDLESS_NUM_BINDINGS];
          unsigned max_db_size;
          unsigned size_enlarge_scale;
       } db;

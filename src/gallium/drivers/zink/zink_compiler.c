@@ -4881,22 +4881,21 @@ handle_bindless_var(nir_shader *nir, nir_variable *var, const struct glsl_type *
       container->data.bindless = 0;
       container->data.descriptor_set = bindless->bindless_set;
       container->type = glsl_array_type(type, ZINK_MAX_BINDLESS_HANDLES, 0);
-      /* JUICE Step A.6 (read-side): emit the SPIR-V binding decoration at
-       * the (CIS, 2D, !array, !shadow) tuple binding (= 4) for the matching
-       * sampler2D container only. Every other type stays at the legacy
-       * binding. driver_location is left at the legacy upstream slot so
-       * downstream NIR/SPIR-V consumers that index per-driver_location
-       * (match_tex_dests, non-bindless sampler/image caches, etc.) see no
-       * shift. The A.5 mirror already laid down a descriptor at binding 4,
-       * so reads there are serviced. */
+      /* JUICE Step A.8 (read-side, all CIS tuples): emit the SPIR-V binding
+       * decoration at the per-tuple binding for every CIS container, not
+       * just sampler2D. The A.7 write-side fanout already mirrors each CIS
+       * handle to all 24 CIS tuple bindings, so each migrated container's
+       * read lands on a populated descriptor. driver_location is left at
+       * the legacy upstream slot so per-driver_location NIR/SPIR-V
+       * consumers see no shift. UTEX/IMAGE/STEX containers stay at their
+       * legacy binding for now. */
       container->data.driver_location = binding;
       container->data.binding = binding;
       if (vktype == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
          enum glsl_sampler_dim cdim = glsl_get_sampler_dim(type);
          bool cis_array  = glsl_sampler_type_is_array(type);
          bool cis_shadow = glsl_type_is_sampler(type) && glsl_sampler_type_is_shadow(type);
-         if (cdim == GLSL_SAMPLER_DIM_2D && !cis_array && !cis_shadow)
-            container->data.binding = 4;
+         container->data.binding = zink_bindless_get_binding(vktype, cdim, cis_array, cis_shadow);
       }
       if (!container->data.image.format)
          container->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;

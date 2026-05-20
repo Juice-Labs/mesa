@@ -55,14 +55,6 @@ enum zink_pipeline_idx;
  *   STORAGE_IMAGE:           25..36  (6 dims x 2 array; shadow N/A)
  *   STORAGE_TEXEL_BUFFER:    37
  */
-#define ZINK_BINDLESS_DIM_COUNT 6
-#define ZINK_BINDLESS_SAMPLER_FIRST 0
-#define ZINK_BINDLESS_SAMPLER_LAST  23
-#define ZINK_BINDLESS_UTEX_BINDING  24
-#define ZINK_BINDLESS_IMAGE_FIRST   25
-#define ZINK_BINDLESS_IMAGE_LAST    36
-#define ZINK_BINDLESS_STEX_BINDING  37
-#define ZINK_BINDLESS_NUM_BINDINGS  38
 
 static inline unsigned
 zink_bindless_dim_index(enum glsl_sampler_dim dim)
@@ -96,7 +88,7 @@ zink_bindless_get_binding(VkDescriptorType type, enum glsl_sampler_dim dim,
    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
       return ZINK_BINDLESS_STEX_BINDING;
    default:
-      unreachable("unknown vk descriptor type for bindless");
+      UNREACHABLE("unknown vk descriptor type for bindless");
    }
 }
 
@@ -107,7 +99,7 @@ zink_bindless_binding_type(unsigned binding)
    if (binding == ZINK_BINDLESS_UTEX_BINDING) return VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
    if (binding <= ZINK_BINDLESS_IMAGE_LAST)   return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
    if (binding == ZINK_BINDLESS_STEX_BINDING) return VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
-   unreachable("unknown bindless binding");
+   UNREACHABLE("unknown bindless binding");
 }
 
 static inline enum zink_descriptor_size_index

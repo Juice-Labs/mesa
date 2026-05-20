@@ -3353,13 +3353,17 @@ static bool
 init_layouts(struct zink_screen *screen)
 {
    if (screen->info.have_EXT_descriptor_indexing) {
-      VkDescriptorSetLayoutBinding bindings[4];
-      const unsigned num_bindings = 4;
+      /* JUICE FIX: one binding per (VkDescriptorType, dim, is_array, is_shadow)
+       * tuple instead of one per descriptor type. See zink_bindless_get_binding()
+       * in zink_descriptors.h for the encoding.
+       */
+      VkDescriptorSetLayoutBinding bindings[ZINK_BINDLESS_NUM_BINDINGS];
+      const unsigned num_bindings = ZINK_BINDLESS_NUM_BINDINGS;
       VkDescriptorSetLayoutCreateInfo dcslci = {0};
       dcslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
       dcslci.pNext = NULL;
       VkDescriptorSetLayoutBindingFlagsCreateInfo fci = {0};
-      VkDescriptorBindingFlags flags[4];
+      VkDescriptorBindingFlags flags[ZINK_BINDLESS_NUM_BINDINGS];
       dcslci.pNext = &fci;
       if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB)
          dcslci.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
@@ -3373,10 +3377,11 @@ init_layouts(struct zink_screen *screen)
          if (zink_descriptor_mode != ZINK_DESCRIPTOR_MODE_DB)
             flags[i] |= VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
       }
-      /* there is exactly 1 bindless descriptor set per context, and it has 4 bindings, 1 for each descriptor type */
+      /* there is exactly 1 bindless descriptor set per context, and it has one
+       * binding per sampler/image type tuple */
       for (unsigned i = 0; i < num_bindings; i++) {
          bindings[i].binding = i;
-         bindings[i].descriptorType = zink_descriptor_type_from_bindless_index(i);
+         bindings[i].descriptorType = zink_bindless_binding_type(i);
          bindings[i].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
          bindings[i].stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT;
          bindings[i].pImmutableSamplers = NULL;

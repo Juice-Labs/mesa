@@ -1486,7 +1486,26 @@ zink_descriptors_update(struct zink_context *ctx, enum zink_pipeline_idx pidx)
    else
       zink_descriptors_update_masked(ctx, pidx, changed_sets, bind_sets);
    /* bindless descriptors are context-based and get updated elsewhere */
-   if (pg->dd.bindless && unlikely(!ctx->dd.bindless_bound)) {
+   /* JUICE FIX (Pipeline Layout Compatibility):
+    *
+    * Two pipeline layouts are "compatible for set N" only if their DSLs
+    * for sets 0..N are identical. Zink's `pg->compat_id` is the hash of
+    * `pg->dsl[0..num_dsl)`, so when it changes between consecutive draws
+    * (signaled here by `bind_sets != 0`) the new pipeline's layout is not
+    * guaranteed compatible-for-set-ZINK_DESCRIPTOR_BINDLESS with the layout
+    * the bindless set was bound under. The bindless set is therefore
+    * "disturbed" and must be re-bound under the new layout before any
+    * sampling draw that uses it.
+    *
+    * Upstream Zink only rebinds on first use of the batch
+    * (`!ctx->dd.bindless_bound`), which is wrong for any batch that
+    * switches between programs with different non-bindless DSLs (which is
+    * essentially every nontrivial bindless app). Strict drivers fault
+    * (device-lost / cmdbuf-never-retires); lenient drivers keep the stale
+    * binding alive and the FS reads garbage.
+    *
+    * Fix: also rebind when `bind_sets` says compat changed. */
+   if (pg->dd.bindless && (unlikely(!ctx->dd.bindless_bound) || bind_sets)) {
       if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
          bind_bindless_db(ctx, pg);
       } else {
@@ -1830,7 +1849,7 @@ zink_descriptors_init_bindless(struct zink_context *ctx)
       ctx->dd.db.bindless_db = zink_resource(pres);
       ctx->dd.db.bindless_db_map = pipe_buffer_map(&ctx->base, pres, PIPE_MAP_READ | PIPE_MAP_WRITE | PIPE_MAP_PERSISTENT, &ctx->dd.db.bindless_db_xfer);
       zink_batch_bind_db(ctx);
-      for (unsigned i = 0; i < 4; i++) {
+      for (unsigned i = 0; i < ZINK_BINDLESS_NUM_BINDINGS; i++) {
          VkDeviceSize offset;
          VKSCR(GetDescriptorSetLayoutBindingOffsetEXT)(screen->dev, screen->bindless_layout, i, &offset);
          ctx->dd.db.bindless_db_offsets[i] = offset;
@@ -1838,10 +1857,17 @@ zink_descriptors_init_bindless(struct zink_context *ctx)
    } else {
       VkDescriptorPoolCreateInfo dpci = {0};
       VkDescriptorPoolSize sizes[4];
-      for (unsigned i = 0; i < 4; i++) {
-         sizes[i].type = zink_descriptor_type_from_bindless_index(i);
-         sizes[i].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
-      }
+      /* Pool sized for the worst case of every binding being fully populated. */
+      unsigned n_sampler_bindings = ZINK_BINDLESS_SAMPLER_LAST - ZINK_BINDLESS_SAMPLER_FIRST + 1;
+      unsigned n_image_bindings   = ZINK_BINDLESS_IMAGE_LAST   - ZINK_BINDLESS_IMAGE_FIRST   + 1;
+      sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      sizes[0].descriptorCount = ZINK_MAX_BINDLESS_HANDLES * n_sampler_bindings;
+      sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
+      sizes[1].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
+      sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+      sizes[2].descriptorCount = ZINK_MAX_BINDLESS_HANDLES * n_image_bindings;
+      sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+      sizes[3].descriptorCount = ZINK_MAX_BINDLESS_HANDLES;
       dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
       dpci.pPoolSizes = sizes;
       dpci.poolSizeCount = 4;
@@ -1891,7 +1917,14 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
          /* updates are tracked by handle */
          uint32_t handle = util_dynarray_pop(&ctx->di.bindless[i].updates, uint32_t);
          bool is_buffer = ZINK_BINDLESS_IS_BUFFER(handle);
-         unsigned binding = i * 2 + !!is_buffer;
+         uint32_t slot = is_buffer ? handle - ZINK_MAX_BINDLESS_HANDLES : handle;
+         /* JUICE FIX: pick the binding recorded at handle-create time so the
+          * SPIR-V container (which lives at its own tuple-specific binding)
+          * and this descriptor write land on the same Vulkan binding. */
+         unsigned *bind_arr = is_buffer ? ctx->di.bindless[i].buf_handle_bindings
+                                        : ctx->di.bindless[i].img_handle_bindings;
+         unsigned binding = bind_arr ? bind_arr[slot] :
+                                       (is_buffer ? (i * 2 + 1) : (i * 2)); /* legacy fallback */
          if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
             if (is_buffer) {
                size_t size = i ? screen->info.db_props.robustStorageTexelBufferDescriptorSize : screen->info.db_props.robustUniformTexelBufferDescriptorSize;
@@ -1922,17 +1955,22 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
                }
             }
          } else {
-            VkWriteDescriptorSet wd;
+            /* JUICE FIX: zero-init wd so unused union members (pImageInfo /
+             * pBufferInfo / pTexelBufferView) are always NULL. Vulkan only
+             * requires the one matching descriptorType, but consumers that walk
+             * all three (e.g. Juice's RPC serializer) would otherwise dereference
+             * uninitialized stack values for the inactive union members. */
+            VkWriteDescriptorSet wd = {0};
             wd.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             wd.pNext = NULL;
             wd.dstSet = ctx->dd.t.bindless_set;
             wd.dstBinding = binding;
             /* buffer handle ids are offset by ZINK_MAX_BINDLESS_HANDLES for internal tracking */
-            wd.dstArrayElement = is_buffer ? handle - ZINK_MAX_BINDLESS_HANDLES : handle;
+            wd.dstArrayElement = slot;
             wd.descriptorCount = 1;
-            wd.descriptorType = zink_descriptor_type_from_bindless_index(wd.dstBinding);
+            wd.descriptorType = zink_bindless_binding_type(wd.dstBinding);
             if (is_buffer)
-               wd.pTexelBufferView = &ctx->di.bindless[i].t.buffer_infos[wd.dstArrayElement];
+               wd.pTexelBufferView = &ctx->di.bindless[i].t.buffer_infos[slot];
             else
                wd.pImageInfo = &ctx->di.bindless[i].img_infos[handle];
             /* this sucks, but sets must be singly updated to be handled correctly */

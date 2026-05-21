@@ -1976,18 +1976,26 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
             /* this sucks, but sets must be singly updated to be handled correctly */
             VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd, 0, NULL);
 
-            /* JUICE Step A.7 (write-side fanout): extend the A.5 mirror to
-             * cover ALL 24 CIS tuple bindings. The read-side compiler is being
-             * migrated tuple-by-tuple to read at its matching tuple binding;
-             * fanning the descriptor write to every CIS tuple binding ensures
-             * each migrated container finds its descriptor regardless of which
-             * tuple it routes to. Legacy binding (already written above by
-             * `wd`) is skipped to avoid a redundant write. The pool was sized
-             * for 24*1024 CIS descriptors so this is within capacity, and
-             * unread bindings are harmless. */
+            /* JUICE Step A.7/A.12 (write-side fanout): GL bindless permits a
+             * single handle to be sampled as more than one SPIR-V image type
+             * across shaders, so each handle's descriptor has to be available
+             * at every tuple binding within its descriptor type. Fan the
+             * write to all bindings of the matching type (24 CIS bindings on
+             * side 0; 12 STORAGE_IMAGE bindings on side 1). UTEX/STEX are
+             * single-binding by construction and need no fanout. Legacy
+             * binding (already written above by `wd`) is skipped. The pool
+             * was sized for the full descriptor count of each type so this
+             * is within capacity, and unread bindings are harmless. */
             if (!is_buffer) {
-               for (unsigned b = ZINK_BINDLESS_SAMPLER_FIRST;
-                    b <= ZINK_BINDLESS_SAMPLER_LAST; b++) {
+               unsigned fan_first, fan_last;
+               if (i == 0) {
+                  fan_first = ZINK_BINDLESS_SAMPLER_FIRST;
+                  fan_last  = ZINK_BINDLESS_SAMPLER_LAST;
+               } else {
+                  fan_first = ZINK_BINDLESS_IMAGE_FIRST;
+                  fan_last  = ZINK_BINDLESS_IMAGE_LAST;
+               }
+               for (unsigned b = fan_first; b <= fan_last; b++) {
                   if (b == wd.dstBinding) continue;
                   VkWriteDescriptorSet wd2 = wd;
                   wd2.dstBinding = b;

@@ -1002,14 +1002,6 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
 bool
 disk_cache_enabled()
 {
-   /* JUICE FIX (force-off): we cannot set MESA_SHADER_CACHE_DISABLE in the
-    * VRED launch environment, and a populated on-disk cache from an
-    * earlier build can serve stale SPIR-V (with bindings emitted by a
-    * previous step) into later runs and present as non-deterministic
-    * rendering. Forcing this off makes shader compilation deterministic
-    * across rebuilds. Remove once the build chain is stable. */
-   return false;
-
    /* If running as a users other than the real user disable cache */
    if (!__normal_user())
       return false;

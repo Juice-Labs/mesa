@@ -4881,13 +4881,15 @@ handle_bindless_var(nir_shader *nir, nir_variable *var, const struct glsl_type *
       container->data.bindless = 0;
       container->data.descriptor_set = bindless->bindless_set;
       container->type = glsl_array_type(type, ZINK_MAX_BINDLESS_HANDLES, 0);
-      /* JUICE Step A.11 (read-side, UTEX): in addition to CIS containers
-       * (A.8), route the UNIFORM_TEXEL_BUFFER container at its dedicated
-       * single binding (24) instead of the legacy upstream slot (1, which
-       * happens to be a CIS binding in the 38-binding layout = wrong
-       * descriptor type). UTEX has no tuple variants so this is a single
-       * scalar choice. STORAGE_IMAGE/STEX containers stay at their legacy
-       * binding for now. */
+      /* JUICE Step A.12 (read-side, all remaining descriptor types):
+       * complete the read-side rework by also routing STORAGE_IMAGE
+       * containers at their (dim, is_array) tuple binding (25..36) and
+       * STEX containers at the dedicated STEX binding (37). With this,
+       * every bindless container reads at the correct descriptor-type
+       * binding in the 38-binding layout and the legacy upstream slot is
+       * no longer consulted for any vktype. driver_location is still left
+       * at the legacy upstream slot so per-driver_location NIR/SPIR-V
+       * consumers see no shift. */
       container->data.driver_location = binding;
       container->data.binding = binding;
       if (vktype == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
@@ -4897,6 +4899,13 @@ handle_bindless_var(nir_shader *nir, nir_variable *var, const struct glsl_type *
          container->data.binding = zink_bindless_get_binding(vktype, cdim, cis_array, cis_shadow);
       } else if (vktype == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
          container->data.binding = ZINK_BINDLESS_UTEX_BINDING;
+      } else if (vktype == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
+         enum glsl_sampler_dim idim = glsl_get_sampler_dim(type);
+         bool img_array = glsl_sampler_type_is_array(type);
+         /* shadow is N/A for STORAGE_IMAGE */
+         container->data.binding = zink_bindless_get_binding(vktype, idim, img_array, false);
+      } else if (vktype == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) {
+         container->data.binding = ZINK_BINDLESS_STEX_BINDING;
       }
       if (!container->data.image.format)
          container->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;

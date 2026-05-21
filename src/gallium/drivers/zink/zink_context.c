@@ -2802,6 +2802,32 @@ zink_make_texture_handle_resident(struct pipe_context *pctx, uint64_t handle, bo
    ctx->di.bindless_dirty[0] = true;
 }
 
+/* JUICE Step A.12: STORAGE_IMAGE analog of juice_tex_handle_tuple_binding.
+ * Derives the (STORAGE_IMAGE, dim, is_array) tuple binding (25..36) from
+ * the underlying resource target. STORAGE_IMAGE has no shadow flag.
+ */
+static unsigned
+juice_img_handle_tuple_binding(const struct pipe_image_view *view)
+{
+   enum glsl_sampler_dim dim;
+   bool is_array = false;
+   switch (view->resource->target) {
+   case PIPE_TEXTURE_1D:                         dim = GLSL_SAMPLER_DIM_1D; break;
+   case PIPE_TEXTURE_1D_ARRAY: is_array = true;  dim = GLSL_SAMPLER_DIM_1D; break;
+   case PIPE_TEXTURE_2D:                         dim = GLSL_SAMPLER_DIM_2D; break;
+   case PIPE_TEXTURE_2D_ARRAY: is_array = true;  dim = GLSL_SAMPLER_DIM_2D; break;
+   case PIPE_TEXTURE_RECT:                       dim = GLSL_SAMPLER_DIM_RECT; break;
+   case PIPE_TEXTURE_3D:                         dim = GLSL_SAMPLER_DIM_3D; break;
+   case PIPE_TEXTURE_CUBE:                       dim = GLSL_SAMPLER_DIM_CUBE; break;
+   case PIPE_TEXTURE_CUBE_ARRAY: is_array = true; dim = GLSL_SAMPLER_DIM_CUBE; break;
+   default:                                      dim = GLSL_SAMPLER_DIM_2D; break;
+   }
+   if (view->resource->nr_samples > 1)
+      dim = GLSL_SAMPLER_DIM_MS;
+   return zink_bindless_get_binding(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                    dim, is_array, false);
+}
+
 static uint64_t
 zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view *view)
 {
@@ -2837,6 +2863,19 @@ zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view
       handle += ZINK_MAX_BINDLESS_HANDLES;
    bd->handle = handle;
    _mesa_hash_table_insert(&ctx->di.bindless[bd->ds.is_buffer].img_handles, (void*)(uintptr_t)handle, bd);
+   /* JUICE Step A.12: record the STORAGE_IMAGE tuple binding for non-buffer
+    * image handles, and the single STEX binding (37) for buffer image
+    * handles. The image-side updates queue lives on bindless[1] (see
+    * zink_make_image_handle_resident), so both branches write the
+    * bindless[1] arrays. */
+   if (!bd->ds.is_buffer) {
+      ctx->di.bindless[1].img_handle_bindings[handle] =
+         juice_img_handle_tuple_binding(view);
+   } else {
+      uint64_t slot = handle - ZINK_MAX_BINDLESS_HANDLES;
+      ctx->di.bindless[1].buf_handle_bindings[slot] =
+         ZINK_BINDLESS_STEX_BINDING;
+   }
    return handle;
 }
 
@@ -6329,11 +6368,20 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
          ctx->di.bindless[i].img_handle_bindings = malloc(sizeof(unsigned) * ZINK_MAX_BINDLESS_HANDLES);
          ctx->di.bindless[i].buf_handle_bindings = malloc(sizeof(unsigned) * ZINK_MAX_BINDLESS_HANDLES);
          {
-            unsigned legacy_img = (i == 0) ? 0u : 2u; /* CIS or STORAGE_IMAGE */
-            unsigned legacy_buf = (i == 0) ? 1u : 3u; /* UTEX or STEX */
+            /* JUICE Step A.12: default to a well-typed binding in the
+             * 38-binding layout for each (side, is_buffer) combination,
+             * so any unused slot read by update_bindless still produces a
+             * valid (matching-descriptor-type) write. zink_create_*_handle
+             * overrides the entry to the actual per-handle tuple binding
+             * for slots that get used.
+             *   side 0 (sampler/CIS+UTEX): img=0 (CIS 1D)        buf=24 (UTEX)
+             *   side 1 (image/SIMG+STEX):  img=25 (SIMG 1D)      buf=37 (STEX)
+             */
+            unsigned default_img = (i == 0) ? 0u                         : ZINK_BINDLESS_IMAGE_FIRST;
+            unsigned default_buf = (i == 0) ? ZINK_BINDLESS_UTEX_BINDING : ZINK_BINDLESS_STEX_BINDING;
             for (unsigned s = 0; s < ZINK_MAX_BINDLESS_HANDLES; s++) {
-               ctx->di.bindless[i].img_handle_bindings[s] = legacy_img;
-               ctx->di.bindless[i].buf_handle_bindings[s] = legacy_buf;
+               ctx->di.bindless[i].img_handle_bindings[s] = default_img;
+               ctx->di.bindless[i].buf_handle_bindings[s] = default_buf;
             }
          }
          ctx->di.bindless[i].updates = UTIL_DYNARRAY_INIT;

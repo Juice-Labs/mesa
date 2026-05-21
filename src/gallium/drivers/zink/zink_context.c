@@ -2656,12 +2656,19 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
    bd->handle = handle;
    _mesa_hash_table_insert(&ctx->di.bindless[bd->ds.is_buffer].tex_handles, (void*)(uintptr_t)handle, bd);
    /* JUICE Step A.9: record the CIS tuple binding for non-buffer handles.
-    * For buffer (texel-buffer) handles we leave the array at its Step A
-    * legacy fallback value; UTEX is single-binding and gets handled in a
-    * later step. */
-   if (!bd->ds.is_buffer)
+    * JUICE Step A.11: record the single UTEX binding (24) for buffer
+    * (texel-buffer) handles. zink_make_texture_handle_resident always
+    * pushes texture handles -- buffer or not -- to bindless[0].updates and
+    * looks up buf_handle_bindings on the same side, so both branches write
+    * the bindless[0] arrays. */
+   if (!bd->ds.is_buffer) {
       ctx->di.bindless[0].img_handle_bindings[handle] =
          juice_tex_handle_tuple_binding(view, state);
+   } else {
+      uint64_t slot = handle - ZINK_MAX_BINDLESS_HANDLES;
+      ctx->di.bindless[0].buf_handle_bindings[slot] =
+         ZINK_BINDLESS_UTEX_BINDING;
+   }
    return handle;
 }
 

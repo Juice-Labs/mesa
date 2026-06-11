@@ -23,6 +23,10 @@
 
 #include "nir_opcodes.h"
 #include "shader_enums.h"
+#include <errno.h> /* JUICE TEMP DIAG: SPIR-V dump errno reporting */
+#ifdef _WIN32
+#include <direct.h> /* JUICE TEMP DIAG: _mkdir for the SPIR-V dump dir */
+#endif
 #include "zink_context.h"
 #include "zink_compiler.h"
 #include "zink_descriptors.h"
@@ -3463,6 +3467,11 @@ zink_shader_dump(const struct zink_shader *zs, void *words, size_t size, const c
       fwrite(words, 1, size, fp);
       fclose(fp);
       fprintf(stderr, "wrote %s shader '%s'...\n", _mesa_shader_stage_to_string(zs->info.stage), file);
+   } else {
+      /* JUICE TEMP DIAG: surface dump-failures rather than silently dropping
+       * them so missing C:\temp\zink_spirv is obvious. */
+      fprintf(stderr, "JUICE_ZINK_SPV failed to open '%s' (errno=%d)\n",
+              file, errno);
    }
 }
 
@@ -3503,10 +3512,49 @@ zink_shader_spirv_compile(struct zink_screen *screen, struct zink_shader *zs, st
       spirv = zs->spirv;
 
    if (zink_debug & ZINK_DEBUG_SPIRV) {
+      /* JUICE TEMP DIAG: dump SPIR-V to C:\temp\zink_spirv\ with seq, the
+       * zink_shader pointer-hash, the shader stage, and an FNV-1a 64-bit
+       * content hash of the SPIR-V bytes themselves. The content hash is the
+       * cross-process correlation key against the server-side JUICE_DIAG
+       * vkCreateShaderModule log line, which prints the same FNV-1a. REVERT
+       * ME with the env-var forcing block in zink_screen.c. */
+      #ifdef _WIN32
+      {
+         /* Best-effort: pre-create the dump directory so first run doesn't
+          * silently lose the very first blob. Ignoring errors is intentional
+          * - if it already exists or the user pointed us elsewhere we don't
+          * care. */
+         static bool _juice_diag_mkdir_attempted = false;
+         if (!_juice_diag_mkdir_attempted) {
+            _juice_diag_mkdir_attempted = true;
+            _mkdir("C:\\temp");
+            _mkdir("C:\\temp\\zink_spirv");
+         }
+      }
+      #endif
+      const size_t _juice_diag_bytes = spirv->num_words * sizeof(uint32_t);
+      uint64_t _juice_diag_fnv = 0xcbf29ce484222325ull;
+      {
+         const uint8_t *p = (const uint8_t *)spirv->words;
+         for (size_t _j = 0; _j < _juice_diag_bytes; ++_j) {
+            _juice_diag_fnv ^= p[_j];
+            _juice_diag_fnv *= 0x100000001b3ull;
+         }
+      }
       char buf[256];
       static int i;
-      snprintf(buf, sizeof(buf), "dump%02d.spv", i++);
-      zink_shader_dump(zs, spirv->words, spirv->num_words * sizeof(uint32_t), buf);
+      const uint32_t h = zs ? zs->hash : 0;
+      const unsigned stage = (zs && zs->nir) ? zs->nir->info.stage : 0xff;
+      snprintf(buf, sizeof(buf),
+               "C:\\temp\\zink_spirv\\dump_%05d_h%08x_s%u_fnv%016llx.spv",
+               i, h, stage, (unsigned long long)_juice_diag_fnv);
+      zink_shader_dump(zs, spirv->words, _juice_diag_bytes, buf);
+      fprintf(stderr,
+              "JUICE_ZINK_SPV seq=%d hash=0x%08x stage=%u bytes=%zu "
+              "fnv1a=0x%016llx file=%s\n",
+              i, h, stage, _juice_diag_bytes,
+              (unsigned long long)_juice_diag_fnv, buf);
+      i++;
    }
 
    sci.sType = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT;
@@ -4546,28 +4594,65 @@ analyze_io(struct zink_shader *zs, nir_shader *shader)
 /* A shader can use bindless samplers/images of multiple SPIR-V image types
  * (e.g. sampler2D and samplerCube) that all map to the same Vulkan descriptor
  * type (here, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER). For correct SPIR-V
- * we need a separate container nir_variable per distinct leaf image type,
- * each emitting its own SPIR-V image variable but aliasing the same Vulkan
- * descriptor set + binding (descriptor aliasing is allowed for descriptors of
- * matching VkDescriptorType).
+ * we need a separate container nir_variable per distinct leaf image type.
  *
- * Containers are tracked per Vulkan descriptor type binding (0..3). 8 slots
- * is plenty for all real-world shaders.
+ * JUICE bindless aliasing fix (full): every code path that allocates a
+ * bindless container in NIR -- handle_bindless_var (for explicit GLSL
+ * variables) and create_bindless_texture / create_bindless_image (for
+ * fallback containers created lazily by lower_bindless_instr) -- keys
+ * bindless->containers[] by the 38-binding tuple binding (see
+ * zink_bindless_get_binding in zink_descriptors.h) rather than the legacy
+ * 4-slot vktype binding (0..3). The tuple binding is also what we emit as
+ * the SPIR-V `Binding N` decoration via container->data.binding.
+ *
+ * Pre-fix history: handle_bindless_var registered explicit-variable
+ * containers under their legacy vktype slot (0..3) while decorating them
+ * with the per-tuple binding (sampler1D=0, sampler2D=4, sampler2DRect=16,
+ * etc.). When a tex instruction landed with sampler_dim coerced to something
+ * the lookup couldn't match (e.g. GLSL_SAMPLER_DIM_2D for a sampler2DRect
+ * variable after upstream GLSL/NIR passes normalised its coords against
+ * textureSize()), find_bindless_container at vktype slot 0 returned NULL
+ * and create_bindless_texture synthesised a fresh `bindless_texture`
+ * (sampler2D Unknown) hard-coded to data.binding = 0. That collided with
+ * whatever variable already lived at tuple binding 0 (rgbTRC = sampler1D),
+ * producing heterogeneous OpTypeImage at the same DescriptorSet+Binding --
+ * which spirv-val does not flag but NVIDIA's bindless lookup chokes on at
+ * draw time, manifesting as the silent FS hang seen in VRED's AA-toggle
+ * device losts.
+ *
+ * 8 alias slots per tuple binding is plenty for all real-world shaders.
  */
 #define ZINK_BINDLESS_MAX_ALIASES 8
 
 struct zink_bindless_info {
-   /* containers[binding][i] -> nir_variable*, all sharing data.descriptor_set
-    * and data.binding == binding. Index 0 in each binding is the "primary"
-    * (kept as bindless[binding] for back-compat with callers that look up by
-    * binding without caring about type).
-    */
-   nir_variable *containers[4][ZINK_BINDLESS_MAX_ALIASES];
-   unsigned container_count[4];
-   /* Convenience: first container per binding (== containers[binding][0]). */
-   nir_variable *bindless[4];
+   /* containers[tuple_binding][i] -> nir_variable*, all sharing the same
+    * (descriptor_set, binding) decoration. Indexing matches the 38-binding
+    * layout from zink_descriptors.h: 0..23 = COMBINED_IMAGE_SAMPLER tuples,
+    * 24 = UTEX, 25..36 = STORAGE_IMAGE tuples, 37 = STEX. */
+   nir_variable *containers[ZINK_BINDLESS_NUM_BINDINGS][ZINK_BINDLESS_MAX_ALIASES];
+   unsigned container_count[ZINK_BINDLESS_NUM_BINDINGS];
+   /* Convenience: first container registered at each tuple binding. */
+   nir_variable *bindless[ZINK_BINDLESS_NUM_BINDINGS];
    unsigned bindless_set;
 };
+
+/* JUICE bindless aliasing fix: derive the tuple binding (0..37) used as
+ * BOTH the container-table key AND the SPIR-V `Binding N` decoration for a
+ * (vktype, dim, is_array, is_shadow) tuple. Mirrors zink_bindless_get_binding
+ * exactly so handle_bindless_var, lower_bindless_instr and the create_*
+ * fallbacks all key on the same value. */
+static inline unsigned
+juice_bindless_tuple_binding(VkDescriptorType vktype, enum glsl_sampler_dim dim,
+                             bool is_array, bool is_shadow)
+{
+   if (vktype == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER &&
+       dim == GLSL_SAMPLER_DIM_BUF)
+      return ZINK_BINDLESS_UTEX_BINDING;
+   if (vktype == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE &&
+       dim == GLSL_SAMPLER_DIM_BUF)
+      return ZINK_BINDLESS_STEX_BINDING;
+   return zink_bindless_get_binding(vktype, dim, is_array, is_shadow);
+}
 
 static bool
 sampler_image_leaves_match(const struct glsl_type *a, const struct glsl_type *b)
@@ -4613,42 +4698,71 @@ register_bindless_container(struct zink_bindless_info *bindless, unsigned bindin
       bindless->bindless[binding] = var;
 }
 
-/* this is a "default" bindless texture used if the shader has no texture variables */
+/* Default bindless texture container, created lazily when a tex instruction
+ * (its (dim, is_array, is_shadow) tuple) doesn't match any explicit-variable
+ * container registered by handle_bindless_var.
+ *
+ * JUICE bindless aliasing fix: both the Vulkan binding AND the container-
+ * table key are the tuple binding for the SAME (vktype, dim, is_array,
+ * is_shadow) we're servicing here. Previously the binding was hard-coded
+ * to 0 for any non-buffer sampler dim and the table key was the legacy 0/1
+ * vktype slot, so the fallback container could collide in SPIR-V with an
+ * explicit variable already decorated at tuple binding 0 (sampler1D) -- the
+ * exact aliasing that drove VRED's AA-toggle device loss on prog=73's
+ * post-process FS. */
 static nir_variable *
 create_bindless_texture(nir_shader *nir, nir_tex_instr *tex, struct zink_bindless_info *bindless)
 {
-   unsigned binding = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 1 : 0;
+   const unsigned legacy_slot = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 1 : 0;
+   const unsigned tuple_binding =
+      juice_bindless_tuple_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   tex->sampler_dim, tex->is_array,
+                                   tex->is_shadow);
 
    const struct glsl_type *sampler_type = glsl_sampler_type(tex->sampler_dim, tex->is_shadow, tex->is_array, GLSL_TYPE_FLOAT);
-   /* Re-use an existing container with a matching leaf type if one already exists. */
-   nir_variable *existing = find_bindless_container(bindless, binding, sampler_type);
+   /* Re-use an existing container with a matching leaf type if one exists
+    * at this tuple binding. */
+   nir_variable *existing =
+      find_bindless_container(bindless, tuple_binding, sampler_type);
    if (existing)
       return existing;
 
    nir_variable *var = nir_variable_create(nir, nir_var_uniform, glsl_array_type(sampler_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_texture");
    var->data.descriptor_set = bindless->bindless_set;
-   var->data.driver_location = var->data.binding = binding;
-   register_bindless_container(bindless, binding, var);
+   /* driver_location keeps the legacy vktype slot for downstream consumers
+    * that key on it; data.binding is the tuple binding emitted as the
+    * SPIR-V `Binding N` decoration. */
+   var->data.driver_location = legacy_slot;
+   var->data.binding = tuple_binding;
+   register_bindless_container(bindless, tuple_binding, var);
    return var;
 }
 
-/* this is a "default" bindless image used if the shader has no image variables */
+/* Default bindless image container, created lazily when a bindless image
+ * intrinsic's (dim, is_array) tuple doesn't match any explicit-variable
+ * container. Same aliasing-avoidance rationale as create_bindless_texture
+ * above. */
 static nir_variable *
 create_bindless_image(nir_shader *nir, enum glsl_sampler_dim dim, bool is_array,
                       struct zink_bindless_info *bindless)
 {
-   unsigned binding = dim == GLSL_SAMPLER_DIM_BUF ? 3 : 2;
+   const unsigned legacy_slot = dim == GLSL_SAMPLER_DIM_BUF ? 3 : 2;
+   const unsigned tuple_binding =
+      juice_bindless_tuple_binding(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                   dim, is_array, false);
 
    const struct glsl_type *image_type = glsl_image_type(dim, is_array, GLSL_TYPE_FLOAT);
-   nir_variable *existing = find_bindless_container(bindless, binding, image_type);
+   nir_variable *existing =
+      find_bindless_container(bindless, tuple_binding, image_type);
    if (existing)
       return existing;
 
    nir_variable *var = nir_variable_create(nir, nir_var_image, glsl_array_type(image_type, ZINK_MAX_BINDLESS_HANDLES, 0), "bindless_image");
    var->data.descriptor_set = bindless->bindless_set;
-   var->data.driver_location = var->data.binding = binding;
+   var->data.driver_location = legacy_slot;
+   var->data.binding = tuple_binding;
    var->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;
-   register_bindless_container(bindless, binding, var);
+   register_bindless_container(bindless, tuple_binding, var);
    return var;
 }
 
@@ -4664,13 +4778,21 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
       if (idx == -1)
          return false;
 
-      /* Pick the container whose leaf SPIR-V image type matches this tex
-       * instruction's (dim, is_array, is_shadow, dest_type). Falling back
-       * to bindless[0]/bindless[1] when the shader has no matching variable
-       * yet is wrong because handle_bindless_var may have already created a
-       * container with a different leaf type.
-       */
-      const unsigned binding = tex->sampler_dim == GLSL_SAMPLER_DIM_BUF ? 1 : 0;
+      /* JUICE bindless aliasing fix: key the lookup on the tuple binding
+       * derived from THIS tex instruction's (dim, is_array, is_shadow).
+       * That's the same key handle_bindless_var (above) used when it
+       * registered explicit-variable containers, and the same key used as
+       * the SPIR-V Binding decoration. If the tuple doesn't match any
+       * registered container (e.g. an upstream pass normalised coords on a
+       * sampler2DRect access and rewrote tex->sampler_dim from RECT to 2D
+       * before this lowering ran), we fall through to create_bindless_-
+       * texture, which now allocates the fallback at the tuple binding it
+       * actually services (sampler2D in that case) instead of hard-coding
+       * binding 0 and colliding with sampler1D in SPIR-V. */
+      const unsigned tuple_binding =
+         juice_bindless_tuple_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                      tex->sampler_dim, tex->is_array,
+                                      tex->is_shadow);
       enum glsl_base_type result_base;
       switch (nir_alu_type_get_base_type(tex->dest_type)) {
       case nir_type_float: result_base = GLSL_TYPE_FLOAT; break;
@@ -4680,7 +4802,7 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
       }
       const struct glsl_type *want_leaf =
          glsl_sampler_type(tex->sampler_dim, tex->is_shadow, tex->is_array, result_base);
-      nir_variable *var = find_bindless_container(bindless, binding, want_leaf);
+      nir_variable *var = find_bindless_container(bindless, tuple_binding, want_leaf);
       if (!var)
          var = create_bindless_texture(b->shader, tex, bindless);
       b->cursor = nir_before_instr(in);
@@ -4736,9 +4858,13 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
 
    enum glsl_sampler_dim dim = nir_intrinsic_image_dim(instr);
    bool is_array = nir_intrinsic_image_array(instr);
-   const unsigned img_binding = dim == GLSL_SAMPLER_DIM_BUF ? 3 : 2;
+   /* JUICE bindless aliasing fix: same tuple-binding lookup as the
+    * texture branch above. shadow is N/A for STORAGE_IMAGE. */
+   const unsigned img_tuple_binding =
+      juice_bindless_tuple_binding(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                   dim, is_array, false);
    const struct glsl_type *want_img_leaf = glsl_image_type(dim, is_array, GLSL_TYPE_FLOAT);
-   nir_variable *var = find_bindless_container(bindless, img_binding, want_img_leaf);
+   nir_variable *var = find_bindless_container(bindless, img_tuple_binding, want_img_leaf);
    if (!var)
       var = create_bindless_image(b->shader, dim, is_array, bindless);
    instr->intrinsic = op;
@@ -4853,64 +4979,58 @@ handle_bindless_var(nir_shader *nir, nir_variable *var, const struct glsl_type *
       return;
 
    VkDescriptorType vktype = glsl_type_is_image(type) ? zink_image_type(type) : zink_sampler_type(type);
-   unsigned binding;
+   /* Legacy 0..3 vktype slot - retained ONLY as driver_location below so
+    * downstream consumers that key on driver_location see the same value
+    * upstream Mesa would emit. */
+   unsigned legacy_slot;
    switch (vktype) {
       case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-         binding = 0;
+         legacy_slot = 0;
          break;
       case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-         binding = 1;
+         legacy_slot = 1;
          break;
       case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-         binding = 2;
+         legacy_slot = 2;
          break;
       case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-         binding = 3;
+         legacy_slot = 3;
          break;
       default:
          UNREACHABLE("unknown");
    }
+
+   /* JUICE bindless aliasing fix (full): compute the actual tuple binding
+    * up front and key BOTH the container table AND the SPIR-V Binding
+    * decoration on it. Previously the table was keyed on legacy_slot while
+    * the decoration used the tuple binding, so create_bindless_texture's
+    * fallback (which keyed on legacy_slot=0) could collide in SPIR-V with
+    * an explicit variable already living at tuple binding 0. */
+   enum glsl_sampler_dim dim = glsl_get_sampler_dim(type);
+   bool t_is_array  = glsl_sampler_type_is_array(type);
+   bool t_is_shadow = glsl_type_is_sampler(type) && glsl_sampler_type_is_shadow(type);
+   unsigned tuple_binding =
+      juice_bindless_tuple_binding(vktype, dim, t_is_array, t_is_shadow);
+
    /* Find or create a container whose leaf SPIR-V image type matches `type`.
-    * Multiple containers can share one Vulkan binding when the shader uses
-    * heterogeneous bindless image types (e.g. sampler2D and samplerCube both
-    * map to VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) - they alias the same
-    * descriptor set + binding, but emit distinct SPIR-V image variables.
-    */
-   if (!find_bindless_container(bindless, binding, type)) {
+    * Multiple containers can share one tuple binding when the shader uses
+    * heterogeneous bindless image types that resolve to the same tuple
+    * (rare in practice, but legal) -- they alias the same descriptor set +
+    * binding while emitting distinct SPIR-V image variables. */
+   if (!find_bindless_container(bindless, tuple_binding, type)) {
       nir_variable *container = nir_variable_clone(var, nir);
       container->data.bindless = 0;
       container->data.descriptor_set = bindless->bindless_set;
       container->type = glsl_array_type(type, ZINK_MAX_BINDLESS_HANDLES, 0);
-      /* JUICE Step A.12 (read-side, all remaining descriptor types):
-       * complete the read-side rework by also routing STORAGE_IMAGE
-       * containers at their (dim, is_array) tuple binding (25..36) and
-       * STEX containers at the dedicated STEX binding (37). With this,
-       * every bindless container reads at the correct descriptor-type
-       * binding in the 38-binding layout and the legacy upstream slot is
-       * no longer consulted for any vktype. driver_location is still left
-       * at the legacy upstream slot so per-driver_location NIR/SPIR-V
-       * consumers see no shift. */
-      container->data.driver_location = binding;
-      container->data.binding = binding;
-      if (vktype == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-         enum glsl_sampler_dim cdim = glsl_get_sampler_dim(type);
-         bool cis_array  = glsl_sampler_type_is_array(type);
-         bool cis_shadow = glsl_type_is_sampler(type) && glsl_sampler_type_is_shadow(type);
-         container->data.binding = zink_bindless_get_binding(vktype, cdim, cis_array, cis_shadow);
-      } else if (vktype == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER) {
-         container->data.binding = ZINK_BINDLESS_UTEX_BINDING;
-      } else if (vktype == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
-         enum glsl_sampler_dim idim = glsl_get_sampler_dim(type);
-         bool img_array = glsl_sampler_type_is_array(type);
-         /* shadow is N/A for STORAGE_IMAGE */
-         container->data.binding = zink_bindless_get_binding(vktype, idim, img_array, false);
-      } else if (vktype == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) {
-         container->data.binding = ZINK_BINDLESS_STEX_BINDING;
-      }
+      /* driver_location stays at the legacy upstream slot so per-
+       * driver_location NIR/SPIR-V consumers (e.g. zink_shader_create's
+       * bindings[] reflection) see no shift. */
+      container->data.driver_location = legacy_slot;
+      container->data.binding = tuple_binding;
       if (!container->data.image.format)
          container->data.image.format = PIPE_FORMAT_R8G8B8A8_UNORM;
       nir_shader_add_variable(nir, container);
-      register_bindless_container(bindless, binding, container);
+      register_bindless_container(bindless, tuple_binding, container);
    }
    var->data.mode = nir_var_shader_temp;
 }
@@ -5876,6 +5996,31 @@ zink_shader_init(struct zink_screen *screen, struct zink_shader *zs)
       NIR_PASS(_, nir, nir_lower_io_to_scalar, nir_var_mem_global | nir_var_mem_ubo | nir_var_mem_ssbo | nir_var_mem_shared, NULL, NULL);
       NIR_PASS(_, nir, rewrite_bo_access, screen);
       NIR_PASS(_, nir, remove_bo_access, zs);
+   }
+
+   if (zink_debug & ZINK_DEBUG_NIR) {
+      /* JUICE TEMP DIAG: also dump NIR to a per-shader file under
+       * C:\temp\zink_spirv\ keyed on the same hash used by the SPIR-V dump,
+       * so a single shader's NIR + SPIR-V can be compared side by side. */
+      char nbuf[256];
+      snprintf(nbuf, sizeof(nbuf),
+               "C:\\temp\\zink_spirv\\nir_h%08x_s%u.txt",
+               zs->hash, (unsigned)nir->info.stage);
+      FILE *nfp = fopen(nbuf, "w");
+      if (nfp) {
+         nir_print_shader(nir, nfp);
+         fclose(nfp);
+         fprintf(stderr, "JUICE_ZINK_NIR hash=0x%08x stage=%u file=%s\n",
+                 zs->hash, (unsigned)nir->info.stage, nbuf);
+      } else {
+         fprintf(stderr,
+                 "JUICE_ZINK_NIR failed to open '%s' (errno=%d)\n",
+                 nbuf, errno);
+      }
+      fprintf(stderr, "NIR shader (hash=0x%08x stage=%u):\n---8<---\n",
+              zs->hash, (unsigned)nir->info.stage);
+      nir_print_shader(nir, stderr);
+      fprintf(stderr, "---8<---\n");
    }
 
    struct zink_bindless_info bindless = {0};

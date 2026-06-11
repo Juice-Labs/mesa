@@ -142,6 +142,26 @@ zink_get_cmdbuf(struct zink_context *ctx, struct zink_resource *src, struct zink
 {
    bool unordered_exec = !ctx->no_reorder;
 
+   /* JUICE: keep uniform-buffer destination copies ORDERED on the main cmdbuf.
+    *
+    * Zink's reorder optimization promotes transfers (e.g. UBO staging copies in
+    * zink_copy_buffer) onto a separate barrier_cmdbuf meant to execute before the main
+    * render cmdbuf. Correctness then relies on a cross-command-buffer
+    * TRANSFER_WRITE -> UNIFORM_READ visibility guarantee that does NOT survive the juice
+    * remoting: synchronization validation reports a persistent READ_AFTER_WRITE hazard
+    * where a vkCmdDraw's UNIFORM_READ (set 2, binding 5) reads a UBO that vkCmdCopyBuffer
+    * just wrote with no sufficient sync. That stale-parameter race is what makes VRED's
+    * AA/post-process shader (prog=73) read garbage uniforms and hang the GPU, and it only
+    * disappears when a validation layer's latency lets the copy land first.
+    *
+    * Pinning ONLY constant-buffer-destination copies to the main ordered cmdbuf keeps the
+    * upload and its TRANSFER_WRITE -> UNIFORM_READ barrier on the same command buffer (so
+    * the draw is correctly ordered against the parameter upload) without forcing every
+    * unrelated transfer to break the active render pass - which is what disturbed the
+    * resource-upload/cache-timeline path when this was applied globally. */
+   if (dst && (dst->base.b.bind & PIPE_BIND_CONSTANT_BUFFER))
+      unordered_exec = false;
+
    unordered_exec &= check_unordered_exec(ctx, src, false) &&
                      check_unordered_exec(ctx, dst, true);
 

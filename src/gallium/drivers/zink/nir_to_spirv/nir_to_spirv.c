@@ -1333,7 +1333,7 @@ get_image_type(struct ntv_context *ctx, struct nir_variable *var,
 }
 
 static SpvId
-emit_image(struct ntv_context *ctx, struct nir_variable *var, SpvId image_type)
+emit_image(struct ntv_context *ctx, struct nir_variable *var, SpvId image_type, bool aliased)
 {
    if (var->data.bindless)
       return 0;
@@ -1364,11 +1364,37 @@ emit_image(struct ntv_context *ctx, struct nir_variable *var, SpvId image_type)
                                     SpvDecorationRelaxedPrecision);
    }
 
+   /* SPIR-V 2.18.2 (Aliasing) requires that any two memory object
+    * declarations which may alias each other carry the Aliased
+    * decoration; otherwise the consumer is permitted to assume
+    * non-aliasing. Multiple sampler/image variables decorated with the
+    * same (DescriptorSet, Binding) tuple inherently alias and must be
+    * tagged. Driver-only aliasing detection (e.g. the length==1024
+    * bindless container heuristic below) is not sufficient here -
+    * app-authored aliased samplers, like VRED's textures/textures3D/
+    * texturesCube/etc. at (set=0, binding=13), use array lengths of 0
+    * (runtime) or 1 and slip through. */
+   if (aliased)
+      spirv_builder_emit_decoration(&ctx->builder, var_id, SpvDecorationAliased);
+
    if (var->name)
       spirv_builder_emit_name(&ctx->builder, var_id, var->name);
 
    if (var->data.fb_fetch_output)
       spirv_builder_emit_input_attachment_index(&ctx->builder, var_id, var->data.index);
+
+   /* SPIR-V 2.18.2 (Aliasing) requires that any two memory object
+    * declarations which may alias each other carry the Aliased
+    * decoration; otherwise the consumer is permitted to assume
+    * non-aliasing. Multiple sampler/image variables decorated with the
+    * same (DescriptorSet, Binding) tuple inherently alias and must be
+    * tagged. Driver-only aliasing detection (e.g. the length==1024
+    * bindless container heuristic below) is not sufficient here -
+    * app-authored aliased samplers, like VRED's textures/textures3D/
+    * texturesCube/etc. at (set=0, binding=13), use array lengths of 0
+    * (runtime) or 1 and slip through. */
+   if (aliased)
+      spirv_builder_emit_decoration(&ctx->builder, var_id, SpvDecorationAliased);
 
    _mesa_hash_table_insert(ctx->vars, var, (void *)(intptr_t)var_id);
    if (!is_sampler) {
@@ -5308,12 +5334,35 @@ nir_to_spirv(struct nir_shader *s, const struct ntv_info *sinfo)
    }
    nir_foreach_variable_with_modes(var, s, nir_var_image | nir_var_uniform) {
       const struct glsl_type *type = glsl_without_array(var->type);
+      bool aliased = false;
+      if (glsl_type_is_sampler(type) || glsl_type_is_texture(type) || glsl_type_is_image(type)) {
+         /* A SPIR-V variable shares a descriptor with another iff their
+          * (DescriptorSet, Binding) tuples are equal. Per SPIR-V 2.18.2,
+          * such variables must carry SpvDecorationAliased - without it
+          * the NVIDIA shader compiler is free to assume the declarations
+          * do not alias and may speculatively pre-decode the descriptor
+          * bytes through unused-but-live OpTypeImage views, which silently
+          * hangs the TXD on certain descriptor-heap layouts. */
+         nir_foreach_variable_with_modes(other, s, nir_var_uniform | nir_var_image) {
+            if (other == var)
+               continue;
+            const struct glsl_type *otype = glsl_without_array(other->type);
+            if (!glsl_type_is_sampler(otype) && !glsl_type_is_texture(otype) && !glsl_type_is_image(otype))
+               continue;
+            if (other->data.descriptor_set == var->data.descriptor_set &&
+                other->data.binding == var->data.binding) {
+               aliased = true;
+               break;
+            }
+         }
+      }
+
       if (glsl_type_is_bare_sampler(type))
          emit_sampler(&ctx, var);
       else if (glsl_type_is_sampler(type) || glsl_type_is_texture(type))
-         emit_image(&ctx, var, get_bare_image_type(&ctx, var, true));
+         emit_image(&ctx, var, get_bare_image_type(&ctx, var, true), aliased);
       else if (glsl_type_is_image(type))
-         emit_image(&ctx, var, get_bare_image_type(&ctx, var, false));
+         emit_image(&ctx, var, get_bare_image_type(&ctx, var, false), aliased);
    }
 
    if (sinfo->float_controls.flush_denorms ||

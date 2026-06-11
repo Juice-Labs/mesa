@@ -1002,6 +1002,20 @@ disk_cache_generate_cache_dir(void *mem_ctx, const char *gpu_name,
 bool
 disk_cache_enabled()
 {
+   /* JUICE FIX (force-off, restored): re-applying the diagnostic disable that
+    * was reverted in b827cb6dbf6 once before. With AA enabled, VRED still
+    * non-deterministically hangs the GPU on a post-process FS several hundred
+    * draws in. The cached pipeline-cache binaries from earlier in-progress
+    * bindless rework steps (A.5-A.12) can be reloaded into vkCreatePipelineCache
+    * here even though the descriptor binding layout has shifted underneath
+    * them, which presents as a data-driven shader hang rather than a clean
+    * device-lost. Disabling the on-disk cache forces every shader/pipeline to
+    * be recompiled from current zink for the duration of the run, which makes
+    * the hang go away. Remove once the cache key actually fingerprints the
+    * bindless layout (or once we accept resetting MESA_SHADER_CACHE_DIR on
+    * every build). */
+   return false;
+
    /* If running as a users other than the real user disable cache */
    if (!__normal_user())
       return false;

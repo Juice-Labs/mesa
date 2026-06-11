@@ -1013,7 +1013,7 @@ get_image_type(struct ntv_context *ctx, struct nir_variable *var, bool is_sample
 }
 
 static SpvId
-emit_image(struct ntv_context *ctx, struct nir_variable *var, bool bindless)
+emit_image(struct ntv_context *ctx, struct nir_variable *var, bool bindless, bool aliased)
 {
    if (var->data.bindless)
       return 0;
@@ -1048,7 +1048,19 @@ emit_image(struct ntv_context *ctx, struct nir_variable *var, bool bindless)
    if (!bindless && glsl_type_is_array(var->type)) {
       var_type = spirv_builder_type_array(&ctx->builder, var_type,
                                               emit_uint_const(ctx, 32, glsl_get_aoa_size(var->type)));
-      spirv_builder_emit_array_stride(&ctx->builder, var_type, sizeof(void*));
+      /* JUICE: do NOT emit ArrayStride here. This variable is always emitted in
+       * SpvStorageClassUniformConstant as an array of opaque sampler/image
+       * (OpTypeSampledImage / OpTypeImage) types. ArrayStride is an explicit
+       * *byte* layout decoration that is only legal on explicitly-laid-out,
+       * buffer-backed storage classes (Uniform/StorageBuffer/PushConstant, i.e.
+       * Block-decorated types). Decorating a UniformConstant opaque-handle array
+       * with ArrayStride is invalid SPIR-V (VUID-StandaloneSpirv-None-10684:
+       * "All variables must have valid explicit layout decorations") and the
+       * driver's behaviour on it is undefined - the validation layer's extra
+       * latency is what hid the resulting GPU misbehaviour for VRED's bindless
+       * environmentMap[1024] container (set 5, binding 4). Descriptor arrays are
+       * indexed by descriptor, not byte stride, so the decoration is purely
+       * decorative and dropping it changes nothing but spec-validity. */
       if (!is_bindless_container)
          ctx->sampler_array_sizes[index] = glsl_get_aoa_size(var->type);
    }
@@ -1063,6 +1075,19 @@ emit_image(struct ntv_context *ctx, struct nir_variable *var, bool bindless)
       spirv_builder_emit_decoration(&ctx->builder, var_id,
                                     SpvDecorationRelaxedPrecision);
    }
+
+   /* SPIR-V 2.18.2 (Aliasing) requires that any two memory object
+    * declarations which may alias each other carry the Aliased
+    * decoration; otherwise the consumer is permitted to assume
+    * non-aliasing. Multiple sampler/image variables decorated with the
+    * same (DescriptorSet, Binding) tuple inherently alias and must be
+    * tagged. Driver-only aliasing detection (e.g. the length==1024
+    * bindless container heuristic below) is not sufficient here -
+    * app-authored aliased samplers, like VRED's textures/textures3D/
+    * texturesCube/etc. at (set=0, binding=13), use array lengths of 0
+    * (runtime) or 1 and slip through. */
+   if (aliased)
+      spirv_builder_emit_decoration(&ctx->builder, var_id, SpvDecorationAliased);
 
    if (var->name)
       spirv_builder_emit_name(&ctx->builder, var_id, var->name);
@@ -4604,8 +4629,31 @@ nir_to_spirv(struct nir_shader *s, const struct zink_shader_info *sinfo, uint32_
 
    nir_foreach_variable_with_modes(var, s, nir_var_uniform | nir_var_image) {
       const struct glsl_type *type = glsl_without_array(var->type);
-      if (glsl_type_is_sampler(type) || glsl_type_is_image(type))
-         emit_image(&ctx, var, false);
+      if (!glsl_type_is_sampler(type) && !glsl_type_is_image(type))
+         continue;
+
+      /* A SPIR-V variable shares a descriptor with another iff their
+       * (DescriptorSet, Binding) tuples are equal. Per SPIR-V 2.18.2,
+       * such variables must carry SpvDecorationAliased - without it
+       * the NVIDIA shader compiler is free to assume the declarations
+       * do not alias and may speculatively pre-decode the descriptor
+       * bytes through unused-but-live OpTypeImage views, which silently
+       * hangs the TXD on certain descriptor-heap layouts. */
+      bool aliased = false;
+      nir_foreach_variable_with_modes(other, s, nir_var_uniform | nir_var_image) {
+         if (other == var)
+            continue;
+         const struct glsl_type *otype = glsl_without_array(other->type);
+         if (!glsl_type_is_sampler(otype) && !glsl_type_is_image(otype))
+            continue;
+         if (other->data.descriptor_set == var->data.descriptor_set &&
+             other->data.binding == var->data.binding) {
+            aliased = true;
+            break;
+         }
+      }
+
+      emit_image(&ctx, var, false, aliased);
    }
 
    switch (s->info.stage) {

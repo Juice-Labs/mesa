@@ -236,6 +236,21 @@ disk_cache_init(struct zink_screen *screen)
 {
    if (zink_debug & ZINK_DEBUG_SHADERDB)
       return true;
+
+   /* JUICE: Hard-disabled. The on-disk Zink shader/pipeline cache serves a
+    * miscompiled cached pipeline for VRED's bindless post-process passes
+    * (prog=73/76), which TDRs the GPU with empty Aftermath fault info. The
+    * hang only disappears under the validation layer, which forces NVIDIA to
+    * bypass its shader cache and recompile fresh - the classic signature of a
+    * bad cached compile of borderline-valid bindless SPIR-V. Leaving
+    * screen->disk_cache NULL makes every consumer (cache_put_job,
+    * zink_screen_update/get_pipeline_cache) short-circuit on their existing
+    * `if (!screen->disk_cache) return;` guards, so no disk caching happens and
+    * every pipeline is compiled from the SPIR-V we actually hand the driver.
+    * Done in code (not an env var) so enablement is unambiguous. */
+   screen->disk_cache = NULL;
+   return true;
+
 #ifdef ENABLE_SHADER_CACHE
    static char buf[1000];
    snprintf(buf, sizeof(buf), "zink_%x04x", screen->info.props.vendorID);
@@ -2313,6 +2328,17 @@ init_driver_workarounds(struct zink_screen *screen)
       screen->driver_workarounds.z16_unscaled_bias = 1<<15;
    else
       screen->driver_workarounds.z16_unscaled_bias = 1<<16;
+   /* JUICE: VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT drives NVIDIA's
+    * optimized feedback-loop path, which hangs the GPU (TDR, empty fault info)
+    * in VRED's AA/post-process pass where a colour target is sampled while it is
+    * still an attachment. The hang only disappears under the validation layer,
+    * which forces the driver onto its conservative path - the classic signature
+    * of an optimization-sensitive feedback-loop hazard. Force zink onto its
+    * VK_IMAGE_LAYOUT_GENERAL fallback (the same path it uses when the extension is
+    * absent) for every layout/pipeline decision below. The extension itself stays
+    * enabled on the device (force-enabled in the xgl ICD) so feedback-loop usage
+    * bits remain legal; we simply stop selecting the optimized layout. */
+   screen->info.have_EXT_attachment_feedback_loop_layout = false;
    /* these drivers don't use VK_PIPELINE_CREATE_COLOR_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT, so it can always be set */
    switch (screen->info.driver_props.driverID) {
    case VK_DRIVER_ID_MESA_RADV:
@@ -2388,6 +2414,10 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    screen->abort_on_hang = debug_get_bool_option("ZINK_HANG_ABORT", false);
 
    zink_debug = debug_get_option_zink_debug();
+   /* JUICE TEMP DIAG: force-on SPIR-V/NIR dumps + SPIR-V validation regardless
+    * of ZINK_DEBUG env to capture VRED AA-toggle device-lost shader. REVERT ME
+    * once diagnosis is complete. */
+   zink_debug |= ZINK_DEBUG_SPIRV | ZINK_DEBUG_VALIDATION | ZINK_DEBUG_NIR;
    zink_descriptor_mode = debug_get_option_zink_descriptor_mode();
 
    screen->loader_lib = util_dl_open(VK_LIBNAME);

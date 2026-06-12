@@ -304,7 +304,16 @@ add_juice_buffer_create_info(VkBufferCreateInfo* createInfo, VkMesaBufferCreateI
    assert(templ);
    juiceCreateInfo->sType = VK_STRUCTURE_TYPE_MESA_BUFFER_CREATE_INFO_JUICE;
    juiceCreateInfo->pNext = createInfo->pNext;
-   juiceCreateInfo->usage = templ->usage == PIPE_USAGE_STAGING ? VK_MESA_USAGE_STAGING_BIT_JUICE : VK_MESA_USAGE_NONE_JUICE;
+   /* Pass Mesa/Zink's raw resource attributes through directly; the Juice/Boost
+    * consumer is responsible for interpreting them (e.g. STREAM + BIND_LINEAR
+    * identifies an internal texture-upload staging buffer). */
+   juiceCreateInfo->usage = VK_MESA_USAGE_NONE_JUICE;
+   if (templ->usage == PIPE_USAGE_STAGING)
+      juiceCreateInfo->usage |= VK_MESA_USAGE_STAGING_BIT_JUICE;
+   if (templ->usage == PIPE_USAGE_STREAM)
+      juiceCreateInfo->usage |= VK_MESA_USAGE_STREAM_BIT_JUICE;
+   if (templ->bind & PIPE_BIND_LINEAR)
+      juiceCreateInfo->usage |= VK_MESA_USAGE_BIND_LINEAR_BIT_JUICE;
    createInfo->pNext = juiceCreateInfo;
 }
 

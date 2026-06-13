@@ -68,9 +68,10 @@ init_juice_logging(void)
    if (juicevlk)
       juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
 
-   if (!juice_log_output) {
-      MessageBoxA(NULL, "Juice logging is not available (RemoteGPUVlk.dll not loaded or __wine_dbg_output not found).", "Mesa Error", MB_OK | MB_ICONWARNING);
-   }
+   // THROWAWAY HOST-PASSTHROUGH TEST BRANCH:
+   // RemoteGPUVlk.dll is intentionally blocked from loading in passthrough mode, so juice
+   // log forwarding is simply unavailable. Fall back silently (juice_log_output stays NULL)
+   // instead of popping a modal MessageBox on every process.
    
 #endif
    

@@ -3451,35 +3451,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
 
    mesa_logi("ZINK: Mesa/zink reporting for duty. If you can see this in the client logs, this means zink is active and logging.");
 
-#ifdef _WIN32
-   {
-      DWORD attrs = GetFileAttributesA("c:\\users\\hp");
-      if (attrs == INVALID_FILE_ATTRIBUTES) {
-         mesa_logi("CATIA api dump: directory c:\\users\\hp does not exist, not enabling VK_LAYER_LUNARG_api_dump");
-      } else if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-         mesa_logi("CATIA api dump: c:\\users\\hp exists but is not a directory, not enabling VK_LAYER_LUNARG_api_dump");
-      } else {
-         // Try to create a file to check write access
-         HANDLE hFile = CreateFileA("c:\\users\\hp\\catia_api_dump_write_test.tmp",
-                                    GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-         if (hFile == INVALID_HANDLE_VALUE) {
-            mesa_logi("CATIA api dump: cannot write to c:\\users\\hp, not enabling VK_LAYER_LUNARG_api_dump");
-         } else {
-            CloseHandle(hFile);
-            DeleteFileA("c:\\users\\hp\\catia_api_dump_write_test.tmp");
-
-            SetEnvironmentVariableA("VK_INSTANCE_LAYERS", "VK_LAYER_LUNARG_api_dump");
-            SetEnvironmentVariableA("VK_LUNARG_API_DUMP_LOG_FILENAME", "c:\\users\\hp\\catia_api_dump.log");
-            SetEnvironmentVariableA("VK_LUNARG_API_DUMP_FILE", "true");
-            SetEnvironmentVariableA("VK_LUNARG_API_DUMP_DETAILED", "true");
-            SetEnvironmentVariableA("VK_LUNARG_API_DUMP_OUTPUT_FORMAT", "text");
-
-            mesa_logi("CATIA api dump: enabled VK_LAYER_LUNARG_api_dump, output to c:\\users\\hp\\catia_api_dump.log");
-         }
-      }
-   }
-#endif
-
    struct zink_screen *screen = rzalloc(NULL, struct zink_screen);
    if (!screen) {
       if (!config || !config->driver_name_is_inferred)

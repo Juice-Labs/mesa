@@ -1358,10 +1358,14 @@ zink_bo_init(struct zink_screen *screen)
    uint64_t total_mem = 0;
    for (uint32_t i = 0; i < screen->info.mem_props.memoryHeapCount; ++i)
       total_mem += screen->info.mem_props.memoryHeaps[i].size;
+   // Limit the memory pooled for reuse to the minimum of 1/8th of the total
+   // available memory and 1 GB.  Beyond this limit VkDeviceMemory objects
+   // are freed immediately instead of being pooled for later reuse.
+   uint64_t max_cache_size = MIN2(total_mem / 8, (uint64_t) 1024ull * 1024ull * 1024ull);
    /* Create managers. */
    pb_cache_init(&screen->pb.bo_cache, screen->info.mem_props.memoryTypeCount,
                  500000, 1.5f, 0,
-                 total_mem / 8, offsetof(struct zink_bo, cache_entry), screen,
+                 max_cache_size, offsetof(struct zink_bo, cache_entry), screen,
                  (void*)bo_destroy, (void*)bo_can_reclaim);
 
    if (!pb_slabs_init(&screen->pb.bo_slabs,

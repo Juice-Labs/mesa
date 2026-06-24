@@ -1353,8 +1353,6 @@ private:
    ir_function_signature *_unpackUint2x32(builtin_available_predicate avail);
 
    /* NV_gpu_shader5 functions */
-   ir_function_signature *_packFloat2x16(builtin_available_predicate avail);
-   ir_function_signature *_unpackFloat2x16(builtin_available_predicate avail);
    ir_function_signature *_doubleBitsToInt64(builtin_available_predicate avail);
    ir_function_signature *_int64BitsToDouble(builtin_available_predicate avail);
    ir_function_signature *_anyThreadNV(builtin_available_predicate avail);
@@ -2689,8 +2687,10 @@ builtin_builder::create_builtins()
    add_function("unpackSnorm4x8",  _unpackSnorm4x8(shader_packing_or_es31_or_gpu_shader5), NULL);
    add_function("packHalf2x16",    _packHalf2x16(shader_packing_or_es3),                   NULL);
    add_function("unpackHalf2x16",  _unpackHalf2x16(shader_packing_or_es3),                 NULL);
-   add_function("packFloat2x16",    _packFloat2x16(gpu_shader_half_float),                 NULL);
-   add_function("unpackFloat2x16",  _unpackFloat2x16(gpu_shader_half_float),               NULL);
+   add_function("packFloat2x16",    _packFloat2x16(gpu_shader_half_float),
+                                    _packFloat2x16(nv_gpu_shader5),                        NULL);
+   add_function("unpackFloat2x16",  _unpackFloat2x16(gpu_shader_half_float),
+                                    _unpackFloat2x16(nv_gpu_shader5),                      NULL);
    add_function("packDouble2x32",    _packDouble2x32(fp64),                   NULL);
    add_function("unpackDouble2x32",  _unpackDouble2x32(fp64),                 NULL);
 
@@ -2700,8 +2700,6 @@ builtin_builder::create_builtins()
    add_function("unpackUint2x32",  _unpackUint2x32(int64_avail),                 NULL);
 
    /* NV_gpu_shader5 functions */
-   add_function("packFloat2x16",   _packFloat2x16(nv_gpu_shader5),              NULL);
-   add_function("unpackFloat2x16", _unpackFloat2x16(nv_gpu_shader5),            NULL);
    add_function("doubleBitsToInt64", _doubleBitsToInt64(nv_gpu_shader5),        NULL);
    add_function("int64BitsToDouble", _int64BitsToDouble(nv_gpu_shader5),        NULL);
    add_function("anyThreadNV",     _anyThreadNV(nv_gpu_shader5),               NULL);
@@ -2840,13 +2838,14 @@ builtin_builder::create_builtins()
    FIUBDHF_VEC(equal)
 
    add_function("any",
+                _any(&glsl_type_builtin_bool),
                 _any(&glsl_type_builtin_bvec2),
                 _any(&glsl_type_builtin_bvec3),
                 _any(&glsl_type_builtin_bvec4),
                 NULL);
 
    add_function("all",
-                _all(nv_gpu_shader5, &glsl_type_builtin_bool),
+                _all(always_available, &glsl_type_builtin_bool),
                 _all(always_available, &glsl_type_builtin_bvec2),
                 _all(always_available, &glsl_type_builtin_bvec3),
                 _all(always_available, &glsl_type_builtin_bvec4),
@@ -7207,24 +7206,6 @@ builtin_builder::_unpackUint2x32(builtin_available_predicate avail)
 }
 
 /* NV_gpu_shader5 functions */
-ir_function_signature *
-builtin_builder::_packFloat2x16(builtin_available_predicate avail)
-{
-   ir_variable *v = in_var(&glsl_type_builtin_f16vec2, "v");
-   MAKE_SIG(&glsl_type_builtin_uint, avail, 1, v);
-   body.emit(ret(expr(ir_unop_pack_float_2x16, v)));
-   return sig;
-}
-
-ir_function_signature *
-builtin_builder::_unpackFloat2x16(builtin_available_predicate avail)
-{
-   ir_variable *p = in_var(&glsl_type_builtin_uint, "p");
-   MAKE_SIG(&glsl_type_builtin_f16vec2, avail, 1, p);
-   body.emit(ret(expr(ir_unop_unpack_float_2x16, p)));
-   return sig;
-}
-
 ir_function_signature *
 builtin_builder::_doubleBitsToInt64(builtin_available_predicate avail)
 {

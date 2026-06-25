@@ -724,6 +724,26 @@ copy_pool_results_to_buffer(struct zink_context *ctx, struct zink_query *query, 
    if (flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT)
       result_size += type_size;
    zink_batch_no_rp(ctx);
+   /* A WAIT_BIT copy blocks the GPU queue until every query in [query_id, +num_results)
+    * is available, which only happens after that query's vkCmdEndQuery. If the query is
+    * still active here (begun but not ended) the wait can never be satisfied in this
+    * submission and the GPU hangs until the TDR fires (DEVICE_LOST with empty fault
+    * info). This was observed on the VRED AA toggle: an occlusion query used for
+    * conditional rendering is begun, its predicate is copied with WAIT, but the matching
+    * EndQuery is dropped when the render scope is interrupted by the MSAA renderpass
+    * rebuild. zink_batch_no_rp() above would have ended any in-renderpass query, so a
+    * still-active query here means its end really is missing. Drop WAIT_BIT to turn a
+    * guaranteed hang into a non-blocking copy (worst case: a stale predicate for one
+    * frame). This is a no-op for every correctly begun+ended query. */
+   if ((flags & VK_QUERY_RESULT_WAIT_BIT) && query->active) {
+      flags &= ~VK_QUERY_RESULT_WAIT_BIT;
+      static bool warned = false;
+      if (!warned) {
+         mesa_logw("zink: stripped VK_QUERY_RESULT_WAIT_BIT from a copy of an active "
+                   "(begun-but-not-ended) query to avoid a GPU hang");
+         warned = true;
+      }
+   }
    /* if it's a single query that doesn't need special handling, we can copy it and be done */
    zink_batch_reference_resource_rw(batch, res, true);
    zink_screen(ctx->base.screen)->buffer_barrier(ctx, res, VK_ACCESS_TRANSFER_WRITE_BIT, 0);

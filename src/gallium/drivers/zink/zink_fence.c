@@ -254,10 +254,13 @@ zink_fence_server_signal(struct pipe_context *pctx, struct pipe_fence_handle *pf
       return;
    }
 
-   assert(!ctx->batch.state->signal_semaphore);
-   ctx->batch.state->signal_semaphore = mfence->sem;
-   ctx->batch.has_work = true;
    struct zink_batch_state *bs = ctx->batch.state;
+
+   /* api signal semaphores have the same mechanics as wait semaphores: they need
+    * their own submit to preserve ownership when the batch state is reset, and
+    * multiple may be signaled in one batch */
+   util_dynarray_append(&bs->user_signal_semaphores, VkSemaphore, mfence->sem);
+   ctx->batch.has_work = true;
    /* this must produce a synchronous flush that completes before the function returns */
    pctx->flush(pctx, NULL, 0);
    if (zink_screen(ctx->base.screen)->threaded)

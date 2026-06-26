@@ -499,6 +499,7 @@ struct zink_batch_state {
    struct util_dynarray user_signal_semaphores; //api signal semaphores
    struct util_dynarray wait_semaphores; //external wait semaphores
    struct util_dynarray wait_semaphore_stages; //external wait semaphores
+   struct util_dynarray fences; //tc fences whose imported wait semaphores must persist across batches
 
    VkSemaphore present;
    struct zink_resource *swapchain;

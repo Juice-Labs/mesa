@@ -147,9 +147,13 @@ zink_reset_batch_state(struct zink_context *ctx, struct zink_batch_state *bs)
     */
    memcpy(&bs->unref_semaphores, &bs->acquires, sizeof(struct util_dynarray));
    util_dynarray_init(&bs->acquires, NULL);
-   while (util_dynarray_contains(&bs->wait_semaphores, VkSemaphore))
-      util_dynarray_append(&bs->unref_semaphores, VkSemaphore, util_dynarray_pop(&bs->wait_semaphores, VkSemaphore));
-   util_dynarray_init(&bs->wait_semaphores, NULL);
+   /* imported wait semaphores are persistent and owned by their tc fences; drop
+    * our references to those fences (the VkSemaphore stays alive for reuse next
+    * frame) instead of destroying the semaphores. (upstream 651864151f1) */
+   util_dynarray_foreach(&bs->fences, struct zink_tc_fence*, mfence)
+      zink_fence_reference(screen, mfence, NULL);
+   util_dynarray_clear(&bs->fences);
+   util_dynarray_clear(&bs->wait_semaphores);
    bs->swapchain = NULL;
 
    /* swapchain views are managed independent of the owner resource */
@@ -277,6 +281,9 @@ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs
    util_dynarray_fini(&bs->bindless_releases[1]);
    util_dynarray_fini(&bs->acquires);
    util_dynarray_fini(&bs->user_signal_semaphores);
+   util_dynarray_foreach(&bs->fences, struct zink_tc_fence*, mfence)
+      zink_fence_reference(screen, mfence, NULL);
+   util_dynarray_fini(&bs->fences);
    util_dynarray_fini(&bs->unref_semaphores);
    util_dynarray_fini(&bs->acquire_flags);
    util_dynarray_fini(&bs->dead_swapchains);
@@ -330,6 +337,7 @@ create_batch_state(struct zink_context *ctx)
    SET_CREATE_OR_FAIL(&bs->active_queries);
    util_dynarray_init(&bs->wait_semaphores, NULL);
    util_dynarray_init(&bs->user_signal_semaphores, NULL);
+   util_dynarray_init(&bs->fences, NULL);
    util_dynarray_init(&bs->wait_semaphore_stages, NULL);
    util_dynarray_init(&bs->zombie_samplers, NULL);
    util_dynarray_init(&bs->dead_framebuffers, NULL);
@@ -636,6 +644,13 @@ zink_end_batch(struct zink_context *ctx, struct zink_batch *batch)
       }
       batch->swapchain = NULL;
    }
+
+   /* the wait semaphores for these fences have been captured into this batch;
+    * clear deferred_ctx so the same persistent imported semaphore is waited again
+    * in the next batch (next frame) instead of being skipped — otherwise zink
+    * stops waiting on the producer and races ahead. (upstream 651864151f1) */
+   util_dynarray_foreach(&bs->fences, struct zink_tc_fence*, mfence)
+      (*mfence)->deferred_ctx = NULL;
 
    if (screen->device_lost)
       return;

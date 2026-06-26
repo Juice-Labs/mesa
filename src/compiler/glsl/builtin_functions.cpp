@@ -2319,13 +2319,14 @@ builtin_builder::create_builtins()
    FIUBD_VEC(equal)
 
    add_function("any",
+                _any(glsl_type::bool_type),
                 _any(glsl_type::bvec2_type),
                 _any(glsl_type::bvec3_type),
                 _any(glsl_type::bvec4_type),
                 NULL);
 
    add_function("all",
-                _all(nv_gpu_shader5, glsl_type::bool_type),
+                _all(always_available, glsl_type::bool_type),
                 _all(always_available, glsl_type::bvec2_type),
                 _all(always_available, glsl_type::bvec3_type),
                 _all(always_available, glsl_type::bvec4_type),

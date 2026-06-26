@@ -1368,8 +1368,8 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
    res->obj->access_stage = 0;
    bool needs_unref = true;
    if (zink_resource_has_usage(res)) {
-      zink_batch_reference_resource_move(&ctx->batch, res);
-      needs_unref = false;
+      if (!zink_batch_reference_resource_move(&ctx->batch, res))
+         needs_unref = false;
    }
    res->obj = new_obj;
 

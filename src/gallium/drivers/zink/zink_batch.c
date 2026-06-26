@@ -136,6 +136,9 @@ zink_reset_batch_state(struct zink_context *ctx, struct zink_batch_state *bs)
 
    bs->resource_size = 0;
    bs->signal_semaphore = VK_NULL_HANDLE;
+   /* api signal semaphores are owned by their pipe_fence_handle; just drop our
+    * references without destroying them */
+   util_dynarray_clear(&bs->user_signal_semaphores);
    util_dynarray_clear(&bs->wait_semaphore_stages);
 
    bs->present = VK_NULL_HANDLE;
@@ -273,6 +276,7 @@ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs
    util_dynarray_fini(&bs->bindless_releases[0]);
    util_dynarray_fini(&bs->bindless_releases[1]);
    util_dynarray_fini(&bs->acquires);
+   util_dynarray_fini(&bs->user_signal_semaphores);
    util_dynarray_fini(&bs->unref_semaphores);
    util_dynarray_fini(&bs->acquire_flags);
    util_dynarray_fini(&bs->dead_swapchains);
@@ -325,6 +329,7 @@ create_batch_state(struct zink_context *ctx)
    SET_CREATE_OR_FAIL(&bs->programs);
    SET_CREATE_OR_FAIL(&bs->active_queries);
    util_dynarray_init(&bs->wait_semaphores, NULL);
+   util_dynarray_init(&bs->user_signal_semaphores, NULL);
    util_dynarray_init(&bs->wait_semaphore_stages, NULL);
    util_dynarray_init(&bs->zombie_samplers, NULL);
    util_dynarray_init(&bs->dead_framebuffers, NULL);
@@ -474,7 +479,7 @@ submit_queue(void *data, void *gdata, int thread_index)
    struct zink_batch_state *bs = data;
    struct zink_context *ctx = bs->ctx;
    struct zink_screen *screen = zink_screen(ctx->base.screen);
-   VkSubmitInfo si[2] = {0};
+   VkSubmitInfo si[3] = {0};
    int num_si = 2;
    while (!bs->fence.batch_id)
       bs->fence.batch_id = (uint32_t)p_atomic_inc_return(&screen->curr_batch);
@@ -483,7 +488,7 @@ submit_queue(void *data, void *gdata, int thread_index)
 
    uint64_t batch_id = bs->fence.batch_id;
    /* first submit is just for acquire waits since they have a separate array */
-   si[0].sType = si[1].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+   si[0].sType = si[1].sType = si[2].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
    si[0].waitSemaphoreCount = util_dynarray_num_elements(&bs->acquires, VkSemaphore);
    si[0].pWaitSemaphores = bs->acquires.data;
    while (util_dynarray_num_elements(&bs->acquire_flags, VkPipelineStageFlags) < si[0].waitSemaphoreCount) {
@@ -549,8 +554,22 @@ submit_queue(void *data, void *gdata, int thread_index)
        }
    }
 
+   /* api signal semaphores need their own trailing submit so that ownership is
+    * preserved when the batch state is reset (same mechanics as wait semaphores),
+    * and so that multiple may be signaled in one batch */
+   unsigned num_user_signals = util_dynarray_num_elements(&bs->user_signal_semaphores, VkSemaphore);
+   if (num_user_signals) {
+      si[2].signalSemaphoreCount = num_user_signals;
+      si[2].pSignalSemaphores = bs->user_signal_semaphores.data;
+   }
+
+   /* si[0] (acquire waits) optionally leads; si[2] (user signals) optionally
+    * trails. both are contiguous in memory with the mandatory si[1]. */
+   VkSubmitInfo *submit_infos = (num_si == 2) ? &si[0] : &si[1];
+   uint32_t submit_count = num_si + (num_user_signals ? 1 : 0);
+
    simple_mtx_lock(&screen->queue_lock);
-   result = VKSCR(QueueSubmit)(screen->queue, num_si, num_si == 2 ? si : &si[1], VK_NULL_HANDLE);
+   result = VKSCR(QueueSubmit)(screen->queue, submit_count, submit_infos, VK_NULL_HANDLE);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkQueueSubmit failed (%s)", vk_Result_to_str(result));
       bs->is_device_lost = true;

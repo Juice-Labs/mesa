@@ -562,3 +562,9 @@ option(
   value : 8,
   description : 'Minimum Windows version to support. Defaults to Windows 8.'
 )
+option(
+  'debug-pipeline',
+  type : 'boolean',
+  value : false,
+  description : 'JUICE: force-on zink/mesa c:\\temp shader + SPIR-V diagnostics (defines DEBUG_PIPELINE + JUICE_MESA_DUMP_*).'
+)

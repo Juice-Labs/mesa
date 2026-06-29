@@ -187,6 +187,7 @@ _mesa_get_shader_capture_path(void)
       }
 #endif
 
+#ifdef DEBUG_PIPELINE
       /* JUICE: force-on shader capture for diagnostics; env var still wins. */
       if (!path) {
 #if defined(_WIN32)
@@ -195,6 +196,7 @@ _mesa_get_shader_capture_path(void)
          path = "/tmp";
 #endif
       }
+#endif
    }
 
    return path;
@@ -1979,6 +1981,7 @@ _mesa_dump_shader_source(const gl_shader_stage stage, const char *source,
       return;
 
    dump_path = getenv("MESA_SHADER_DUMP_PATH");
+#ifdef DEBUG_PIPELINE
    if (!dump_path) {
       /* JUICE: force-on per-stage GLSL source dumps. */
 #if defined(_WIN32)
@@ -1986,6 +1989,11 @@ _mesa_dump_shader_source(const gl_shader_stage stage, const char *source,
 #else
       dump_path = (char *)"/tmp";
 #endif
+   }
+#endif
+   if (dump_path == NULL) {
+      path_exists = false;
+      return;
    }
 
    _mesa_sha1_format(sha, sha1);

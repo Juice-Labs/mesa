@@ -57,6 +57,20 @@ pre_args = [
   '-DPACKAGE_VERSION="@0@"'.format(meson.project_version()),
   '-DPACKAGE_BUGREPORT="https://gitlab.freedesktop.org/mesa/mesa/-/issues"',
 ]
+
+# JUICE: single umbrella for the VRED shader/SPIR-V diagnostics that write to
+# c:\temp. Wiring it here applies the defines to every C/C++ TU via the
+# add_project_arguments(pre_args, ...) call at the bottom of this file. The two
+# JUICE_MESA_DUMP_* macros gate the existing #ifdef dump paths; DEBUG_PIPELINE
+# gates the runtime force-on blocks (zink_screen.c, shaderapi.c).
+if get_option('debug-pipeline')
+  pre_args += [
+    '-DDEBUG_PIPELINE',
+    '-DJUICE_MESA_DUMP_DRAW_STATE',
+    '-DJUICE_MESA_DUMP_SHADERS',
+  ]
+endif
+
 c_args = []
 cpp_args = []
 

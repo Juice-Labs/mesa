@@ -44,6 +44,7 @@ static void
 init_once(void)
 {
    mtx_init(&g_mtx, mtx_plain);
+#ifdef DEBUG_PIPELINE
    g_fp = fopen(JUICE_DIAG_LOG_PATH, "a");
    if (g_fp) {
       /* Line-buffered so even a crash flushes most data. */
@@ -57,8 +58,14 @@ init_once(void)
               " version=9-props-replay -----\n");
       fflush(g_fp);
    }
+#else
+   /* Without JUICE_DEBUG_PIPELINE, never open the c:\temp diag log; g_fp stays
+    * NULL so juice_diag_logf/juice_diag_log_hex become no-ops. */
+   g_fp = NULL;
+#endif /* DEBUG_PIPELINE */
 }
 
+#ifdef DEBUG_PIPELINE
 static once_flag g_replay_dir_once = ONCE_FLAG_INIT;
 
 static void
@@ -68,6 +75,7 @@ init_replay_dir(void)
     * fopen() in juice_diag_replay_write reports the real outcome anyway. */
    (void)JUICE_MKDIR(JUICE_REPLAY_DIR);
 }
+#endif /* DEBUG_PIPELINE */
 
 static void
 write_header(FILE *fp, const char *tag)
@@ -132,6 +140,13 @@ juice_diag_log_hex(const char *tag,
 int
 juice_diag_replay_write(const char *relpath, const void *data, size_t len)
 {
+#ifndef DEBUG_PIPELINE
+   /* No c:\temp\replay artifacts without JUICE_DEBUG_PIPELINE. */
+   (void)relpath;
+   (void)data;
+   (void)len;
+   return 0;
+#else
    call_once(&g_once, init_once);
    call_once(&g_replay_dir_once, init_replay_dir);
 
@@ -161,4 +176,5 @@ juice_diag_replay_write(const char *relpath, const void *data, size_t len)
    juice_diag_logf("REPLAY_WRITE",
                    "OK path=%s len=%zu", path, len);
    return 0;
+#endif /* DEBUG_PIPELINE */
 }

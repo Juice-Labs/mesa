@@ -50,6 +50,15 @@
 
 #include "util/u_cpu_detect.h"
 
+#ifdef DEBUG_PIPELINE
+/* For the build/run beacon written when the diagnostics build switch is on. */
+#include <stdio.h>
+#include <time.h>
+#if DETECT_OS_WINDOWS
+#include <direct.h>
+#endif
+#endif
+
 #if DETECT_OS_WINDOWS
 #include <io.h>
 #define VK_LIBNAME "vulkan-1.dll"
@@ -2385,10 +2394,37 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    screen->abort_on_hang = debug_get_bool_option("ZINK_HANG_ABORT", false);
 
    zink_debug = debug_get_option_zink_debug();
+#ifdef DEBUG_PIPELINE
    /* JUICE TEMP DIAG: force-on SPIR-V/NIR dumps + SPIR-V validation regardless
-    * of ZINK_DEBUG env to capture VRED AA-toggle device-lost shader. REVERT ME
-    * once diagnosis is complete. */
+    * of ZINK_DEBUG env to capture VRED AA-toggle device-lost shader. Gated by
+    * the JUICE_DEBUG_PIPELINE build switch; OFF leaves stock env-driven behaviour. */
    zink_debug |= ZINK_DEBUG_SPIRV | ZINK_DEBUG_VALIDATION | ZINK_DEBUG_NIR;
+
+   /* Build/run beacon: an easy way to confirm the running mesa was actually
+    * compiled with DEBUG_PIPELINE. Check for the file below - its modified time
+    * is the last run, and its contents record the build stamp. Written once per
+    * process, only in diagnostics builds. */
+   {
+      static bool juice_beacon_done = false;
+      if (!juice_beacon_done) {
+         juice_beacon_done = true;
+#if DETECT_OS_WINDOWS
+         _mkdir("C:\\temp");
+         const char *juice_beacon_path = "C:\\temp\\juice_debug_pipeline_active.txt";
+#else
+         const char *juice_beacon_path = "/tmp/juice_debug_pipeline_active.txt";
+#endif
+         FILE *jb = fopen(juice_beacon_path, "w");
+         if (jb) {
+            time_t now = time(NULL);
+            fprintf(jb,
+                    "DEBUG_PIPELINE active\nbuilt:    %s %s\nfirst run: %s",
+                    __DATE__, __TIME__, ctime(&now));
+            fclose(jb);
+         }
+      }
+   }
+#endif
    zink_descriptor_mode = debug_get_option_zink_descriptor_mode();
 
    screen->loader_lib = util_dl_open(VK_LIBNAME);

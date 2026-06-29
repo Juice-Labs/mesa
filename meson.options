@@ -915,3 +915,10 @@ option(
   value : false,
   description : 'Build panfrost Rust components.'
 )
+
+option(
+  'debug-pipeline',
+  type : 'boolean',
+  value : false,
+  description : 'JUICE: force-on zink/mesa c:\temp shader + SPIR-V diagnostics (defines DEBUG_PIPELINE + JUICE_MESA_DUMP_*).'
+)

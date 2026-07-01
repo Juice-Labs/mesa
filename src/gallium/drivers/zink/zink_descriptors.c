@@ -1313,7 +1313,10 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
           * single-binding by construction and need no fanout. Legacy
           * binding (already written above by `wd`) is skipped. The pool
           * was sized for the full descriptor count of each type so this
-          * is within capacity, and unread bindings are harmless. */
+          * is within capacity, and unread bindings are harmless. Fanout is
+          * required: the shader-side tuple binding doesn't always match the
+          * create-time one, so writing only the primary regressed VRED to
+          * black. */
          if (!is_buffer) {
             unsigned fan_first, fan_last;
             if (i == 0) {

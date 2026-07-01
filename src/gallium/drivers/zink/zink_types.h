@@ -70,8 +70,9 @@
 #define MAX_LAZY_DESCRIPTORS 500
 /* explicit clamping because descriptor caching used to exist */
 #define ZINK_MAX_SHADER_IMAGES 32
-/* total number of bindless ids that can be allocated */
-#define ZINK_MAX_BINDLESS_HANDLES 1024
+/* total bindless ids per side; raised from stock 1024 because VRED exceeds it
+ * (24 sampler bindings * 8192 = 196608 UAB images, under the A6000's ~1M) */
+#define ZINK_MAX_BINDLESS_HANDLES 8192
 
 /* enum zink_descriptor_type */
 #define ZINK_MAX_DESCRIPTOR_SETS 6

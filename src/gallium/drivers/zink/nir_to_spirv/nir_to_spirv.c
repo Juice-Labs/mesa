@@ -1025,7 +1025,7 @@ emit_image(struct ntv_context *ctx, struct nir_variable *var, bool bindless, boo
    bool mediump = (var->data.precision == GLSL_PRECISION_MEDIUM || var->data.precision == GLSL_PRECISION_LOW);
 
    /* Zink bindless container variables are sampler/image arrays of length
-    * ZINK_MAX_BINDLESS_HANDLES (1024). Multiple such containers can share the
+    * ZINK_MAX_BINDLESS_HANDLES. Multiple such containers can share the
     * same Vulkan descriptor_set+binding by SPIR-V aliasing in order to expose
     * heterogeneous SPIR-V image types under a single VkDescriptorType. They
     * still get emitted as real SPIR-V variables, but they must NOT participate
@@ -1036,7 +1036,7 @@ emit_image(struct ntv_context *ctx, struct nir_variable *var, bool bindless, boo
     */
    bool is_bindless_container = (is_sampler || glsl_type_is_image(type)) &&
                                 glsl_type_is_array(var->type) &&
-                                glsl_get_length(var->type) == 1024 /* ZINK_MAX_BINDLESS_HANDLES */;
+                                glsl_get_length(var->type) == ZINK_MAX_BINDLESS_HANDLES;
 
    int index = var->data.driver_location;
    if (!is_bindless_container) {
@@ -3008,7 +3008,7 @@ static SpvId
 get_image_type_for_deref(struct ntv_context *ctx, struct nir_variable *var)
 {
    bool is_bindless_container = glsl_type_is_array(var->type) &&
-                                glsl_get_length(var->type) == 1024 /* ZINK_MAX_BINDLESS_HANDLES */ &&
+                                glsl_get_length(var->type) == ZINK_MAX_BINDLESS_HANDLES &&
                                 glsl_type_is_image(glsl_without_array(var->type));
    if (var->data.bindless || is_bindless_container)
       return get_bare_image_type(ctx, var, false);

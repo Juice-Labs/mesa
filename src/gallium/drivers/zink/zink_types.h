@@ -70,8 +70,27 @@
 #define MAX_LAZY_DESCRIPTORS 500
 /* explicit clamping because descriptor caching used to exist */
 #define ZINK_MAX_SHADER_IMAGES 32
-/* total number of bindless ids that can be allocated */
-#define ZINK_MAX_BINDLESS_HANDLES 1024
+/* Total number of bindless ids that can be allocated per side (non-buffer /
+ * buffer). This is simultaneously (a) the per-binding descriptorCount, (b) the
+ * size of the img_infos / buffer_infos / *_handle_bindings arrays and the SPIR-V
+ * container array, and (c) the value that separates the two handle spaces:
+ * ZINK_BINDLESS_IS_BUFFER(h) is h >= ZINK_MAX_BINDLESS_HANDLES, and buffer
+ * handles are encoded as slot + ZINK_MAX_BINDLESS_HANDLES.
+ *
+ * JUICE: raised from the stock 1024 because VRED allocates well over 1024
+ * simultaneous non-buffer bindless texture handles. Once util_idalloc handed
+ * out slot >= 1024 for a plain sampler, that handle got misclassified as a
+ * buffer handle on lookup (wrong hash table -> unbound -> black) and also
+ * indexed the 1024-element arrays out of bounds (heap corruption). The cap
+ * gates the update-after-bind descriptor count: the sampler side declares
+ * (ZINK_BINDLESS_SAMPLER_LAST + 1) == 24 bindings, so the set uses
+ * 24 * ZINK_MAX_BINDLESS_HANDLES combined-image-samplers and must stay under
+ * the device's maxDescriptorSetUpdateAfterBindSampledImages /
+ * maxPerStageDescriptorUpdateAfterBindSampledImages. 8192 -> 196608, far under
+ * the ~1M those limits report on the NVIDIA RTX A6000 this targets. The
+ * make_*_handle_resident / delete_*_handle guards still skip (rather than
+ * corrupt) if a scene ever exceeds even this. */
+#define ZINK_MAX_BINDLESS_HANDLES 8192
 
 /* enum zink_descriptor_type */
 #define ZINK_MAX_DESCRIPTOR_SETS 6

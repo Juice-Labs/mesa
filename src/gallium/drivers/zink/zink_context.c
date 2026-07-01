@@ -2588,14 +2588,9 @@ zink_set_sampler_views(struct pipe_context *pctx,
    }
 }
 
-/* JUICE Step A.9: compute the (CIS, dim, is_array, is_shadow) tuple
- * binding for a sampler-view bindless handle from the view target and
- * sampler compare mode. This is what the per-handle binding write path
- * needs to know to land each descriptor at its tuple binding. The A.7
- * fanout still mirrors to every CIS tuple binding, so this value only
- * shifts which binding is the "primary" write for now; A.10 will then
- * shrink the write to just this binding.
- */
+/* CIS tuple binding (dim, is_array, is_shadow) for a sampler-view bindless
+ * handle; recorded at create time as the primary binding for its descriptor
+ * write (which still fans out to every tuple binding, see update_bindless). */
 static unsigned
 juice_tex_handle_tuple_binding(struct pipe_sampler_view *view,
                                const struct pipe_sampler_state *state)
@@ -2669,6 +2664,10 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
       ctx->di.bindless[0].buf_handle_bindings[slot] =
          ZINK_BINDLESS_UTEX_BINDING;
    }
+#ifdef DEBUG_PIPELINE
+   mesa_logi("ZINK BINDLESS: create_texture_handle ctx=%p handle=%llu (is_buffer=%d)",
+             (void*)ctx, (unsigned long long)handle, bd->ds.is_buffer);
+#endif
    return handle;
 }
 
@@ -2678,7 +2677,12 @@ zink_delete_texture_handle(struct pipe_context *pctx, uint64_t handle)
    struct zink_context *ctx = zink_context(pctx);
    bool is_buffer = ZINK_BINDLESS_IS_BUFFER(handle);
    struct hash_entry *he = _mesa_hash_table_search(&ctx->di.bindless[is_buffer].tex_handles, (void*)(uintptr_t)handle);
-   assert(he);
+   if (!he) {
+      /* handle not created on this context (see make_texture_handle_resident) */
+      mesa_loge("ZINK BINDLESS: delete_texture_handle ctx=%p handle=%llu (is_buffer=%d): handle not created on this context; skipping",
+                (void*)ctx, (unsigned long long)handle, is_buffer);
+      return;
+   }
    struct zink_bindless_descriptor *bd = he->data;
    struct zink_descriptor_surface *ds = &bd->ds;
    _mesa_hash_table_remove(&ctx->di.bindless[is_buffer].tex_handles, he);
@@ -2743,7 +2747,14 @@ zink_make_texture_handle_resident(struct pipe_context *pctx, uint64_t handle, bo
    bool general_layout = zink_screen(ctx->base.screen)->driver_workarounds.general_layout;
    bool is_buffer = ZINK_BINDLESS_IS_BUFFER(handle);
    struct hash_entry *he = _mesa_hash_table_search(&ctx->di.bindless[is_buffer].tex_handles, (void*)(uintptr_t)handle);
-   assert(he);
+   if (!he) {
+      /* GL bindless handles are share-group global but zink tracks them per
+       * context; skip an unknown handle (unbound slot samples as no-texture)
+       * rather than assert/NULL-deref he->data. */
+      mesa_loge("ZINK BINDLESS: make_texture_handle_resident ctx=%p handle=%llu (is_buffer=%d resident=%d): handle not created on this context; skipping",
+                (void*)ctx, (unsigned long long)handle, is_buffer, resident);
+      return;
+   }
    struct zink_bindless_descriptor *bd = he->data;
    struct zink_descriptor_surface *ds = &bd->ds;
    struct zink_resource *res = zink_resource(bd->pres);
@@ -2876,6 +2887,10 @@ zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view
       ctx->di.bindless[1].buf_handle_bindings[slot] =
          ZINK_BINDLESS_STEX_BINDING;
    }
+#ifdef DEBUG_PIPELINE
+   mesa_logi("ZINK BINDLESS: create_image_handle ctx=%p handle=%llu (is_buffer=%d)",
+             (void*)ctx, (unsigned long long)handle, bd->ds.is_buffer);
+#endif
    return handle;
 }
 
@@ -2885,7 +2900,12 @@ zink_delete_image_handle(struct pipe_context *pctx, uint64_t handle)
    struct zink_context *ctx = zink_context(pctx);
    bool is_buffer = ZINK_BINDLESS_IS_BUFFER(handle);
    struct hash_entry *he = _mesa_hash_table_search(&ctx->di.bindless[is_buffer].img_handles, (void*)(uintptr_t)handle);
-   assert(he);
+   if (!he) {
+      /* handle not created on this context (see make_texture_handle_resident) */
+      mesa_loge("ZINK BINDLESS: delete_image_handle ctx=%p handle=%llu (is_buffer=%d): handle not created on this context; skipping",
+                (void*)ctx, (unsigned long long)handle, is_buffer);
+      return;
+   }
    struct zink_bindless_descriptor *bd = he->data;
    struct zink_descriptor_surface *ds = &bd->ds;
    _mesa_hash_table_remove(&ctx->di.bindless[is_buffer].img_handles, he);
@@ -2902,7 +2922,12 @@ zink_make_image_handle_resident(struct pipe_context *pctx, uint64_t handle, unsi
    struct zink_context *ctx = zink_context(pctx);
    bool is_buffer = ZINK_BINDLESS_IS_BUFFER(handle);
    struct hash_entry *he = _mesa_hash_table_search(&ctx->di.bindless[is_buffer].img_handles, (void*)(uintptr_t)handle);
-   assert(he);
+   if (!he) {
+      /* handle not created on this context (see make_texture_handle_resident) */
+      mesa_loge("ZINK BINDLESS: make_image_handle_resident ctx=%p handle=%llu (is_buffer=%d resident=%d): handle not created on this context; skipping",
+                (void*)ctx, (unsigned long long)handle, is_buffer, resident);
+      return;
+   }
    struct zink_bindless_descriptor *bd = he->data;
    struct zink_descriptor_surface *ds = &bd->ds;
    bd->access = paccess;
@@ -6329,7 +6354,7 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
          _mesa_hash_table_init(&ctx->di.bindless[i].img_handles, ctx, _mesa_hash_pointer, _mesa_key_pointer_equal);
          _mesa_hash_table_init(&ctx->di.bindless[i].tex_handles, ctx, _mesa_hash_pointer, _mesa_key_pointer_equal);
 
-         /* allocate 1024 slots and reserve slot 0 */
+         /* allocate ZINK_MAX_BINDLESS_HANDLES slots and reserve slot 0 */
          util_idalloc_init(&ctx->di.bindless[i].tex_slots, ZINK_MAX_BINDLESS_HANDLES);
          util_idalloc_alloc(&ctx->di.bindless[i].tex_slots);
          util_idalloc_init(&ctx->di.bindless[i].img_slots, ZINK_MAX_BINDLESS_HANDLES);

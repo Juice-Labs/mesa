@@ -3123,12 +3123,9 @@ emit_get_ssbo_size(struct ntv_context *ctx, nir_intrinsic_instr *intr)
 static SpvId
 get_image_type_for_deref(struct ntv_context *ctx, struct nir_variable *var)
 {
-   bool is_bindless_container = glsl_type_is_array(var->type) &&
-                                glsl_get_length(var->type) == 1024 /* ZINK_MAX_BINDLESS_HANDLES */ &&
-                                glsl_type_is_image(glsl_without_array(var->type));
-   if (var->data.bindless || is_bindless_container)
+   if (var->data.bindless)
       return get_bare_image_type(ctx, var, false);
-   return ctx->image_types[var->data.driver_location];
+   return find_image_type(ctx, var);
 }
 
 static SpvId
@@ -3189,7 +3186,6 @@ emit_image_deref_store(struct ntv_context *ctx, nir_intrinsic_instr *intr)
       spirv_builder_emit_atomic_store(&ctx->builder, texel_ptr, SpvScopeDevice, 0, texel);
    } else {
       bool coherent = ctx->sinfo->have_vulkan_memory_model && (access & ACCESS_COHERENT);
-      SpvId img_type = find_image_type(ctx, var);
       SpvId img = spirv_builder_emit_load(&ctx->builder, img_type, img_var, false);
       spirv_builder_emit_image_write(&ctx->builder, img, coord, texel, 0, sample, coherent);
    }
@@ -3256,7 +3252,6 @@ emit_image_deref_load(struct ntv_context *ctx, nir_intrinsic_instr *intr)
       result = emit_atomic(ctx, SpvOpAtomicLoad, dest_type, texel_ptr, 0, 0);
    } else {
       bool coherent = ctx->sinfo->have_vulkan_memory_model && (access & ACCESS_COHERENT);
-      SpvId img_type = find_image_type(ctx, var);
       SpvId img = spirv_builder_emit_load(&ctx->builder, img_type, img_var, false);
       result = spirv_builder_emit_image_read(&ctx->builder, dest_type,
                                              img, coord, 0, sample, sparse, coherent);
@@ -3299,8 +3294,8 @@ emit_image_deref_samples(struct ntv_context *ctx, nir_intrinsic_instr *intr)
    SpvId img_var = get_src(ctx, &intr->src[0], &atype);
    nir_deref_instr *deref = nir_src_as_deref(intr->src[0]);
    nir_variable *var = find_vulkan_deref_var(ctx, deref);
-   SpvId img = spirv_builder_emit_load(&ctx->builder, img_type, img_var, false);
    SpvId img_type = get_image_type_for_deref(ctx, var);
+   SpvId img = spirv_builder_emit_load(&ctx->builder, img_type, img_var, false);
 
    spirv_builder_emit_cap(&ctx->builder, SpvCapabilityImageQuery);
    SpvId result = spirv_builder_emit_unop(&ctx->builder, SpvOpImageQuerySamples, get_def_type(ctx, &intr->def, nir_type_uint), img);

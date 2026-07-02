@@ -1861,6 +1861,9 @@ bind_buffer_base_shader_storage_buffer(struct gl_context *ctx,
       return;
    }
 
+   mesa_logi("GL BIND BUFFER BASE: GL_SHADER_STORAGE_BUFFER, index=%u, bufObj=%p, bufObj->Name=%u, bufObj->Size=%lu",
+             index, bufObj, bufObj ? bufObj->Name : 0, bufObj ? (unsigned long)bufObj->Size : 0);
+
    _mesa_reference_buffer_object(ctx, &ctx->ShaderStorageBuffer, bufObj);
 
    if (!bufObj)
@@ -2553,6 +2556,19 @@ buffer_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
       ctx->_UniformBufferDataUpdated = true;
    }
 
+   /* JUICE watch: the VRED environment background shaders (prog 54/57) scale
+    * their final fragment color by OSGEnvironment.base[173] (byte offset 692).
+    * That value reads back as 0 in our captured UBO, which forces the backdrop
+    * to pure black. Log whenever a full BufferData upload actually carries a
+    * value at byte 692 so we can tell whether VRED wrote non-zero there (=> our
+    * upload path is dropping it) or genuinely leaves it 0. */
+   if (data && size > 695) {
+      uint32_t w; memcpy(&w, (const uint8_t *)data + 692, sizeof(w));
+      float f; memcpy(&f, &w, sizeof(f));
+      mesa_logi("UBO WRITE WATCH: glBufferData buf=%u target=0x%x size=%ld -> base[173]@692 = 0x%08x (%f)",
+                bufObj->Name, target, (long)size, w, f);
+   }
+
 #ifdef BOUNDS_CHECK
    size += 100;
 #endif
@@ -2734,6 +2750,17 @@ _mesa_buffer_sub_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
 
    bufObj->NumSubDataCalls++;
    bufObj->MinMaxCacheDirty = true;
+
+   /* JUICE watch: see buffer_data() above. Log any glBufferSubData whose write
+    * range covers OSGEnvironment.base[173] (byte 692), the env-output scale that
+    * reads back 0 and blacks the VRED backdrop. */
+   if (data && offset <= 692 && (offset + size) >= 696) {
+      const uint8_t *src = (const uint8_t *)data + (692 - offset);
+      uint32_t w; memcpy(&w, src, sizeof(w));
+      float f; memcpy(&f, &w, sizeof(f));
+      mesa_logi("UBO WRITE WATCH: glBufferSubData buf=%u off=%ld size=%ld -> base[173]@692 = 0x%08x (%f)",
+                bufObj->Name, (long)offset, (long)size, w, f);
+   }
 
    _mesa_bufferobj_subdata(ctx, offset, size, data, bufObj);
 }
@@ -3203,6 +3230,23 @@ validate_and_unmap_buffer(struct gl_context *ctx,
       }
    }
 #endif
+
+   /* JUICE watch: catch mapped (glMapBufferRange) writes that cover
+    * OSGEnvironment.base[173] (byte 692) - the env-output scale that reads back
+    * 0 and blacks the VRED backdrop. Complements the BufferData/BufferSubData
+    * watches so we cover every UBO update path. */
+   if ((bufObj->Mappings[MAP_USER].AccessFlags & GL_MAP_WRITE_BIT) &&
+       bufObj->Mappings[MAP_USER].Pointer) {
+      GLintptr moff = bufObj->Mappings[MAP_USER].Offset;
+      GLsizeiptr mlen = bufObj->Mappings[MAP_USER].Length;
+      if (moff <= 692 && (moff + mlen) >= 696) {
+         const uint8_t *base = (const uint8_t *)bufObj->Mappings[MAP_USER].Pointer;
+         uint32_t w; memcpy(&w, base + (692 - moff), sizeof(w));
+         float f; memcpy(&f, &w, sizeof(f));
+         mesa_logi("UBO WRITE WATCH: unmap(mapped write) buf=%u mapOff=%ld mapLen=%ld -> base[173]@692 = 0x%08x (%f)",
+                   bufObj->Name, (long)moff, (long)mlen, w, f);
+      }
+   }
 
    return unmap_buffer(ctx, bufObj);
 }
@@ -3855,6 +3899,24 @@ map_buffer_range(struct gl_context *ctx, struct gl_buffer_object *bufObj,
       bufObj->MinMaxCacheDirty = true;
    }
 
+   /* JUICE watch: log any write-map whose range covers OSGEnvironment.base[173]
+    * (byte 692) - the env output-scale that reads back 0 and blacks the VRED
+    * backdrop. This catches the persistent/coherent and explicit-flush mapping
+    * paths that BufferData/BufferSubData watches miss. PERSISTENT|COHERENT maps
+    * are written directly by the app with no unmap/flush, so if buf 11 shows up
+    * here the value at 692 must be propagated to the GPU by our virtualization. */
+   if (map && (access & GL_MAP_WRITE_BIT) &&
+       offset <= 692 && (offset + length) >= 696) {
+      const uint8_t *p = (const uint8_t *)map + (692 - offset);
+      uint32_t w; memcpy(&w, p, sizeof(w));
+      float f; memcpy(&f, &w, sizeof(f));
+      mesa_logi("UBO WRITE WATCH: MapBufferRange buf=%u off=%ld len=%ld access=0x%x%s%s -> base[173]@692(at map) = 0x%08x (%f)",
+                bufObj->Name, (long)offset, (long)length, access,
+                (access & GL_MAP_PERSISTENT_BIT) ? " PERSISTENT" : "",
+                (access & GL_MAP_COHERENT_BIT) ? " COHERENT" : "",
+                w, f);
+   }
+
 #ifdef VBO_DEBUG
    if (strstr(func, "Range") == NULL) { /* If not MapRange */
       printf("glMapBuffer(%u, sz %ld, access 0x%x)\n",
@@ -4163,6 +4225,20 @@ flush_mapped_buffer_range(struct gl_context *ctx,
 
    assert(bufObj->Mappings[MAP_USER].AccessFlags & GL_MAP_WRITE_BIT);
 
+   /* JUICE watch: flush offset/length are relative to the map's base offset. */
+   {
+      GLintptr abs = bufObj->Mappings[MAP_USER].Offset + offset;
+      if (bufObj->Mappings[MAP_USER].Pointer &&
+          abs <= 692 && (abs + length) >= 696) {
+         const uint8_t *p = (const uint8_t *)bufObj->Mappings[MAP_USER].Pointer +
+                            (692 - bufObj->Mappings[MAP_USER].Offset);
+         uint32_t w; memcpy(&w, p, sizeof(w));
+         float f; memcpy(&f, &w, sizeof(f));
+         mesa_logi("UBO WRITE WATCH: FlushMappedBufferRange buf=%u abs=%ld len=%ld -> base[173]@692 = 0x%08x (%f)",
+                   bufObj->Name, (long)abs, (long)length, w, f);
+      }
+   }
+
    _mesa_bufferobj_flush_mapped_range(ctx, offset, length, bufObj,
                                       MAP_USER);
 }
@@ -4249,6 +4325,9 @@ bind_buffer_range_uniform_buffer(struct gl_context *ctx, GLuint index,
                                  struct gl_buffer_object *bufObj,
                                  GLintptr offset, GLsizeiptr size)
 {
+   mesa_logi("GL BIND BUFFER RANGE: GL_UNIFORM_BUFFER, index=%u, bufObj=%p, bufObj->Name=%u, offset=%ld, size=%ld",
+             index, bufObj, bufObj ? bufObj->Name : 0, (long)offset, (long)size);
+
    if (!bufObj) {
       offset = -1;
       size = -1;
@@ -4292,6 +4371,9 @@ bind_buffer_range_shader_storage_buffer(struct gl_context *ctx,
                                         GLintptr offset,
                                         GLsizeiptr size)
 {
+   mesa_logi("GL BIND BUFFER RANGE: GL_SHADER_STORAGE_BUFFER, index=%u, bufObj=%p, bufObj->Name=%u, offset=%ld, size=%ld",
+             index, bufObj, bufObj ? bufObj->Name : 0, (long)offset, (long)size);
+
    if (!bufObj) {
       offset = -1;
       size = -1;

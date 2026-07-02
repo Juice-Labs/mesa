@@ -1549,6 +1549,63 @@ rewrite_read_as_0(nir_builder *b, nir_instr *instr, void *data)
    return true;
 }
 
+/* JUICE DEBUG: env-var-gated fragment-output intermediate probe.
+ *
+ * Many VRED passes end their fragment shader with
+ *     colorBufferRGBA = envScale.xxxx * colorVec;
+ * where envScale is a scalar read from a UBO that VRED frequently leaves
+ * NULL-bound (e.g. GL UBO binding 7 -> zink ubos@32[6].base[173]). When that
+ * scalar is 0 the whole output is forced to black, and (with a multiply blend)
+ * it erases the framebuffer.
+ *
+ * To inspect what the shader would otherwise produce, set:
+ *   JUICE_DBG_FRAGOUT=color  -> store colorVec directly (drop the scale mul,
+ *                               i.e. as if envScale == 1) so we can see the
+ *                               pre-multiply scene color.
+ *   JUICE_DBG_FRAGOUT=scale  -> store the scalar multiplier broadcast to RGBA
+ *                               so we can see whether it is 0.
+ *
+ * Only rewrites stores whose value is fmul(scalar, vec); any shader that does
+ * not match this exact pattern (e.g. prog 54 gbuffer, prog 75 tonemap) is left
+ * completely untouched, so this is safe to leave enabled for a whole frame. */
+static bool
+juice_dbg_fragout_instr(nir_builder *b, nir_instr *instr, void *data)
+{
+   const int mode = *(const int *)data; /* 0 = color, 1 = scale */
+   if (instr->type != nir_instr_type_intrinsic)
+      return false;
+   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+   if (intr->intrinsic != nir_intrinsic_store_deref)
+      return false;
+   nir_variable *var = nir_intrinsic_get_var(intr, 0);
+   if (!var || var->data.mode != nir_var_shader_out)
+      return false;
+   if (var->data.location != FRAG_RESULT_DATA0 &&
+       var->data.location != FRAG_RESULT_COLOR)
+      return false;
+   if (!intr->src[1].is_ssa)
+      return false;
+   nir_ssa_def *val = intr->src[1].ssa;
+   if (!val->parent_instr || val->parent_instr->type != nir_instr_type_alu)
+      return false;
+   nir_alu_instr *alu = nir_instr_as_alu(val->parent_instr);
+   if (alu->op != nir_op_fmul)
+      return false;
+   if (!alu->src[0].src.is_ssa || !alu->src[1].src.is_ssa)
+      return false;
+   int scalar_idx, color_idx;
+   if (alu->src[0].src.ssa->num_components == 1) { scalar_idx = 0; color_idx = 1; }
+   else if (alu->src[1].src.ssa->num_components == 1) { scalar_idx = 1; color_idx = 0; }
+   else return false;
+
+   b->cursor = nir_before_instr(instr);
+   nir_ssa_def *repl = nir_mov_alu(b, mode == 0 ? alu->src[color_idx]
+                                                : alu->src[scalar_idx],
+                                   val->num_components);
+   nir_instr_rewrite_src(instr, &intr->src[1], nir_src_for_ssa(repl));
+   return true;
+}
+
 void
 zink_compiler_assign_io(nir_shader *producer, nir_shader *consumer)
 {
@@ -2327,6 +2384,20 @@ zink_shader_compile(struct zink_screen *screen, struct zink_shader *zs, nir_shad
    } else if (need_optimize)
       optimize_nir(nir, zs);
    prune_io(nir);
+
+   /* JUICE DEBUG: optionally rewrite the fragment color output to expose the
+    * intermediate feeding it (see juice_dbg_fragout_instr). Gated by
+    * JUICE_DBG_FRAGOUT=color|scale; no-op for shaders that don't match the
+    * envScale.xxxx * colorVec pattern. */
+   if (nir->info.stage == MESA_SHADER_FRAGMENT) {
+      const char *dbg = getenv("JUICE_DBG_FRAGOUT");
+      if (dbg && (!strcmp(dbg, "color") || !strcmp(dbg, "scale"))) {
+         int mode = !strcmp(dbg, "scale") ? 1 : 0;
+         NIR_PASS_V(nir, nir_shader_instructions_pass, juice_dbg_fragout_instr,
+                    nir_metadata_none, &mode);
+         optimize_nir(nir, zs);
+      }
+   }
 
    NIR_PASS_V(nir, nir_convert_from_ssa, true);
 

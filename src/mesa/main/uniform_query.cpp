@@ -1627,6 +1627,19 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                }
                sampler->bound = true;
                sh->Program->sh.HasBoundBindlessSampler = true;
+
+               /* JUICE: correlate the sampler name with the per-stage
+                * BindlessSamplers[] index and texture unit at bind time. The
+                * BSR_* records in st_make_bound_samplers_resident only log by
+                * index, so this is the join needed to tell whether a named
+                * sampler (e.g. envMap) actually reaches the resident-handle
+                * path or is left bound=0 at draw time. */
+               juice_diag_logf("SB_BOUND",
+                               "prog=%u stage=%d bindless_idx=%u tex_unit=%u "
+                               "name=%s",
+                               shProg ? shProg->Name : 0u,
+                               i, unit, value,
+                               uni->name.string ? uni->name.string : "?");
             } else {
                if (sh->Program->SamplerUnits[unit] != value) {
                   if (!flushed) {

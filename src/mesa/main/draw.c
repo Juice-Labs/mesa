@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "arrayobj.h"
 #include "glheader.h"
 #include "c99_alloca.h"
@@ -46,6 +47,7 @@
 #include "util/blob.h"
 #include "macros.h"
 #include "transformfeedback.h"
+#include "texgetimage.h"
 #include "pipe/p_state.h"
 #include "api_exec_decl.h"
 
@@ -704,13 +706,397 @@ dump_pipeline_state(struct gl_context *ctx, unsigned draw_id)
 }
 
 /**
+ * JUICE: decode the two environment/viewport uniform blocks into named,
+ * human-readable values so the background multipliers can be inspected
+ * directly (no raw-offset math). VRED binds OSGViewport at binding 0 and
+ * OSGEnvironment at binding 6 (std140). The background sky color in the
+ * environment shader (prog 54) is:
+ *   texture(envMap,dir) * envColorMatrix * exposure * physicalScaleFactor
+ * so a zero exposure / physicalScaleFactor / envColorMatrix blacks the
+ * backdrop even when envMap itself is fine.
+ */
+static float
+juice_ubo_f32(const uint8_t *base, unsigned off)
+{
+   float v;
+   memcpy(&v, base + off, sizeof(v));
+   return v;
+}
+
+static int
+juice_ubo_i32(const uint8_t *base, unsigned off)
+{
+   int v;
+   memcpy(&v, base + off, sizeof(v));
+   return v;
+}
+
+static void
+dump_env_decode(struct gl_context *ctx, unsigned draw_id)
+{
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_envdecode.txt", draw_id);
+   FILE *fp = fopen(filename, "w");
+   if (!fp)
+      return;
+
+   GLuint active_prog = (ctx->_Shader && ctx->_Shader->ActiveProgram) ?
+                        ctx->_Shader->ActiveProgram->Name : 0;
+   fprintf(fp, "=== ENV DECODE (program %u) ===\n", active_prog);
+
+   const struct { unsigned binding; const char *name; } blocks[2] = {
+      { 0, "OSGViewport" }, { 6, "OSGEnvironment" }
+   };
+
+   for (int b = 0; b < 2; b++) {
+      unsigned bind = blocks[b].binding;
+      if (bind >= ctx->Const.MaxUniformBufferBindings)
+         continue;
+      struct gl_buffer_object *bufObj = ctx->UniformBufferBindings[bind].BufferObject;
+      GLintptr boff = ctx->UniformBufferBindings[bind].Offset;
+      GLsizeiptr bsize = ctx->UniformBufferBindings[bind].Size;
+
+      fprintf(fp, "\n[binding %u %s] buffer=%u bind_offset=%ld bind_size=%ld buf_total=%ld\n",
+              bind, blocks[b].name, bufObj ? bufObj->Name : 0,
+              (long)boff, (long)bsize, (long)(bufObj ? bufObj->Size : 0));
+      if (!bufObj) {
+         fprintf(fp, "  <no buffer bound at this binding>\n");
+         continue;
+      }
+      if (boff < 0)
+         boff = 0;
+
+      GLsizeiptr avail = bufObj->Size - boff;
+      if (avail <= 0) {
+         fprintf(fp, "  <bind offset beyond buffer>\n");
+         continue;
+      }
+      GLsizeiptr map_len = avail < 512 ? avail : 512;
+      const uint8_t *p = (const uint8_t *)
+         _mesa_bufferobj_map_range(ctx, boff, map_len, GL_MAP_READ_BIT, bufObj, MAP_INTERNAL);
+      if (!p) {
+         fprintf(fp, "  <map failed>\n");
+         continue;
+      }
+
+      if (bind == 0) {
+         /* OSGViewport std140 offsets */
+         fprintf(fp, "  rec709toRCS diag   = %f %f %f %f\n",
+                 juice_ubo_f32(p, 0), juice_ubo_f32(p, 20),
+                 juice_ubo_f32(p, 40), juice_ubo_f32(p, 60));
+         if (map_len > 124) {
+            fprintf(fp, "  superSamplingScale = %f\n", juice_ubo_f32(p, 112));
+            fprintf(fp, "  displayLuminance   = %f\n", juice_ubo_f32(p, 116));
+            fprintf(fp, "  physicalScaleFactor= %f\n", juice_ubo_f32(p, 120));
+         }
+         if (map_len > 156) {
+            fprintf(fp, "  sceneUnitScale     = %f\n", juice_ubo_f32(p, 144));
+            fprintf(fp, "  colorspace(int)    = %d\n", juice_ubo_i32(p, 152));
+         }
+      } else {
+         /* OSGEnvironment std140 offsets */
+         fprintf(fp, "  envColorMatrix diag= %f %f %f %f\n",
+                 juice_ubo_f32(p, 128), juice_ubo_f32(p, 148),
+                 juice_ubo_f32(p, 168), juice_ubo_f32(p, 188));
+         if (map_len > 208) {
+            fprintf(fp, "  averageEnvColor    = %f %f %f %f\n",
+                    juice_ubo_f32(p, 192), juice_ubo_f32(p, 196),
+                    juice_ubo_f32(p, 200), juice_ubo_f32(p, 204));
+            fprintf(fp, "  exposure           = %f\n", juice_ubo_f32(p, 208));
+         }
+         if (map_len > 224) {
+            fprintf(fp, "  saturation         = %f\n", juice_ubo_f32(p, 212));
+            fprintf(fp, "  whitepoint         = %f\n", juice_ubo_f32(p, 216));
+            fprintf(fp, "  environmentSize    = %f\n", juice_ubo_f32(p, 220));
+         }
+      }
+      _mesa_bufferobj_unmap(ctx, bufObj, MAP_INTERNAL);
+   }
+
+   fclose(fp);
+}
+
+/**
+ * JUICE: dump every bindless sampler of the active program with its current
+ * resolved 64-bit handle (the exact value the shader loads from the FS default
+ * uniform block, i.e. uniform_0@64.base[N]), plus the texture target and
+ * bound flag. This is the one datum missing from every prior dump: the default
+ * uniform block is zink-internal and never appears as a GL buffer object, so
+ * the handle the environment dome actually indexes the bindless sampler2D
+ * container with (base[0]) can only be read here, straight out of
+ * gl_bindless_sampler::data. The low 32 bits (u2u32) are what the shader uses
+ * as the bindless array index; index 0 is zink's reserved null slot (black).
+ */
+static void
+dump_bindless_handles(struct gl_context *ctx, unsigned draw_id)
+{
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_bindless.txt", draw_id);
+   FILE *fp = fopen(filename, "w");
+   if (!fp)
+      return;
+
+   GLuint active_prog = (ctx->_Shader && ctx->_Shader->ActiveProgram) ?
+                        ctx->_Shader->ActiveProgram->Name : 0;
+   fprintf(fp, "=== BINDLESS SAMPLER HANDLES (program %u) ===\n", active_prog);
+   fprintf(fp, "(handle = value shader loads; u2u32 = bindless array index; "
+               "index 0 == zink reserved null slot == black)\n");
+
+   const struct { struct gl_program *prog; const char *name; } stages[] = {
+      { ctx->VertexProgram._Current,   "vertex" },
+      { ctx->FragmentProgram._Current, "fragment" },
+   };
+
+   for (unsigned s = 0; s < 2; s++) {
+      struct gl_program *prog = stages[s].prog;
+      if (!prog)
+         continue;
+      fprintf(fp, "\n[%s stage] prog_id=%u NumBindlessSamplers=%u "
+                  "HasBoundBindlessSampler=%d\n",
+              stages[s].name, prog->Id, prog->sh.NumBindlessSamplers,
+              (int)prog->sh.HasBoundBindlessSampler);
+      for (unsigned i = 0; i < prog->sh.NumBindlessSamplers; i++) {
+         struct gl_bindless_sampler *bs = &prog->sh.BindlessSamplers[i];
+         uint64_t h = 0;
+         if (bs->data)
+            memcpy(&h, bs->data, sizeof(h));
+         fprintf(fp, "  idx=%u unit=%u bound=%d target=%d data=%p "
+                     "handle=0x%llx u2u32=%u\n",
+                 i, (unsigned)bs->unit, (int)bs->bound, (int)bs->target,
+                 (void *)bs->data, (unsigned long long)h,
+                 (unsigned)(h & 0xffffffffu));
+      }
+   }
+   fclose(fp);
+}
+
+/**
+ * JUICE: dump every bound shader-storage buffer (SSBO). The environment
+ * light-loop path in the VRED background shader reads the light list out of
+ * an SSBO (ssbos@32) as well as ubos@32[8/11]; if that SSBO is never bound
+ * the loop count / light data is garbage and the backdrop renders black.
+ * dump_uniform_buffers() only covers UBOs, so the SSBO bytes never appeared
+ * in any prior capture. Here we walk ctx->ShaderStorageBufferBindings and
+ * write the raw contents next to the UBO dumps.
+ */
+static void
+dump_ssbos(struct gl_context *ctx, unsigned draw_id)
+{
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_ssbos.txt", draw_id);
+   FILE *fp = fopen(filename, "w");
+   if (!fp)
+      return;
+
+   fprintf(fp, "=== SHADER STORAGE BUFFER BINDINGS ===\n");
+   bool any = false;
+   for (GLuint i = 0; i < MAX_COMBINED_SHADER_STORAGE_BUFFERS; i++) {
+      struct gl_buffer_object *bufObj =
+         ctx->ShaderStorageBufferBindings[i].BufferObject;
+      if (!bufObj)
+         continue;
+      any = true;
+      fprintf(fp, "SSBO[%u]: Buffer=%u Offset=%ld Size=%ld (buffer total %lu bytes)\n",
+              i, bufObj->Name,
+              (long)ctx->ShaderStorageBufferBindings[i].Offset,
+              (long)ctx->ShaderStorageBufferBindings[i].Size,
+              (unsigned long)bufObj->Size);
+      char buf_name[64];
+      snprintf(buf_name, sizeof(buf_name), "ssbo%u", i);
+      dump_buffer_object(ctx, bufObj, buf_name, draw_id);
+   }
+   if (!any)
+      fprintf(fp, "(no shader storage buffers bound on this draw)\n");
+   fclose(fp);
+}
+
+/**
+ * JUICE: dump the active program's default-block (non-UBO) uniforms. These
+ * scalars/vectors (shadowColor, occlusionColor, shadowIntensity, opacityMode,
+ * gl_FbWposYTransform, ...) live in zink's internal default uniform block and
+ * never appear as a GL buffer object, so they were invisible to every prior
+ * capture. We read them straight out of gl_uniform_storage::storage and print
+ * both float and int interpretations (the background loop count is a field
+ * that is bit-pattern 1.0f but consumed as an integer).
+ */
+static void
+dump_default_uniforms(struct gl_context *ctx, unsigned draw_id)
+{
+   struct gl_shader_program *shProg =
+      ctx->_Shader ? ctx->_Shader->ActiveProgram : NULL;
+   if (!shProg || !shProg->data)
+      return;
+
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\draw_%06u_default_uniforms.txt", draw_id);
+   FILE *fp = fopen(filename, "w");
+   if (!fp)
+      return;
+
+   fprintf(fp, "=== DEFAULT-BLOCK UNIFORMS (program %u) ===\n", shProg->Name);
+   fprintf(fp, "(block_index==-1 => default uniform block; values shown as float/int/hex)\n");
+
+   for (unsigned u = 0; u < shProg->data->NumUniformStorage; u++) {
+      struct gl_uniform_storage *uni = &shProg->data->UniformStorage[u];
+      if (uni->block_index != -1)    /* only the default uniform block */
+         continue;
+      if (uni->is_shader_storage)
+         continue;
+      if (!uni->type || !uni->storage)
+         continue;
+
+      enum glsl_base_type bt = glsl_get_base_type(uni->type);
+      /* opaque handles (samplers/images) are covered by dump_bindless_handles */
+      if (bt == GLSL_TYPE_SAMPLER || bt == GLSL_TYPE_TEXTURE ||
+          bt == GLSL_TYPE_IMAGE)
+         continue;
+
+      unsigned comps = glsl_get_components(uni->type);
+      unsigned elems = uni->array_elements ? uni->array_elements : 1u;
+      const char *btname =
+         bt == GLSL_TYPE_FLOAT ? "float" :
+         bt == GLSL_TYPE_INT   ? "int"   :
+         bt == GLSL_TYPE_UINT  ? "uint"  :
+         bt == GLSL_TYPE_BOOL  ? "bool"  : "other";
+
+      fprintf(fp, "\n%s  type=%s comps=%u elems=%u loc=%d\n",
+              uni->name.string ? uni->name.string : "?",
+              btname, comps, elems, uni->remap_location);
+
+      const union gl_constant_value *s = uni->storage;
+      unsigned total = comps * elems;
+      if (total > 64)               /* cap noisy arrays */
+         total = 64;
+      for (unsigned k = 0; k < total; k++) {
+         fprintf(fp, "  [%u] f=%.6g  i=%d  u=0x%08x\n",
+                 k, s[k].f, s[k].i, s[k].u);
+      }
+   }
+   fclose(fp);
+}
+
+/**
+ * JUICE: dump one texture image (a single cube face / 3D slice / 2D level 0)
+ * to RGBA32F using the software GetTexImage path. Unlike the FBO+ReadPixels
+ * path in dump_active_texture_contents(), this reads formats that are NOT
+ * color-renderable -- crucially RGB9_E5 (the shared-exponent env cube) and
+ * cube-map faces -- which is exactly the environment/IBL data that previously
+ * came back empty. Also writes a tonemapped PPM (reinhard + gamma) so HDR
+ * content is actually visible.
+ */
+static void
+dump_teximage_float(struct gl_context *ctx, struct gl_texture_image *texImage,
+                    unsigned draw_id, GLuint unit, GLuint target,
+                    const char *facetag)
+{
+   if (!texImage || texImage->Width == 0 || texImage->Height == 0)
+      return;
+   if (texImage->_BaseFormat == GL_DEPTH_COMPONENT ||
+       texImage->_BaseFormat == GL_DEPTH_STENCIL ||
+       texImage->_BaseFormat == GL_STENCIL_INDEX)
+      return;
+
+   GLint w = texImage->Width;
+   GLint h = texImage->Height;
+   size_t n = (size_t)w * (size_t)h * 4u;
+   float *pixels = malloc(n * sizeof(float));
+   if (!pixels)
+      return;
+   memset(pixels, 0, n * sizeof(float));
+
+   _mesa_GetTexSubImage_sw(ctx, 0, 0, 0, w, h, 1, GL_RGBA, GL_FLOAT,
+                           pixels, texImage);
+
+   char raw_filename[512];
+   snprintf(raw_filename, sizeof(raw_filename),
+            "c:\\temp\\draw_%06u_tex_unit%u_target%u%s_%dx%d_rgba32f.raw",
+            draw_id, unit, target, facetag, w, h);
+   FILE *rf = fopen(raw_filename, "wb");
+   if (rf) {
+      fwrite(pixels, sizeof(float), n, rf);
+      fclose(rf);
+   }
+
+   char ppm_filename[512];
+   snprintf(ppm_filename, sizeof(ppm_filename),
+            "c:\\temp\\draw_%06u_tex_unit%u_target%u%s_%dx%d_tonemap.ppm",
+            draw_id, unit, target, facetag, w, h);
+   FILE *pf = fopen(ppm_filename, "wb");
+   if (pf) {
+      fprintf(pf, "P6\n%d %d\n255\n", w, h);
+      for (int y = h - 1; y >= 0; y--) {
+         for (int x = 0; x < w; x++) {
+            const float *px = &pixels[((size_t)y * w + x) * 4];
+            for (int c = 0; c < 3; c++) {
+               float v = px[c];
+               if (v < 0.0f)
+                  v = 0.0f;
+               v = v / (v + 1.0f);              /* reinhard tonemap */
+               v = powf(v, 1.0f / 2.2f);        /* approx sRGB gamma */
+               int iv = (int)(v * 255.0f + 0.5f);
+               if (iv < 0) iv = 0;
+               if (iv > 255) iv = 255;
+               fputc(iv, pf);
+            }
+         }
+      }
+      fclose(pf);
+   }
+   free(pixels);
+}
+
+static void
+dump_textures_float(struct gl_context *ctx, unsigned draw_id)
+{
+   for (GLuint unit = 0; unit < ctx->Const.MaxCombinedTextureImageUnits; unit++) {
+      for (GLuint target = 0; target < NUM_TEXTURE_TARGETS; target++) {
+         struct gl_texture_object *texObj =
+            ctx->Texture.Unit[unit].CurrentTex[target];
+         if (!texObj || texObj->Name == 0)
+            continue;
+
+         if (texObj->Target == GL_TEXTURE_CUBE_MAP) {
+            for (unsigned face = 0; face < 6; face++) {
+               char facetag[16];
+               snprintf(facetag, sizeof(facetag), "_face%u", face);
+               dump_teximage_float(ctx, texObj->Image[face][0],
+                                    draw_id, unit, target, facetag);
+            }
+         } else {
+            dump_teximage_float(ctx, texObj->Image[0][0],
+                                draw_id, unit, target, "");
+         }
+      }
+   }
+}
+
+/**
  * Comprehensive RenderDoc-style dump of all GL state and buffers
  */
 static void
 dump_comprehensive_state(struct gl_context *ctx, GLenum mode, GLint start, GLsizei count, GLuint numInstances, GLuint baseInstance)
 {
-   /* Only dump if we recently had a uniform buffer update */
-   if (!ctx->_UniformBufferDataUpdated)
+   /* JUICE: also capture the first draw of each distinct GL program, even if
+    * no UBO was updated that draw. The environment/background program (VRED
+    * prog 54) reuses the OSGViewport/OSGEnvironment UBOs uploaded on an
+    * earlier draw, so the _UniformBufferDataUpdated gate alone never captures
+    * it. Recording one dump per program guarantees those UBO bytes
+    * (physicalScaleFactor @ OSGViewport+120, exposure @ OSGEnvironment+208,
+    * envColorMatrix @ OSGEnvironment+128) get written for offline inspection. */
+   static GLuint seen_programs[512];
+   static unsigned num_seen_programs = 0;
+   GLuint active_prog = (ctx->_Shader && ctx->_Shader->ActiveProgram) ?
+                        ctx->_Shader->ActiveProgram->Name : 0;
+   bool new_program = true;
+   for (unsigned i = 0; i < num_seen_programs; i++) {
+      if (seen_programs[i] == active_prog) { new_program = false; break; }
+   }
+   if (new_program && num_seen_programs < 512)
+      seen_programs[num_seen_programs++] = active_prog;
+
+   /* Only dump if we recently had a uniform buffer update, or this is the
+    * first draw we've seen for this program. */
+   if (!ctx->_UniformBufferDataUpdated && !new_program)
       return;
 
    /* Initialize SPIRV dump hook on first use */
@@ -740,9 +1126,14 @@ dump_comprehensive_state(struct gl_context *ctx, GLenum mode, GLint start, GLsiz
    /* Dump all the different state categories */
    dump_vertex_arrays(ctx, current_dump);
    dump_uniform_buffers(ctx, current_dump);
+   dump_ssbos(ctx, current_dump);
+   dump_default_uniforms(ctx, current_dump);
+   dump_env_decode(ctx, current_dump);
+   dump_bindless_handles(ctx, current_dump);
    dump_shader_program(ctx, current_dump);
    dump_texture_state(ctx, current_dump);
    dump_active_texture_contents(ctx, current_dump);
+   dump_textures_float(ctx, current_dump);
    dump_framebuffer_config(ctx, current_dump);
    dump_pipeline_state(ctx, current_dump);
    
@@ -787,6 +1178,172 @@ dump_comprehensive_state(struct gl_context *ctx, GLenum mode, GLint start, GLsiz
          free(pixels);
       }
    }
+}
+
+/**
+ * JUICE: aligned combine-forensics dump. Unlike dump_comprehensive_state()
+ * (which is gated on UBO updates / first-program-use, and whose NIR/uniform
+ * side files are written at shader-COMPILE time with a stale counter), this
+ * writes ONE self-contained file per draw, at DRAW time, under its own
+ * counter, so every fact inside a file is guaranteed to describe the same
+ * draw. Purpose: decide between the three final-combine hypotheses for the
+ * VRED black background:
+ *   (a) a sampler uniform (e.g. GLSL50's 'tex') left at default 0, sampling
+ *       the black scene buffer instead of the gradient buffer;
+ *   (b) a dropped/misordered composite draw;
+ *   (c) a fullscreen paint (GLSL72) reading per-vertex attributes that are
+ *       not enabled, falling back to a black current-attribute value.
+ * Per draw it records: program id + per-stage shader names, FBO attachments,
+ * blend/colormask/depth state, every default-block sampler uniform with its
+ * unit VALUE and the RESOLVED texture id bound there, compact non-sampler
+ * uniform values, VAO enables + array bindings, and the current generic
+ * attribute values used as fallback for disabled arrays.
+ */
+static void
+dump_combine_forensics(struct gl_context *ctx, GLenum mode, GLint start,
+                       GLsizei count, GLuint numInstances)
+{
+   static unsigned forensic_counter = 0;
+   if (forensic_counter >= 200)   /* first frames only; avoid unbounded spam */
+      return;
+   unsigned id = ++forensic_counter;
+
+   char filename[512];
+   snprintf(filename, sizeof(filename), "c:\\temp\\fdraw_%06u.txt", id);
+   FILE *fp = fopen(filename, "w");
+   if (!fp)
+      return;
+
+   struct gl_shader_program *shProg =
+      ctx->_Shader ? ctx->_Shader->ActiveProgram : NULL;
+
+   fprintf(fp, "=== COMBINE FORENSICS DRAW %u ===\n", id);
+   fprintf(fp, "Mode: 0x%x  Start: %d  Count: %d  Instances: %u\n",
+           mode, start, count, numInstances);
+   fprintf(fp, "GL Program: %u\n", shProg ? shProg->Name : 0);
+   if (shProg) {
+      for (unsigned st = 0; st < MESA_SHADER_STAGES; st++) {
+         struct gl_linked_shader *sh = shProg->_LinkedShaders[st];
+         if (sh && sh->Program) {
+            fprintf(fp, "  stage[%u] %s: name=%s\n", st,
+                    _mesa_shader_stage_to_string(st),
+                    sh->Program->info.name ? sh->Program->info.name : "?");
+         }
+      }
+   }
+
+   /* --- framebuffer --- */
+   struct gl_framebuffer *fb = ctx->DrawBuffer;
+   fprintf(fp, "\n[framebuffer] FBO=%u %ux%u\n", fb->Name, fb->Width, fb->Height);
+   for (int i = 0; i < MAX_DRAW_BUFFERS; i++) {
+      struct gl_renderbuffer_attachment *att = &fb->Attachment[BUFFER_COLOR0 + i];
+      if (att->Type == GL_TEXTURE && att->Texture)
+         fprintf(fp, "  Color[%d]: Tex=%u Level=%u\n", i, att->Texture->Name,
+                 att->TextureLevel);
+      else if (att->Type == GL_RENDERBUFFER && att->Renderbuffer)
+         fprintf(fp, "  Color[%d]: RB=%u\n", i, att->Renderbuffer->Name);
+   }
+   struct gl_renderbuffer_attachment *datt = &fb->Attachment[BUFFER_DEPTH];
+   if (datt->Type == GL_TEXTURE && datt->Texture)
+      fprintf(fp, "  Depth: Tex=%u\n", datt->Texture->Name);
+
+   /* --- blend / mask / depth --- */
+   fprintf(fp, "\n[pipeline] BlendEnabled=0x%x", ctx->Color.BlendEnabled);
+   if (ctx->Color.BlendEnabled)
+      fprintf(fp, " srcRGB=0x%x dstRGB=0x%x srcA=0x%x dstA=0x%x eqRGB=0x%x eqA=0x%x",
+              ctx->Color.Blend[0].SrcRGB, ctx->Color.Blend[0].DstRGB,
+              ctx->Color.Blend[0].SrcA, ctx->Color.Blend[0].DstA,
+              ctx->Color.Blend[0].EquationRGB, ctx->Color.Blend[0].EquationA);
+   fprintf(fp, "\n  ColorMask=0x%x DepthTest=%d DepthMask=%d DepthFunc=0x%x ScissorEnabled=0x%x\n",
+           ctx->Color.ColorMask, ctx->Depth.Test ? 1 : 0,
+           ctx->Depth.Mask ? 1 : 0, ctx->Depth.Func, ctx->Scissor.EnableFlags);
+
+   /* --- sampler uniforms: VALUE (texture unit) + resolved texture id --- */
+   fprintf(fp, "\n[samplers]\n");
+   if (shProg && shProg->data) {
+      for (unsigned u = 0; u < shProg->data->NumUniformStorage; u++) {
+         struct gl_uniform_storage *uni = &shProg->data->UniformStorage[u];
+         if (uni->block_index != -1 || uni->is_shader_storage ||
+             !uni->type || !uni->storage)
+            continue;
+         if (glsl_get_base_type(uni->type) != GLSL_TYPE_SAMPLER)
+            continue;
+         unsigned elems = uni->array_elements ? uni->array_elements : 1u;
+         for (unsigned k = 0; k < elems && k < 16; k++) {
+            int unit = uni->storage[k].i;
+            fprintf(fp, "  %s%s loc=%d bindless=%d unit=%d",
+                    uni->name.string ? uni->name.string : "?",
+                    uni->array_elements ? "[]" : "",
+                    uni->remap_location, uni->is_bindless ? 1 : 0, unit);
+            if (unit >= 0 &&
+                unit < (int)ctx->Const.MaxCombinedTextureImageUnits) {
+               struct gl_texture_object *tex = ctx->Texture.Unit[unit]._Current;
+               if (tex) {
+                  struct gl_texture_image *img = tex->Image[0][0];
+                  fprintf(fp, " -> Tex=%u target=0x%x %ux%u fmt=0x%x",
+                          tex->Name, tex->Target,
+                          img ? img->Width : 0, img ? img->Height : 0,
+                          img ? img->InternalFormat : 0);
+               } else {
+                  fprintf(fp, " -> <no complete texture on unit>");
+               }
+            }
+            fprintf(fp, "\n");
+         }
+      }
+
+      /* --- compact non-sampler default-block uniforms --- */
+      fprintf(fp, "\n[uniforms]\n");
+      for (unsigned u = 0; u < shProg->data->NumUniformStorage; u++) {
+         struct gl_uniform_storage *uni = &shProg->data->UniformStorage[u];
+         if (uni->block_index != -1 || uni->is_shader_storage ||
+             !uni->type || !uni->storage)
+            continue;
+         enum glsl_base_type bt = glsl_get_base_type(uni->type);
+         if (bt == GLSL_TYPE_SAMPLER || bt == GLSL_TYPE_TEXTURE ||
+             bt == GLSL_TYPE_IMAGE)
+            continue;
+         unsigned total = glsl_get_components(uni->type) *
+                          (uni->array_elements ? uni->array_elements : 1u);
+         if (total > 8)
+            total = 8;
+         fprintf(fp, "  %s loc=%d =", uni->name.string ? uni->name.string : "?",
+                 uni->remap_location);
+         for (unsigned k = 0; k < total; k++)
+            fprintf(fp, " %.6g(0x%08x)", uni->storage[k].f, uni->storage[k].u);
+         fprintf(fp, "\n");
+      }
+   } else {
+      fprintf(fp, "  <no active program>\n");
+   }
+
+   /* --- VAO + current generic attribute fallbacks --- */
+   struct gl_vertex_array_object *vao = ctx->Array.VAO;
+   fprintf(fp, "\n[vao] Name=%u Enabled=0x%llx IndexBuf=%u\n",
+           vao ? vao->Name : 0,
+           vao ? (unsigned long long)vao->Enabled : 0ull,
+           (vao && vao->IndexBufferObj) ? vao->IndexBufferObj->Name : 0);
+   if (vao) {
+      GLbitfield mask = vao->Enabled;
+      while (mask) {
+         const gl_vert_attrib i = u_bit_scan(&mask);
+         const struct gl_array_attributes *array = &vao->VertexAttrib[i];
+         const struct gl_vertex_buffer_binding *binding =
+            &vao->BufferBinding[array->BufferBindingIndex];
+         fprintf(fp, "  Attr[%d]: size=%d type=0x%x stride=%d reloff=%ld buf=%u\n",
+                 i, array->Format.Size, array->Format.Type, binding->Stride,
+                 (long)array->RelativeOffset,
+                 binding->BufferObj ? binding->BufferObj->Name : 0);
+      }
+   }
+   fprintf(fp, "  current generic attrib values (fallback when array disabled):\n");
+   for (unsigned i = 0; i < 8; i++) {
+      const GLfloat *v = ctx->Current.Attrib[VERT_ATTRIB_GENERIC(i)];
+      fprintf(fp, "    generic[%u] = %.6g, %.6g, %.6g, %.6g\n",
+              i, v[0], v[1], v[2], v[3]);
+   }
+
+   fclose(fp);
 }
 
 /**
@@ -1904,6 +2461,7 @@ _mesa_draw_arrays(struct gl_context *ctx, GLenum mode, GLint start,
 #ifdef JUICE_MESA_DUMP_DRAW_STATE
    /* Dump comprehensive state after draw if enabled */
    dump_comprehensive_state(ctx, mode, start, count, numInstances, baseInstance);
+   dump_combine_forensics(ctx, mode, start, count, numInstances);
 #endif
 
    /* Reset the uniform buffer update flag */
@@ -2404,6 +2962,15 @@ _mesa_validated_drawrangeelements(struct gl_context *ctx, GLenum mode,
     */
 
    ctx->Driver.DrawGallium(ctx, &info, 0, &draw, 1);
+
+#ifdef JUICE_MESA_DUMP_DRAW_STATE
+   /* JUICE: the environment/background dome (VRED prog 54) is an indexed mesh
+    * drawn through this path, not the glDrawArrays path, so mirror the state
+    * dump here to capture its OSGViewport/OSGEnvironment UBOs and envMap. */
+   dump_comprehensive_state(ctx, mode, start, count, numInstances, baseInstance);
+   dump_combine_forensics(ctx, mode, start, count, numInstances);
+   ctx->_UniformBufferDataUpdated = false;
+#endif
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);

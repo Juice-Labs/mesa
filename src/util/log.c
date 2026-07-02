@@ -34,10 +34,41 @@
 #include "util/detect_os.h"
 #include "util/log.h"
 #include "util/ralloc.h"
+#include "util/simple_mtx.h"
 
 #if defined(_WIN32)
 #include <windows.h>
 #include <wchar.h>
+#endif
+
+#if defined(_WIN32)
+/* Self-contained diagnostic log sink.
+ *
+ * Normally mesa's log output is forwarded to the Juice logging DLL
+ * (__wine_dbg_output in RemoteGPUVlk.dll). When mesa/zink is run "passthrough"
+ * directly on a native Vulkan driver (Juice's Vulkan stack bypassed), that DLL
+ * is not loaded, so juice_log_output is NULL and mesa would otherwise emit
+ * nothing. To keep diagnostics available in that mode, every mesa_log message
+ * is additionally written to c:\temp\mesa_zink.log. The file is truncated once
+ * per process on first use and flushed per line so output survives a crash. */
+static simple_mtx_t mesa_file_log_mtx = SIMPLE_MTX_INITIALIZER;
+static FILE *mesa_file_log_fp;
+static int mesa_file_log_tried;
+
+static void
+mesa_file_log_write(const char *buf)
+{
+   simple_mtx_lock(&mesa_file_log_mtx);
+   if (!mesa_file_log_tried) {
+      mesa_file_log_tried = 1;
+      mesa_file_log_fp = fopen("c:\\temp\\mesa_zink.log", "w");
+   }
+   if (mesa_file_log_fp) {
+      fputs(buf, mesa_file_log_fp);
+      fflush(mesa_file_log_fp);
+   }
+   simple_mtx_unlock(&mesa_file_log_mtx);
+}
 #endif
 
 // Wine/Juice logging support - similar to vkd3d and dxvk
@@ -181,10 +212,6 @@ mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
    // Initialize juice logging if not already done
    init_juice_logging();
    
-   // If juice logging is not available, don't output anything
-   if (!juice_log_output)
-      return;
-   
    // Format the message part first
    vsnprintf(msg, sizeof(msg), format, va);
    
@@ -207,8 +234,15 @@ mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
       }
    }
    
-   // Output through juice logging
-   juice_log_output(buf);
+#if defined(_WIN32)
+   // Always mirror to the self-contained c:\temp sink so diagnostics survive
+   // even when the Juice logging DLL isn't loaded (native-Vulkan passthrough).
+   mesa_file_log_write(buf);
+#endif
+   
+   // Output through juice logging when available
+   if (juice_log_output)
+      juice_log_output(buf);
 }
 
 struct log_stream *

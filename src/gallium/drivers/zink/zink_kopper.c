@@ -119,9 +119,11 @@ kopper_CreateSurface(struct zink_screen *screen, struct kopper_displaytarget *cd
 
     for (unsigned i = 0; i < count; i++) {
        /* VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR and VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR
-        * are not handled
+        * (enum values ~1000111000) are not handled and must not be shifted into the
+        * present_modes bitfield. The host NVIDIA driver reports these for Win32 surfaces
+        * (Juice's Vulkan did not), so the previous assert(modes[i] <= FIFO_RELAXED) fired.
+        * The guard below already skips out-of-range modes; just filter, don't assert.
         */
-       assert(modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR);
        if (modes[i] <= VK_PRESENT_MODE_FIFO_RELAXED_KHR)
           cdt->present_modes |= BITFIELD_BIT(modes[i]);
     }

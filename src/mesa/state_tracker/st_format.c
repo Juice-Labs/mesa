@@ -1107,7 +1107,10 @@ static const struct format_mapping format_map[] = {
    },
    {
       { GL_RGB9_E5, 0 },
-      { PIPE_FORMAT_R9G9B9E5_FLOAT, 0 }
+      /* Half-float fallbacks so RGB9E5 render targets work on drivers that
+       * can't render E5B9G9R9 (Zink/NVIDIA); RGBA16F holds any RGB9E5 value. */
+      { PIPE_FORMAT_R9G9B9E5_FLOAT, PIPE_FORMAT_R16G16B16X16_FLOAT,
+        PIPE_FORMAT_R16G16B16A16_FLOAT, 0 }
    },
    {
       { GL_R11F_G11F_B10F, 0 },
@@ -1350,6 +1353,8 @@ st_ChooseTextureFormat(struct gl_context *ctx, GLenum target,
             internalFormat == GL_RGBA16F ||
             internalFormat == GL_RGB32F ||
             internalFormat == GL_RGBA32F ||
+            /* allow the RGB9E5 render-target fallback above to kick in */
+            internalFormat == GL_RGB9_E5 ||
             internalFormat == GL_RED ||
             internalFormat == GL_RED_SNORM ||
             internalFormat == GL_R8I ||

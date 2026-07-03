@@ -1107,7 +1107,19 @@ static const struct format_mapping format_map[] = {
    },
    {
       { GL_RGB9_E5, 0 },
-      { PIPE_FORMAT_R9G9B9E5_FLOAT, 0 }
+      /* JUICE: RGB9E5 must be renderable for VRED's IBL prefilter, which renders
+       * the environment into GL_RGB9_E5 cube/2D targets (NVIDIA's native GL
+       * allows this). Zink cannot expose COLOR_ATTACHMENT on
+       * VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, so when a render-target binding is
+       * requested find_supported_format() skips the exact E5 format and falls
+       * back to RGBA16F, which is renderable and losslessly holds any RGB9E5
+       * value (9-bit shared-exp mantissa fits a 10-bit half-float mantissa).
+       * Sampler-only use (no RT binding requested) still keeps the exact
+       * R9G9B9E5 format and its memory advantage. The X-channel half-float
+       * variant is preferred over the RGBA one (matching the GL_RGB16F entry
+       * above) so that, for this RGB base format, alpha samples as 1.0. */
+      { PIPE_FORMAT_R9G9B9E5_FLOAT, PIPE_FORMAT_R16G16B16X16_FLOAT,
+        PIPE_FORMAT_R16G16B16A16_FLOAT, 0 }
    },
    {
       { GL_R11F_G11F_B10F, 0 },
@@ -1350,6 +1362,12 @@ st_ChooseTextureFormat(struct gl_context *ctx, GLenum target,
             internalFormat == GL_RGBA16F ||
             internalFormat == GL_RGB32F ||
             internalFormat == GL_RGBA32F ||
+            /* JUICE: request a potential render-target binding for RGB9E5 so the
+             * format_map fallback promotes it to a renderable format (RGBA16F) on
+             * drivers that cannot render E5B9G9R9 (Zink on NVIDIA). Without this,
+             * VRED's IBL environment prefilter FBOs are incomplete and the
+             * environment renders black. */
+            internalFormat == GL_RGB9_E5 ||
             internalFormat == GL_RED ||
             internalFormat == GL_RED_SNORM ||
             internalFormat == GL_R8I ||

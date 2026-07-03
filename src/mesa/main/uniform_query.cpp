@@ -1627,6 +1627,21 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                }
                sampler->bound = true;
                sh->Program->sh.HasBoundBindlessSampler = true;
+
+               /* Set the slot's target from the bound uniform's own type: the
+                * runtime opaque[] index can differ from the link-time index that
+                * filled BindlessSamplers[].target, so trusting the stale target
+                * can misresolve _Current (e.g. a samplerCube reading a 2D slot). */
+               {
+                  const glsl_type *stype = uni->type->without_array();
+                  if (stype->is_sampler()) {
+                     int decl_target = stype->sampler_index();
+                     if (sampler->target != (unsigned)decl_target) {
+                        sampler->target = (gl_texture_index)decl_target;
+                        changed = true;
+                     }
+                  }
+               }
             } else {
                if (sh->Program->SamplerUnits[unit] != value) {
                   if (!flushed) {

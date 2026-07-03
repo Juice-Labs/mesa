@@ -1316,6 +1316,35 @@ _mesa_flush_vertices_for_uniforms(struct gl_context *ctx,
       uni->first_set_by = ctx;
 }
 
+
+/* 26.2 dropped glsl_type::sampler_index(); the same mapping, expressed against
+ * the C accessors. */
+static gl_texture_index
+juice_sampler_texture_index(const glsl_type *t)
+{
+   const bool array = glsl_sampler_type_is_array(t);
+   switch (glsl_get_sampler_dim(t)) {
+   case GLSL_SAMPLER_DIM_1D:
+      return array ? TEXTURE_1D_ARRAY_INDEX : TEXTURE_1D_INDEX;
+   case GLSL_SAMPLER_DIM_2D:
+      return array ? TEXTURE_2D_ARRAY_INDEX : TEXTURE_2D_INDEX;
+   case GLSL_SAMPLER_DIM_3D:
+      return TEXTURE_3D_INDEX;
+   case GLSL_SAMPLER_DIM_CUBE:
+      return array ? TEXTURE_CUBE_ARRAY_INDEX : TEXTURE_CUBE_INDEX;
+   case GLSL_SAMPLER_DIM_RECT:
+      return TEXTURE_RECT_INDEX;
+   case GLSL_SAMPLER_DIM_BUF:
+      return TEXTURE_BUFFER_INDEX;
+   case GLSL_SAMPLER_DIM_EXTERNAL:
+      return TEXTURE_EXTERNAL_INDEX;
+   case GLSL_SAMPLER_DIM_MS:
+      return array ? TEXTURE_2D_MULTISAMPLE_ARRAY_INDEX : TEXTURE_2D_MULTISAMPLE_INDEX;
+   default:
+      assert(!"Should not get here.");
+      return TEXTURE_BUFFER_INDEX;
+   }
+}
 static bool
 copy_uniforms_to_storage(gl_constant_value *storage,
                          struct gl_uniform_storage *uni,
@@ -1546,8 +1575,8 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                          uname,
                          (int)location, (unsigned)offset, (int)count,
                          (int)uni->is_bindless,
-                         (int)uni->type->is_sampler(),
-                         (int)uni->type->is_image(),
+                         (int)glsl_type_is_sampler(uni->type),
+                         (int)glsl_type_is_image(uni->type),
                          (int)uni->type->base_type,
                          (unsigned)uni->type->vector_elements,
                          (unsigned)uni->array_elements,
@@ -1647,6 +1676,21 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                }
                sampler->bound = true;
                sh->Program->sh.HasBoundBindlessSampler = true;
+
+               /* Set the slot's target from the bound uniform's own type: the
+                * runtime opaque[] index can differ from the link-time index that
+                * filled BindlessSamplers[].target, so trusting the stale target
+                * can misresolve _Current (e.g. a samplerCube reading a 2D slot). */
+               {
+                  const glsl_type *stype = glsl_without_array(uni->type);
+                  if (glsl_type_is_sampler(stype)) {
+                     int decl_target = juice_sampler_texture_index(stype);
+                     if (sampler->target != (unsigned)decl_target) {
+                        sampler->target = (gl_texture_index)decl_target;
+                        changed = true;
+                     }
+                  }
+               }
             } else {
                if (sh->Program->SamplerUnits[unit] != value) {
                   if (!flushed) {
@@ -2172,8 +2216,8 @@ _mesa_uniform_handle(GLint location, GLsizei count, const GLvoid *values,
        * app's bindless handles with Zink's resident-table updates. */
       const GLuint64 *handles = (const GLuint64 *)values;
       const char *uname = (uni && uni->name.string) ? uni->name.string : "?";
-      const int is_samp = (uni && uni->type) ? (int)uni->type->is_sampler() : -1;
-      const int is_img  = (uni && uni->type) ? (int)uni->type->is_image()   : -1;
+      const int is_samp = (uni && uni->type) ? (int)glsl_type_is_sampler(uni->type) : -1;
+      const int is_img  = (uni && uni->type) ? (int)glsl_type_is_image(uni->type)   : -1;
       for (int i = 0; i < count; i++) {
          juice_diag_logf("H_UNIFORM",
                          "prog=%u name=%s loc=%d offset=%u idx=%d handle=0x%" PRIx64

@@ -1628,6 +1628,31 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                sampler->bound = true;
                sh->Program->sh.HasBoundBindlessSampler = true;
 
+               /* JUICE FIX: record the *declared* texture target of the sampler
+                * actually bound to this slot. The link-time BindlessSamplers[].
+                * target is indexed by the link-time bindless index, which can
+                * diverge from the runtime opaque[] index used here (VRED's huge
+                * block-array sampler reservations push envMap to link slot 1027
+                * while runtime binds it into slot 3, whose stale target belongs
+                * to OSGLightSourceTextures.textures[3].colorTexture, a 2D
+                * sampler). Without this, _mesa_update_shader_textures_used()
+                * builds TexturesUsed[unit] from the wrong (2D) target, so
+                * _Current resolves to the empty 2D slot and a samplerCube
+                * (envMap) samples the default black texture. Setting the target
+                * from this uniform's own type keeps the runtime slot correct for
+                * whichever sampler is bound to it. */
+               int decl_target = -1;
+               {
+                  const glsl_type *stype = uni->type->without_array();
+                  if (stype->is_sampler()) {
+                     decl_target = stype->sampler_index();
+                     if (sampler->target != (unsigned)decl_target) {
+                        sampler->target = (gl_texture_index)decl_target;
+                        changed = true;
+                     }
+                  }
+               }
+
                /* JUICE: correlate the sampler name with the per-stage
                 * BindlessSamplers[] index and texture unit at bind time. The
                 * BSR_* records in st_make_bound_samplers_resident only log by

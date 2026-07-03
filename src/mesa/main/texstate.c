@@ -41,6 +41,7 @@
 #include "state.h"
 #include "util/bitscan.h"
 #include "util/bitset.h"
+#include "util/juice_diag_log.h"
 #include "api_exec_decl.h"
 
 #include "state_tracker/st_cb_texture.h"
@@ -761,6 +762,25 @@ update_program_texture_state(struct gl_context *ctx, struct gl_program **prog,
 
             update_single_program_texture_state(ctx, prog[i], sampler->unit,
                                                 enabled_texture_units);
+
+            /* JUICE: pin exactly why _Current for a bound-bindless unit ends up
+             * as the default texture. update_single_program_texture picks the
+             * target via ffs(TexturesUsed[unit])-1; if TexturesUsed[unit] does
+             * not carry this sampler's target (e.g. it's 0 or a different
+             * target), the wrong CurrentTex[] slot is chosen and _Current
+             * collapses to the fallback. Log the sampler's declared target vs
+             * what TexturesUsed encodes and the resulting _Current. */
+            {
+               struct gl_texture_object *cur =
+                  ctx->Texture.Unit[sampler->unit]._Current;
+               GLbitfield tu = prog[i]->TexturesUsed[sampler->unit];
+               juice_diag_logf("BBIND_TU",
+                  "prog=%u stage=%d bidx=%u unit=%u sampler_target=%d "
+                  "TexturesUsed=0x%x target_index=%d current_tex=%u current_target=0x%x",
+                  prog[i]->Id, i, s, (unsigned)sampler->unit,
+                  (int)sampler->target, (unsigned)tu, (int)(ffs(tu) - 1),
+                  cur ? cur->Name : 0u, cur ? (unsigned)cur->Target : 0u);
+            }
          }
       }
    }

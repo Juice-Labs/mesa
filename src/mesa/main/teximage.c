@@ -59,6 +59,7 @@
 #include "api_exec_decl.h"
 
 #include "util/u_memory.h"
+#include "util/juice_diag_log.h"
 
 #include "program/prog_instruction.h"
 
@@ -4274,6 +4275,13 @@ copytexsubimage_by_slice(struct gl_context *ctx,
                          GLint x, GLint y,
                          GLsizei width, GLsizei height)
 {
+   /* JUICE: framebuffer->texture copy (glCopyTexImage/glCopyTexSubImage), a
+    * distinct path from store_texsubimage. Names copy-based texture writers. */
+   juice_diag_logf("TEXCOPYFB",
+      "dst_tex=%u dst_tgt=0x%x src_rb=%u off=%d,%d,%d src=%d,%d wh=%dx%d",
+      texImage->TexObject->Name, (unsigned)texImage->TexObject->Target,
+      rb ? rb->Name : 0u, xoffset, yoffset, zoffset, x, y, width, height);
+
    if (texImage->TexObject->Target == GL_TEXTURE_1D_ARRAY) {
       int slice;
 
@@ -5311,6 +5319,15 @@ _mesa_ClearTexSubImage(GLuint texture, GLint level,
 
    if (texObj == NULL)
       return;
+
+   /* JUICE: glClearTexImage/glClearTexSubImage fills a texture with a constant
+    * (or zero when data==NULL). If the env map is "filled" by a clear-to-value,
+    * this names it; data==NULL means it is cleared to BLACK. */
+   juice_diag_logf("TEXCLEAR",
+      "tex=%u target=0x%x level=%d off=%d,%d,%d dim=%dx%dx%d fmt=0x%x type=0x%x data=%s",
+      texObj->Name, (unsigned)texObj->Target, level,
+      xoffset, yoffset, zoffset, width, height, depth,
+      (unsigned)format, (unsigned)type, data ? "value" : "NULL(zero)");
 
    _mesa_lock_texture(ctx, texObj);
 

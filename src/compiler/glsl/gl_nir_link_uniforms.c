@@ -28,6 +28,7 @@
 #include "compiler/glsl/ir_uniform.h" /* for gl_uniform_storage */
 #include "linker_util.h"
 #include "util/u_dynarray.h"
+#include "util/juice_diag_log.h"
 #include "main/consts_exts.h"
 #include "main/shader_types.h"
 
@@ -800,6 +801,30 @@ update_uniforms_shader_info(struct gl_shader_program *prog,
 
             sh->Program->sh.NumBindlessSamplers =
                state->next_bindless_sampler_index;
+         }
+
+         /* JUICE: trace bindless sampler target assignment. VRED's samplerCube
+          * envMap ends up with target=TEXTURE_2D_INDEX(10) at runtime, resolving
+          * _Current to the empty 2D slot -> black. This shows, per link, which
+          * uniform name gets which bindless index (sidx == runtime opaque index)
+          * and its declared target, plus the value actually stored in the slot.
+          * If two samplers report the same sidx, or envMap's slot holds a target
+          * != its declared type, that is the bug. */
+         {
+            int decl_target = (int)glsl_get_sampler_target(type_no_array);
+            int slot_target = (sampler_index >= 0 &&
+               (unsigned)sampler_index < sh->Program->sh.NumBindlessSamplers)
+               ? (int)sh->Program->sh.BindlessSamplers[sampler_index].target
+               : -1;
+            juice_diag_logf("BSAMP_LINK",
+               "prog=%u stage=%u name=%s sidx=%d decl_target=%d slot_target=%d "
+               "init_idx=%d num_bindless=%u array_elems=%u in_block=%d",
+               prog ? prog->Name : 0u, stage,
+               uniform->name.string ? uniform->name.string : "?",
+               sampler_index, decl_target, slot_target, (int)init_idx,
+               sh->Program->sh.NumBindlessSamplers,
+               (unsigned)uniform->array_elements,
+               (int)state->var_is_in_block);
          }
 
          if (!state->var_is_in_block)

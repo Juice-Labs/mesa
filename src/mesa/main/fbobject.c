@@ -53,6 +53,7 @@
 #include "api_exec_decl.h"
 
 #include "util/u_memory.h"
+#include "util/juice_diag_log.h"
 #include "state_tracker/st_cb_eglimage.h"
 #include "state_tracker/st_context.h"
 #include "state_tracker/st_format.h"
@@ -719,12 +720,24 @@ _mesa_has_depthstencil_combined(const struct gl_framebuffer *fb)
 }
 
 
+/* JUICE: remember the most recent per-attachment incompleteness reason so the
+ * FBOINCOMPLETE log can report the precise sub-cause (the generic
+ * "color attachment incomplete" hides which check failed). */
+static const char *juice_last_att_incomplete = "?";
+
+/* JUICE: remember the most recent driver-level FBO rejection reason (from
+ * do_validate_framebuffer / do_validate_attachment) so the "driver marked FBO
+ * as incomplete" log names the precise cause. Declared here (before
+ * fbo_incomplete, its first user) even though it is assigned in fbo_invalid. */
+static const char *juice_last_fbo_invalid = "?";
+
 /**
  * For debug only.
  */
 static void
 att_incomplete(const char *msg)
 {
+   juice_last_att_incomplete = msg;
    if (MESA_DEBUG_FLAGS & DEBUG_INCOMPLETE_FBO) {
       _mesa_debug(NULL, "attachment incomplete: %s\n", msg);
    }
@@ -738,6 +751,16 @@ static void
 fbo_incomplete(struct gl_context *ctx, const char *msg, int index)
 {
    static GLuint msg_id;
+
+   /* JUICE: an FBO the app expects to render into being judged incomplete is a
+    * silent producer failure -- the render is dropped and the target texture
+    * stays at its cleared (black) contents while native GL renders it fine.
+    * att_reason names the precise per-attachment sub-cause (the generic
+    * "color attachment incomplete" hides which check tripped). */
+   juice_diag_logf("FBOINCOMPLETE",
+                   "reason=%s att_reason=%s driver_reason=%s index=%d",
+                   msg ? msg : "?", juice_last_att_incomplete,
+                   juice_last_fbo_invalid, index);
 
    _mesa_gl_debugf(ctx, &msg_id,
                    MESA_DEBUG_SOURCE_API,
@@ -1010,6 +1033,16 @@ test_attachment_completeness(const struct gl_context *ctx, GLenum format,
 
       if (format == GL_COLOR) {
          if (!_mesa_is_legal_color_format(ctx, baseFormat)) {
+            /* JUICE: name the exact attachment that fails the GL-level
+             * legal-color-format check (distinct from the driver
+             * is_format_supported check). base_format is derived from the
+             * texture's InternalFormat; if a promoted/emulated format lands here
+             * with an unexpected base (e.g. RGB9E5->RGBX16F), this pinpoints it. */
+            juice_diag_logf("FBOATT_BADFMT",
+               "tex=%u target=0x%x level=%d base_format=0x%x internalfmt=0x%x mesafmt=%d",
+               texObj->Name, (unsigned)texObj->Target, att->TextureLevel,
+               (unsigned)baseFormat,
+               (unsigned)texImage->InternalFormat, (int)texImage->TexFormat);
             att_incomplete("bad format");
             att->Complete = GL_FALSE;
             return;
@@ -1109,6 +1142,7 @@ test_attachment_completeness(const struct gl_context *ctx, GLenum format,
 static void
 fbo_invalid(const char *reason)
 {
+   juice_last_fbo_invalid = reason;
    if (MESA_DEBUG_FLAGS & DEBUG_INCOMPLETE_FBO) {
       _mesa_debug(NULL, "Invalid FBO: %s\n", reason);
    }
@@ -1142,8 +1176,18 @@ do_validate_attachment(struct gl_context *ctx,
    if (att->Type != GL_TEXTURE)
       return GL_TRUE;
 
-   if (!stObj || !stObj->pt)
+   if (!stObj || !stObj->pt) {
+      /* JUICE: the attachment texture has no backing gallium/Vulkan resource at
+       * validation time. This drops any render into it (e.g. VRED's equirect
+       * env map Tex104) while native GL, which allocates on glTexImage2D,
+       * renders fine. Names the texture so the missing-storage case is explicit. */
+      juice_diag_logf("FBOATT_NOPT",
+         "bindings=0x%x tex=%u target=0x%x has_stObj=%d has_pt=%d",
+         bindings, stObj ? stObj->Name : 0u,
+         stObj ? (unsigned)stObj->Target : 0u,
+         stObj ? 1 : 0, (stObj && stObj->pt) ? 1 : 0);
       return GL_FALSE;
+   }
 
    format = stObj->pt->format;
    texFormat = att->Renderbuffer->TexImage->TexFormat;
@@ -1162,6 +1206,13 @@ do_validate_attachment(struct gl_context *ctx,
                                        stObj->pt->nr_storage_samples,
                                        bindings);
    if (!valid) {
+      /* JUICE: the resource exists but its pipe format is not renderable with
+       * these bindings (e.g. zink reports the equirect's format unsupported as a
+       * color attachment). Names the concrete pipe format + texture. */
+      juice_diag_logf("FBOATT_FMT",
+         "bindings=0x%x tex=%u target=0x%x pipe_fmt=%d nr_samples=%u",
+         bindings, stObj->Name, (unsigned)stObj->Target,
+         (int)format, stObj->pt->nr_samples);
       fbo_invalid("Invalid format");
    }
 
@@ -3955,6 +4006,16 @@ _mesa_framebuffer_texture(struct gl_context *ctx, struct gl_framebuffer *fb,
                           GLuint layer, GLboolean layered)
 {
    FLUSH_VERTICES(ctx, _NEW_BUFFERS, 0);
+
+   /* JUICE: name every texture attached as a render target. If Tex104 (or any
+    * env texture) is ever attached to an FBO, then it is *meant* to be rendered
+    * into -- and if no draw lands (or the FBO is incomplete under Zink), that is
+    * the missing producer. Logs fb id, attachment point, tex id + target. */
+   juice_diag_logf("FBOATTACH",
+      "fb=%u attachment=0x%x tex=%u target=0x%x level=%d layer=%u layered=%d",
+      fb ? fb->Name : 0u, (unsigned)attachment,
+      texObj ? texObj->Name : 0u, (unsigned)textarget, level,
+      layer, (int)layered);
 
    simple_mtx_lock(&fb->Mutex);
    if (texObj) {

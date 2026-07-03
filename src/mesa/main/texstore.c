@@ -75,6 +75,7 @@
 #include "glformats.h"
 #include "pixeltransfer.h"
 #include "util/format_rgb9e5.h"
+#include "util/juice_diag_log.h"
 #include "util/format_r11g11b10f.h"
 
 #include "state_tracker/st_cb_texture.h"
@@ -1015,6 +1016,40 @@ store_texsubimage(struct gl_context *ctx,
                                   format, type, pixels, packing, caller);
    if (!src)
       return;
+
+   /* JUICE: log every texel upload (glTexImage/glTexSubImage funnel here) so we
+    * can name who fills a given texture (e.g. the environment map Tex104) and
+    * whether the SOURCE bytes were already black on arrival. Checksums only the
+    * meaningful width*bpp per row (not row padding) to stay in-bounds. */
+   {
+      const GLint bpp = _mesa_bytes_per_pixel(format, type);
+      const GLint rowStride = _mesa_image_row_stride(packing, width, format, type);
+      unsigned long long sum = 0ull;
+      unsigned int nonzero = 0u;
+      int mn = 255, mx = 0;
+      if (bpp > 0 && rowStride != 0) {
+         const GLubyte *row = src;
+         const GLint rowbytes = width * bpp;
+         for (GLint yy = 0; yy < height; yy++) {
+            for (GLint xx = 0; xx < rowbytes; xx++) {
+               const int b = row[xx];
+               sum += (unsigned)b;
+               if (b) nonzero++;
+               if (b < mn) mn = b;
+               if (b > mx) mx = b;
+            }
+            row += rowStride;
+         }
+      }
+      juice_diag_logf("TEXUP",
+         "caller=%s tex=%u target=0x%x texfmt=%d off=%d,%d,%d dim=%dx%dx%d "
+         "fmt=0x%x type=0x%x bpp=%d src_sum=%llu src_nonzero=%u src_min=%d src_max=%d",
+         caller ? caller : "?",
+         texImage->TexObject->Name, (unsigned)target, (int)texImage->TexFormat,
+         xoffset, yoffset, zoffset, width, height, depth,
+         (unsigned)format, (unsigned)type, (int)bpp,
+         sum, nonzero, mn, mx);
+   }
 
    /* compute slice info (and do some sanity checks) */
    switch (target) {

@@ -1094,10 +1094,11 @@ dump_comprehensive_state(struct gl_context *ctx, GLenum mode, GLint start, GLsiz
    if (new_program && num_seen_programs < 512)
       seen_programs[num_seen_programs++] = active_prog;
 
-   /* Only dump if we recently had a uniform buffer update, or this is the
-    * first draw we've seen for this program. */
-   if (!ctx->_UniformBufferDataUpdated && !new_program)
-      return;
+   /* NO GATE: dump full state + framebuffer + textures for EVERY draw call.
+    * (Previously gated to new-program / UBO-update, which limited us to ~12
+    * images total.) Disk and speed are explicitly not a concern; capturing
+    * the black-background bug is paramount. */
+   (void) new_program;
 
    /* Initialize SPIRV dump hook on first use */
    init_spirv_dump_hook();
@@ -1203,19 +1204,20 @@ static void
 dump_combine_forensics(struct gl_context *ctx, GLenum mode, GLint start,
                        GLsizei count, GLuint numInstances)
 {
+   /* NO CAP, NO FILTERING: capture every single draw call, for the entire
+    * run. Finding the black-background bug is paramount; disk and speed are
+    * explicitly not a concern. These are cheap per-draw text files. */
    static unsigned forensic_counter = 0;
-   if (forensic_counter >= 200)   /* first frames only; avoid unbounded spam */
-      return;
    unsigned id = ++forensic_counter;
+
+   struct gl_shader_program *shProg =
+      ctx->_Shader ? ctx->_Shader->ActiveProgram : NULL;
 
    char filename[512];
    snprintf(filename, sizeof(filename), "c:\\temp\\fdraw_%06u.txt", id);
    FILE *fp = fopen(filename, "w");
    if (!fp)
       return;
-
-   struct gl_shader_program *shProg =
-      ctx->_Shader ? ctx->_Shader->ActiveProgram : NULL;
 
    fprintf(fp, "=== COMBINE FORENSICS DRAW %u ===\n", id);
    fprintf(fp, "Mode: 0x%x  Start: %d  Count: %d  Instances: %u\n",
@@ -1268,24 +1270,49 @@ dump_combine_forensics(struct gl_context *ctx, GLenum mode, GLint start,
             continue;
          if (glsl_get_base_type(uni->type) != GLSL_TYPE_SAMPLER)
             continue;
+         /* Read the LIVE value the driver actually uses, via a plain memory
+          * read (no GL API re-entry -- this runs inside the draw hook). Under
+          * PackedDriverUniformStorage (gallium/zink enable PIPE_CAP_PACKED_
+          * UNIFORMS) glUniform* writes bindless samplers and non-opaque
+          * uniforms into uni->driver_storage[], leaving uni->storage stale;
+          * plain (non-bindless) samplers still live in uni->storage. */
+         const bool samp_packed =
+            ctx->Const.PackedDriverUniformStorage && uni->is_bindless &&
+            uni->num_driver_storage > 0 && uni->driver_storage[0].data;
+         const union gl_constant_value *samp_live =
+            samp_packed ? (const union gl_constant_value *)
+                             uni->driver_storage[0].data
+                        : uni->storage;
          unsigned elems = uni->array_elements ? uni->array_elements : 1u;
          for (unsigned k = 0; k < elems && k < 16; k++) {
-            int unit = uni->storage[k].i;
-            fprintf(fp, "  %s%s loc=%d bindless=%d unit=%d",
+            GLint loc = uni->remap_location + (uni->array_elements ? (int)k : 0);
+            fprintf(fp, "  %s%s loc=%d bindless=%d",
                     uni->name.string ? uni->name.string : "?",
-                    uni->array_elements ? "[]" : "",
-                    uni->remap_location, uni->is_bindless ? 1 : 0, unit);
-            if (unit >= 0 &&
-                unit < (int)ctx->Const.MaxCombinedTextureImageUnits) {
-               struct gl_texture_object *tex = ctx->Texture.Unit[unit]._Current;
-               if (tex) {
-                  struct gl_texture_image *img = tex->Image[0][0];
-                  fprintf(fp, " -> Tex=%u target=0x%x %ux%u fmt=0x%x",
-                          tex->Name, tex->Target,
-                          img ? img->Width : 0, img ? img->Height : 0,
-                          img ? img->InternalFormat : 0);
-               } else {
-                  fprintf(fp, " -> <no complete texture on unit>");
+                    uni->array_elements ? "[]" : "", loc,
+                    uni->is_bindless ? 1 : 0);
+            if (uni->is_bindless) {
+               /* Bindless samplers hold a 64-bit texture handle (2 dwords),
+                * not a unit; handle==0 is zink's reserved null (black) slot. */
+               uint64_t handle = 0;
+               if (samp_live)
+                  memcpy(&handle, &samp_live[k * 2], sizeof(handle));
+               fprintf(fp, " handle=0x%llx", (unsigned long long)handle);
+            } else {
+               int unit = samp_live ? samp_live[k].i : -1;
+               fprintf(fp, " unit=%d", unit);
+               if (unit >= 0 &&
+                   unit < (int)ctx->Const.MaxCombinedTextureImageUnits) {
+                  struct gl_texture_object *tex =
+                     ctx->Texture.Unit[unit]._Current;
+                  if (tex) {
+                     struct gl_texture_image *img = tex->Image[0][0];
+                     fprintf(fp, " -> Tex=%u target=0x%x %ux%u fmt=0x%x",
+                             tex->Name, tex->Target,
+                             img ? img->Width : 0, img ? img->Height : 0,
+                             img ? img->InternalFormat : 0);
+                  } else {
+                     fprintf(fp, " -> <no complete texture on unit>");
+                  }
                }
             }
             fprintf(fp, "\n");
@@ -1303,14 +1330,28 @@ dump_combine_forensics(struct gl_context *ctx, GLenum mode, GLint start,
          if (bt == GLSL_TYPE_SAMPLER || bt == GLSL_TYPE_TEXTURE ||
              bt == GLSL_TYPE_IMAGE)
             continue;
-         unsigned total = glsl_get_components(uni->type) *
-                          (uni->array_elements ? uni->array_elements : 1u);
+         unsigned total = glsl_get_components(uni->type);
          if (total > 8)
             total = 8;
+         /* Read live values via a plain memory read (see sampler note above):
+          * under PackedDriverUniformStorage uni->storage is stale for
+          * non-opaque uniforms, so glUniform4fv uploads (e.g. textureRegion)
+          * appeared as 0 here even though the driver received them. The live
+          * copy for a non-opaque uniform is uni->driver_storage[0].data. */
+         /* Samplers/textures/images were already skipped above, so every
+          * uniform reaching here is non-opaque and uses packed storage. */
+         const bool u_packed =
+            ctx->Const.PackedDriverUniformStorage &&
+            uni->num_driver_storage > 0 && uni->driver_storage[0].data;
+         const union gl_constant_value *u_live =
+            u_packed ? (const union gl_constant_value *)
+                          uni->driver_storage[0].data
+                     : uni->storage;
          fprintf(fp, "  %s loc=%d =", uni->name.string ? uni->name.string : "?",
                  uni->remap_location);
          for (unsigned k = 0; k < total; k++)
-            fprintf(fp, " %.6g(0x%08x)", uni->storage[k].f, uni->storage[k].u);
+            fprintf(fp, " %.6g(0x%08x)", u_live ? u_live[k].f : 0.f,
+                    u_live ? u_live[k].u : 0u);
          fprintf(fp, "\n");
       }
    } else {

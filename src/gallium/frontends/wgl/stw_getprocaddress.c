@@ -38,6 +38,7 @@
 #include "stw_nopfuncs.h"
 
 #include "util/u_debug.h"
+#include "util/juice_diag_log.h"
 #include "util/log.h"
 #include "pipe/p_screen.h"
 #include "pipe/p_context.h"
@@ -648,11 +649,17 @@ DrvGetProcAddress(
     */
    p = stw_get_nop_function(lpszProc);
    if (p) {
+      /* JUICE: Mesa has no real implementation for this entry point, so it hands
+       * back a silent no-op. If VRED fills the env map (or anything) through such
+       * a function, the call does NOTHING under Mesa while working natively -- the
+       * exact "gl function mesa doesn't have/is incomplete" failure mode. */
+      juice_diag_logf("GPA_NOOP", "proc=%s (returning no-op stub)", lpszProc);
       debug_printf("wglGetProcAddress(\"%s\") returning no-op function\n",
                    lpszProc);
       return p;
    }
 
+   juice_diag_logf("GPA_NULL", "proc=%s (returning NULL)", lpszProc);
    debug_printf("wglGetProcAddress(\"%s\") returning NULL\n", lpszProc);
    return NULL;
 }

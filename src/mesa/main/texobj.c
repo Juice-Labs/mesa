@@ -46,6 +46,7 @@
 #include "texturebindless.h"
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
+#include "util/juice_diag_log.h"
 #include "api_exec_decl.h"
 
 #include "state_tracker/st_cb_texture.h"
@@ -685,6 +686,24 @@ incomplete(struct gl_texture_object *t, enum base_mipmap bm,
       va_end(args);
 
       _mesa_debug(NULL, "Texture Obj %d incomplete because: %s\n", t->Name, s);
+   }
+
+   /* JUICE: name the exact incompleteness reason for cube maps (low volume).
+    * VRED's specular env cube (Tex108) reads as base+mipmap incomplete -> Mesa
+    * substitutes the default black texture for the samplerCube envMap. This
+    * pinpoints which completeness rule trips (missing face, size/format/border
+    * mismatch, base NULL, or a mipmap gap) so the fix is exact. */
+   if (t->Target == GL_TEXTURE_CUBE_MAP) {
+      va_list jargs;
+      char jbuf[160];
+      va_start(jargs, fmt);
+      vsnprintf(jbuf, sizeof(jbuf), fmt, jargs);
+      va_end(jargs);
+      juice_diag_logf("TEXINCOMPLETE",
+         "tex=%u target=0x%x which=%s baseLevel=%d maxLevel=%d immutable=%d reason=%s",
+         t->Name, (unsigned)t->Target, (bm == BASE) ? "BASE" : "MIPMAP",
+         (int)t->Attrib.BaseLevel, (int)t->Attrib.MaxLevel, (int)t->Immutable,
+         jbuf);
    }
 
    if (bm == BASE)
@@ -1682,6 +1701,18 @@ bind_texture_object(struct gl_context *ctx, unsigned unit,
     * zero, it'll be deleted here.
     */
    _mesa_reference_texobj(&texUnit->CurrentTex[targetIndex], texObj);
+
+   /* JUICE: trace binds to high texture units (>=20). The scene lighting
+    * samplers reference units 26/27 (OSGLightMaps/OSGLightMaps1) but those
+    * units read back as the default 1x1 texture at draw time. Logging every
+    * bind that reaches mesa for these units tells us whether VRED's bind for
+    * 26/27 ever arrives (mesa-side/state bug) or is lost upstream (GL command
+    * path). */
+   if (unit >= 20)
+      juice_diag_logf("TEXBIND",
+                      "unit=%u targetIndex=%d tex=%u target=0x%x",
+                      unit, targetIndex, texObj->Name,
+                      (unsigned)texObj->Target);
 
    ctx->Texture.NumCurrentTexUsed = MAX2(ctx->Texture.NumCurrentTexUsed,
                                          unit + 1);

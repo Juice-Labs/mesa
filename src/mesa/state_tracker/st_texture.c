@@ -31,6 +31,7 @@
 #include "st_format.h"
 #include "st_texture.h"
 #include "main/enums.h"
+#include "main/texobj.h"
 
 #include "pipe/p_state.h"
 #include "pipe/p_context.h"
@@ -537,7 +538,79 @@ st_create_texture_handle_from_unit(struct st_context *st,
 
    assert(st->ctx->Texture.Unit[texUnit]._Current);
 
-   return pipe->create_texture_handle(pipe, view, &sampler);
+   GLuint64 handle = pipe->create_texture_handle(pipe, view, &sampler);
+
+   /* JUICE: tie each per-draw resident handle to the concrete texture bound at
+    * texUnit. The lighting samplers (envMap/OSGLightMaps/brdfMap) use bound
+    * bindless, so the sampled data is whatever texture is at their unit. If the
+    * scene is black despite valid handles, this pins whether the wrong/black/
+    * incomplete texture is bound, or the wrong unit. Logs texture id, target,
+    * pipe format, size, completeness. */
+   {
+      /* JUICE: log the RAW per-target texture objects bound at this unit,
+       * before Mesa's incomplete->default substitution. _Current is already
+       * post-fallback (it becomes the default texture when the bound texture is
+       * incomplete), which hides the real cause. If a samplerCube (envMap) reads
+       * black, this shows whether the intended cube (e.g. Tex108) is actually
+       * bound here but rejected as incomplete (base/mipmap), vs simply not bound. */
+      struct gl_texture_unit *u = &st->ctx->Texture.Unit[texUnit];
+      struct gl_texture_object *cube = u->CurrentTex[TEXTURE_CUBE_INDEX];
+      const struct gl_texture_object *t2d  = u->CurrentTex[TEXTURE_2D_INDEX];
+      const struct gl_texture_object *rect = u->CurrentTex[TEXTURE_RECT_INDEX];
+
+      /* JUICE: the _BaseComplete flag read below can be STALE: _mesa_dirty_texobj
+       * clears it (without going through incomplete()) and bound-bindless units
+       * are not in prog->SamplersUsed, so _mesa_update_texture_state may never
+       * re-validate them. Force a real completeness test here so the flags (and
+       * the TEXINCOMPLETE reason logged from incomplete()) reflect the truth, and
+       * separately report _mesa_cube_complete() which is filter-independent. */
+      int cube_base_forced = -1, cube_mip_forced = -1, cube_complete = -1;
+      if (cube) {
+         _mesa_test_texobj_completeness(st->ctx, cube);
+         cube_base_forced = (int)cube->_BaseComplete;
+         cube_mip_forced  = (int)cube->_MipmapComplete;
+         cube_complete    = (int)_mesa_cube_complete(cube);
+      }
+
+      juice_diag_logf("BSR_RAW",
+         "prog=%u unit=%u "
+         "cube_tex=%u cube_base=%d cube_mip=%d cube_baseF=%d cube_mipF=%d cube_cubecomplete=%d "
+         "baseLevel=%d maxLevel=%d immutable=%d numLevels=%d "
+         "2d_tex=%u 2d_base=%d 2d_mip=%d "
+         "rect_tex=%u rect_base=%d",
+         prog ? prog->Id : 0u, texUnit,
+         cube ? cube->Name : 0u, cube ? (int)cube->_BaseComplete : -1,
+         cube ? (int)cube->_MipmapComplete : -1,
+         cube_base_forced, cube_mip_forced, cube_complete,
+         cube ? (int)cube->Attrib.BaseLevel : -1,
+         cube ? (int)cube->Attrib.MaxLevel : -1,
+         cube ? (int)cube->Immutable : -1,
+         cube ? (int)cube->Attrib.NumLevels : -1,
+         t2d ? t2d->Name : 0u, t2d ? (int)t2d->_BaseComplete : -1,
+         t2d ? (int)t2d->_MipmapComplete : -1,
+         rect ? rect->Name : 0u, rect ? (int)rect->_BaseComplete : -1);
+   }
+
+   {
+      const struct gl_texture_object *texObj =
+         st->ctx->Texture.Unit[texUnit]._Current;
+      const struct pipe_resource *res = view ? view->texture : NULL;
+      juice_diag_logf("BSR_TEX",
+                      "prog=%u stage=%d unit=%u handle=0x%llx tex=%u target=0x%x "
+                      "complete=%d view_fmt=%s view_tgt=%d w=%u h=%u d=%u",
+                      prog ? prog->Id : 0u, (int)prog->info.stage,
+                      texUnit, (unsigned long long)handle,
+                      texObj ? texObj->Name : 0u,
+                      texObj ? (unsigned)texObj->Target : 0u,
+                      texObj ? (int)texObj->_BaseComplete : -1,
+                      view ? util_format_short_name(view->format) : "?",
+                      view ? (int)view->target : -1,
+                      res ? res->width0 : 0u,
+                      res ? res->height0 : 0u,
+                      res ? res->depth0 : 0u);
+   }
+
+   return handle;
 }
 
 

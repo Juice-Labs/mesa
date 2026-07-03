@@ -79,6 +79,7 @@
 #include "util/u_math.h"
 #include "util/u_box.h"
 #include "util/u_memory.h"
+#include "util/juice_diag_log.h"
 #include "util/u_simple_shaders.h"
 #include "cso_cache/cso_context.h"
 #include "tgsi/tgsi_ureg.h"
@@ -702,8 +703,19 @@ default_bindings(struct st_context *st, enum pipe_format format)
 
       if (screen->is_format_supported(screen, format, target, 0, 0, bindings))
          return bindings;
-      else
+      else {
+         /* JUICE: the format cannot be created as sampler+render-target, so the
+          * texture is allocated SAMPLER-ONLY (no PIPE_BIND_RENDER_TARGET). Any
+          * later attempt to render into it (e.g. VRED's equirect env map) makes
+          * the FBO incomplete -> render dropped -> texture stays black. This is
+          * the root of the missing-producer for a sampler+RT format like the
+          * RGBA32F equirect. */
+         juice_diag_logf("DEFBIND_NORT",
+            "format=%d dropped RENDER_TARGET (sampler-only); "
+            "is_format_supported(SAMPLER|RT) failed",
+            (int)format);
          return PIPE_BIND_SAMPLER_VIEW;
+      }
    }
 }
 

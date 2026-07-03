@@ -35,6 +35,7 @@
 #include "textureview.h"
 #include "glformats.h"
 #include "api_exec_decl.h"
+#include "util/juice_diag_log.h"
 
 #include "state_tracker/st_cb_copyimage.h"
 
@@ -568,6 +569,18 @@ copy_image_subdata(struct gl_context *ctx,
          assert(dstTexImage);
          newDstZ = 0;
       }
+
+      /* JUICE: name copy-based texture writers (e.g. staging -> env-map). */
+      juice_diag_logf("TEXCOPY",
+         "src_tex=%u src_tgt=0x%x src_rb=%u dst_tex=%u dst_tgt=0x%x dst_rb=%u "
+         "srcXYZ=%d,%d,%d dstXYZ=%d,%d,%d wh=%dx%d",
+         srcTexImage ? srcTexImage->TexObject->Name : 0u,
+         srcTexImage ? (unsigned)srcTexImage->TexObject->Target : 0u,
+         srcRenderbuffer ? srcRenderbuffer->Name : 0u,
+         dstTexImage ? dstTexImage->TexObject->Name : 0u,
+         dstTexImage ? (unsigned)dstTexImage->TexObject->Target : 0u,
+         dstRenderbuffer ? dstRenderbuffer->Name : 0u,
+         srcX, srcY, newSrcZ, dstX, dstY, newDstZ, srcWidth, srcHeight);
 
       st_CopyImageSubData(ctx,
                           srcTexImage, srcRenderbuffer,

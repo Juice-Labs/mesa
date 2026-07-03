@@ -38,6 +38,7 @@
 #include "compiler/glsl/glsl_parser_extras.h"
 #include "compiler/glsl/program.h"
 #include "util/bitscan.h"
+#include "util/log.h"
 
 #include "state_tracker/st_context.h"
 
@@ -1535,6 +1536,30 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                          (count > 0 && values) ?
                             (unsigned long long)u64[0] : 0ull);
       }
+
+      /* JUICE diag: log the actual value VRED uploads for the composite/env
+       * uniforms driving the black-frame bug. Compare the (prog,loc) here with
+       * the draw-time read location/value (dump_combine_forensics) and with the
+       * location glGetUniformLocation returned: if the write loc != read loc,
+       * mesa mislocated the uniform; if equal but the draw reads 0, the upload
+       * never reached this program's storage. */
+      const char *wname = uni->name.string;
+      if (wname && basicType == GLSL_TYPE_FLOAT && values &&
+          (strcmp(wname, "fullResolution") == 0 ||
+           strcmp(wname, "textureRegion") == 0 ||
+           strcmp(wname, "cameraRegion") == 0 ||
+           strcmp(wname, "screenResolution") == 0 ||
+           strcmp(wname, "scale") == 0 ||
+           strcmp(wname, "exposureValue") == 0)) {
+         const float *fv = (const float *)values;
+         unsigned n = MIN2(components, 4u);
+         mesa_logi("UNIFORM SET: prog=%u name='%s' loc=%d remap_loc=%u count=%d "
+                   "comps=%u val=[%g %g %g %g]",
+                   shProg ? shProg->Name : 0u, wname, (int)location,
+                   (unsigned)uni->remap_location, (int)count, components,
+                   n > 0 ? fv[0] : 0.f, n > 1 ? fv[1] : 0.f,
+                   n > 2 ? fv[2] : 0.f, n > 3 ? fv[3] : 0.f);
+      }
    }
 
    /* Page 82 (page 96 of the PDF) of the OpenGL 2.1 spec says:
@@ -1658,12 +1683,13 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                 * BSR_* records in st_make_bound_samplers_resident only log by
                 * index, so this is the join needed to tell whether a named
                 * sampler (e.g. envMap) actually reaches the resident-handle
-                * path or is left bound=0 at draw time. */
+                * path or is left bound=0 at draw time. decl_target vs the slot's
+                * prior target exposes the link/runtime index divergence. */
                juice_diag_logf("SB_BOUND",
                                "prog=%u stage=%d bindless_idx=%u tex_unit=%u "
-                               "name=%s",
+                               "decl_target=%d name=%s",
                                shProg ? shProg->Name : 0u,
-                               i, unit, value,
+                               i, unit, value, decl_target,
                                uni->name.string ? uni->name.string : "?");
             } else {
                if (sh->Program->SamplerUnits[unit] != value) {

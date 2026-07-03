@@ -41,6 +41,7 @@
 #include "macros.h"
 #include "readpix.h"
 #include "renderbuffer.h"
+#include "util/juice_diag_log.h"
 #include "state.h"
 #include "api_exec_decl.h"
 
@@ -372,6 +373,24 @@ do_blit_framebuffer(struct gl_context *ctx,
    struct pipe_blit_info blit;
 
    st_manager_validate_framebuffers(st);
+
+   /* JUICE: name blit-based writers (e.g. offscreen render -> env-map). Logs the
+    * dst/src color attachment texture ids so we can see if a blit fills Tex104. */
+   if (mask & GL_COLOR_BUFFER_BIT) {
+      const struct gl_renderbuffer_attachment *dst =
+         &drawFB->Attachment[BUFFER_COLOR0];
+      const struct gl_renderbuffer_attachment *srca =
+         &readFB->Attachment[BUFFER_COLOR0];
+      juice_diag_logf("TEXBLIT",
+         "src_fb=%u src_tex=%u dst_fb=%u dst_tex=%u "
+         "src=%d,%d,%d,%d dst=%d,%d,%d,%d filter=0x%x",
+         readFB->Name,
+         (srca->Type == GL_TEXTURE && srca->Texture) ? srca->Texture->Name : 0u,
+         drawFB->Name,
+         (dst->Type == GL_TEXTURE && dst->Texture) ? dst->Texture->Name : 0u,
+         srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1,
+         (unsigned)filter);
+   }
 
    /* Make sure bitmap rendering has landed in the framebuffers */
    st_flush_bitmap_cache(st);

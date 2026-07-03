@@ -57,6 +57,51 @@
 
 #include "state_tracker/st_context.h"
 
+#if defined(_WIN32)
+/* JUICE diag: resolve a return address to "module+off" and the equivalent
+ * IDA Pro VA (module rebased at 0x180000000), matching the format used by the
+ * existing glGetUniformBlockIndex logging. caller_addr must be captured with
+ * _ReturnAddress() in the GL entry point itself so it points at the app
+ * (e.g. OSGSystem.dll), not at an inlined mesa helper. */
+static void
+juice_caller_info(void *caller_addr, char *module_name_out, size_t out_sz,
+                  unsigned long *caller_offset_out,
+                  unsigned long long *ida_address_out)
+{
+   HMODULE hModule = NULL;
+   GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                     (LPCTSTR)caller_addr, &hModule);
+   char module_path[MAX_PATH];
+   memset(module_path, 0, sizeof(module_path));
+   GetModuleFileNameA(hModule, module_path, sizeof(module_path));
+   const char *module_name = strrchr(module_path, '\\');
+   module_name = module_name ? module_name + 1 : module_path;
+   snprintf(module_name_out, out_sz, "%s", module_name);
+
+   uintptr_t module_base = (uintptr_t)hModule;
+   uintptr_t caller_offset = (uintptr_t)caller_addr - module_base;
+   *caller_offset_out = (unsigned long)caller_offset;
+   *ida_address_out = 0x180000000ULL + (unsigned long long)caller_offset;
+}
+
+/* JUICE diag: only the VRED composite/viewport/env uniforms we are chasing for
+ * the black-frame bug. Keeps glGetUniformLocation logging from flooding. */
+static bool
+juice_is_watched_uniform(const char *name)
+{
+   if (!name)
+      return false;
+   static const char *const watched[] = {
+      "fullResolution", "textureRegion", "cameraRegion", "screenResolution",
+      "scale", "exposureValue", "physicalScaleFactor",
+   };
+   for (unsigned i = 0; i < ARRAY_SIZE(watched); i++)
+      if (strcmp(name, watched[i]) == 0)
+         return true;
+   return false;
+}
+#endif
+
 /**
  * Update the vertex/fragment program's TexturesUsed array.
  *
@@ -1054,7 +1099,25 @@ _mesa_GetUniformLocation_impl(GLuint programObj, const GLcharARB *name,
 GLint GLAPIENTRY
 _mesa_GetUniformLocation(GLuint programObj, const GLcharARB *name)
 {
-   return _mesa_GetUniformLocation_impl(programObj, name, false);
+   GLint loc = _mesa_GetUniformLocation_impl(programObj, name, false);
+#if defined(_WIN32)
+   /* JUICE diag: record which location VRED resolves for the composite/env
+    * uniforms so it can be compared against the location the shader actually
+    * reads at draw time (see dump_combine_forensics). A mismatch means the
+    * per-frame glUniform upload lands in the wrong slot -> reads as 0 -> black.
+    * _ReturnAddress() here is the app caller (not an inlined mesa helper). */
+   if (juice_is_watched_uniform(name)) {
+      char module_name[MAX_PATH];
+      unsigned long caller_offset = 0;
+      unsigned long long ida_address = 0;
+      juice_caller_info(_ReturnAddress(), module_name, sizeof(module_name),
+                        &caller_offset, &ida_address);
+      mesa_logi("glGetUniformLocation: program %u, name '%s' -> location %d "
+                "(called from %s+0x%lx, IDA: 0x%llx)",
+                programObj, name, loc, module_name, caller_offset, ida_address);
+   }
+#endif
+   return loc;
 }
 
 GLint GLAPIENTRY
@@ -1119,6 +1182,38 @@ _mesa_GetUniformBlockIndex(GLuint program,
       mesa_logi("glGetUniformBlockIndex: program %u, uniformBlockName '%s' -- invalid resource (called from %s+0x%lx, IDA: 0x%llx)",
                 program, uniformBlockName ? uniformBlockName : "(null)",
                 module_name, (unsigned long)caller_offset, (unsigned long long)ida_address);
+#if defined(_WIN32)
+      /* JUICE diag: the name lookup went through the program RESOURCE LIST. If
+       * the block is actually present in the linked UniformBlocks[] array but
+       * not findable by name, the resource list is out of sync with the linked
+       * blocks (prime suspect: the custom block-reorder in link_uniform_blocks).
+       * Dump the real linked block list for the watched blocks, once per
+       * program, so the desync is visible directly. */
+      if (uniformBlockName &&
+          (strcmp(uniformBlockName, "OSGEnvironment") == 0 ||
+           strcmp(uniformBlockName, "OSGViewport") == 0)) {
+         static GLuint dumped_progs[512];
+         static unsigned num_dumped;
+         bool already = false;
+         for (unsigned i = 0; i < num_dumped; i++)
+            if (dumped_progs[i] == program) { already = true; break; }
+         if (!already) {
+            if (num_dumped < ARRAY_SIZE(dumped_progs))
+               dumped_progs[num_dumped++] = program;
+            unsigned nblocks = (shProg->data) ? shProg->data->NumUniformBlocks : 0;
+            mesa_logi("  BLOCKDUMP program %u: LinkStatus=%d NumUniformBlocks=%u "
+                      "(resource-list lookup of '%s' FAILED)",
+                      program, shProg->data ? shProg->data->LinkStatus : -1,
+                      nblocks, uniformBlockName);
+            for (unsigned i = 0; i < nblocks; i++) {
+               const struct gl_uniform_block *blk = &shProg->data->UniformBlocks[i];
+               mesa_logi("    linked UniformBlocks[%u] = '%s' Binding=%u",
+                         i, blk->name.string ? blk->name.string : "(null)",
+                         blk->Binding);
+            }
+         }
+      }
+#endif
       return GL_INVALID_INDEX;
    }
 

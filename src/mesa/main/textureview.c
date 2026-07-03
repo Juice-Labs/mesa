@@ -44,6 +44,7 @@
 #include "stdbool.h"
 #include "mtypes.h"
 #include "api_exec_decl.h"
+#include "util/juice_diag_log.h"
 
 #include "state_tracker/st_cb_texture.h"
 
@@ -543,6 +544,17 @@ texture_view(struct gl_context *ctx, struct gl_texture_object *origTexObj,
    texFormat = _mesa_choose_texture_format(ctx, texObj, target, 0,
                                            internalformat, GL_NONE, GL_NONE);
    if (texFormat == MESA_FORMAT_NONE) return;
+
+   /* JUICE: glTextureView aliases origtexture's storage into a new texture id
+    * (possibly a different target/format). If a sampled texture (e.g. the env
+    * map) is a VIEW, nothing writes its id directly -- the data lives in the
+    * origin texture. Log the alias so orphan textures can be traced to a source. */
+   juice_diag_logf("TEXVIEW",
+      "view_tex=%u view_tgt=0x%x orig_tex=%u orig_tgt=0x%x internalfmt=0x%x "
+      "minlevel=%u numlevels=%u minlayer=%u numlayers=%u",
+      texObj->Name, (unsigned)target, origTexObj->Name,
+      (unsigned)origTexObj->Target, (unsigned)internalformat,
+      minlevel, numlevels, minlayer, numlayers);
 
    newViewNumLevels = MIN2(numlevels, origTexObj->Attrib.NumLevels - minlevel);
    newViewNumLayers = MIN2(numlayers, origTexObj->Attrib.NumLayers - minlayer);

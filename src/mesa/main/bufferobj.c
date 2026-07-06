@@ -1770,6 +1770,7 @@ is_catia_stellar_process(void)
    if (catia_detected == -1) {
       const char *process_name = util_get_process_name();
       catia_detected = (process_name && contains_ignore_case(process_name, "3DEXPERIENCE.exe")) ? 1 : 0;
+      catia_detected |= (process_name && contains_ignore_case(process_name, "CATNeuServer.exe")) ? 1 : 0;
    }
 
    return catia_detected == 1;

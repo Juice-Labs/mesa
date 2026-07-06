@@ -700,9 +700,11 @@ BOOL
 stw_framebuffer_swap_locked(HDC hdc, struct stw_framebuffer *fb)
 {
    struct stw_context *ctx = stw_current_context();
+
    if (!(fb->pfi->pfd.dwFlags & PFD_DOUBLEBUFFER)) {
       stw_framebuffer_unlock(fb);
-      stw_st_flush(ctx->st, fb->stfb, ST_FLUSH_END_OF_FRAME | ST_FLUSH_FRONT);
+      if (ctx)
+         stw_st_flush(ctx->st, fb->stfb, ST_FLUSH_END_OF_FRAME | ST_FLUSH_FRONT);
       return true;
    }
 
@@ -725,6 +727,11 @@ stw_framebuffer_swap_locked(HDC hdc, struct stw_framebuffer *fb)
    int interval = fb->swap_interval == -1 ? stw_dev->swap_interval : fb->swap_interval;
    if (interval != 0 && !fb->winsys_framebuffer) {
       wait_swap_interval(fb, interval);
+   }
+
+   if (!ctx) {
+      stw_framebuffer_unlock(fb);
+      return FALSE;
    }
 
    return stw_st_swap_framebuffer_locked(hdc, ctx->st, fb->stfb);

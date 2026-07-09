@@ -551,9 +551,20 @@ DrvSetPixelFormat(HDC hdc, LONG iPixelFormat)
        */
       bool bPbuffer = fb->owner == STW_FRAMEBUFFER_PBUFFER;
 
+      /*
+       * Some applications (e.g. CATIA) re-apply the same pixel format to the
+       * same window after a fullscreen<->windowed transition.  Win32 forbids
+       * changing a window's pixel format, but re-setting the identical format
+       * is harmless and the existing framebuffer already has a valid back
+       * buffer, so report success instead of failing.  This also covers the
+       * case where a destroyed window's HWND value gets recycled for a new
+       * window before our WM_DESTROY hook released the stale framebuffer.
+       */
+      bool bSameFormat = fb->pfi->iPixelFormat == (int) iPixelFormat;
+
       stw_framebuffer_unlock( fb );
 
-      return bPbuffer;
+      return bPbuffer || bSameFormat;
    }
 
    const struct stw_pixelformat_info *pfi = stw_pixelformat_get_info(iPixelFormat);

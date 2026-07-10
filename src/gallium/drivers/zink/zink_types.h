@@ -1220,6 +1220,9 @@ struct zink_resource_object {
    bool ordered_access_is_copied;
    bool unordered_read;
    bool unordered_write;
+
+   /* JUICE: GPU wrote this buffer (SSBO/image/xfb/copy dst); gates host-visible read-staging in zink_buffer_map, false for CPU-only uploads. */
+   bool gpu_written;
    bool unsync_access;
    bool copies_valid;
    bool copies_need_reset; //for use with batch state resets

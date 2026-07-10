@@ -236,7 +236,11 @@ zink_resource_usage_set(struct zink_resource *res, struct zink_batch_state *bs, 
 static ALWAYS_INLINE void
 zink_batch_resource_usage_set(struct zink_batch_state *bs, struct zink_resource *res, bool write, bool is_buffer)
 {
-   if (!is_buffer) {
+   if (is_buffer) {
+      /* JUICE: mark GPU-written so a later host-visible READ map stages a copy (see zink_buffer_map); reset by fresh obj on realloc. */
+      if (write)
+         res->obj->gpu_written = true;
+   } else {
       if (res->obj->dt) {
          VkSemaphore acquire = zink_kopper_acquire_submit(zink_screen(bs->ctx->base.screen), res);
          if (acquire)

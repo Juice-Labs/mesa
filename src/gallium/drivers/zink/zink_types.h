@@ -1010,6 +1010,9 @@ struct zink_resource_object {
    bool unordered_read;
    bool unordered_write;
 
+   /* JUICE: GPU wrote this buffer (SSBO/image/xfb/copy dst); gates host-visible read-staging in zink_buffer_map, false for CPU-only uploads. */
+   bool gpu_written;
+
    unsigned persistent_maps; //if nonzero, requires vkFlushMappedMemoryRanges during batch use
 
    VkBuffer storage_buffer;

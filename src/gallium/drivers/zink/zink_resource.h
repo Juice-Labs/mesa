@@ -211,6 +211,9 @@ static inline void
 zink_batch_resource_usage_set(struct zink_batch *batch, struct zink_resource *res, bool write, bool is_buffer)
 {
    if (is_buffer) {
+      /* JUICE: mark GPU-written so a later host-visible READ map stages a copy (see zink_buffer_map); reset by fresh obj on realloc. */
+      if (write)
+         res->obj->gpu_written = true;
       /* multiple array entries are fine */
       if (!res->obj->coherent && res->obj->persistent_maps)
          util_dynarray_append(&batch->state->persistent_resources, struct zink_resource_object*, res->obj);

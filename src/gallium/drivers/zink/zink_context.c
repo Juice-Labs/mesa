@@ -446,6 +446,17 @@ get_border_color(const union pipe_color_union *color, bool is_integer, bool need
    return need_custom ? VK_BORDER_COLOR_FLOAT_CUSTOM_EXT : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 }
 
+static void
+release_custom_border_color_sampler(struct zink_screen *screen)
+{
+   uint32_t before = p_atomic_read(&screen->cur_custom_border_color_samplers);
+   assert(before);
+   if (!before)
+      return;
+
+   p_atomic_dec(&screen->cur_custom_border_color_samplers);
+}
+
 static void *
 zink_create_sampler_state(struct pipe_context *pctx,
                           const struct pipe_sampler_state *state)
@@ -454,6 +465,7 @@ zink_create_sampler_state(struct pipe_context *pctx,
    ASSERTED struct zink_context *zink = zink_context(pctx);
    bool need_custom = false;
    bool need_clamped_border_color = false;
+   bool uses_custom_border_color = false;
    VkSamplerCreateInfo sci = {0};
    VkSamplerCustomBorderColorCreateInfoEXT cbci = {0};
    VkSamplerCustomBorderColorCreateInfoEXT cbci_clamped = {0};
@@ -582,6 +594,7 @@ zink_create_sampler_state(struct pipe_context *pctx,
          }
          cbci.pNext = sci.pNext;
          sci.pNext = &cbci;
+         uses_custom_border_color = true;
          UNUSED uint32_t check = p_atomic_inc_return(&screen->cur_custom_border_color_samplers);
          assert(check <= screen->info.border_color_props.maxCustomBorderColorSamplers);
       } else
@@ -594,12 +607,17 @@ zink_create_sampler_state(struct pipe_context *pctx,
    }
 
    struct zink_sampler_state *sampler = CALLOC_STRUCT(zink_sampler_state);
-   if (!sampler)
+   if (!sampler) {
+      if (uses_custom_border_color)
+         release_custom_border_color_sampler(screen);
       return NULL;
+   }
 
    VkResult result = VKSCR(CreateSampler)(screen->dev, &sci, NULL, &sampler->sampler);
    if (result != VK_SUCCESS) {
       mesa_loge("ZINK: vkCreateSampler failed (%s)", vk_Result_to_str(result));
+      if (uses_custom_border_color)
+         release_custom_border_color_sampler(screen);
       FREE(sampler);
       return NULL;
    }
@@ -609,11 +627,13 @@ zink_create_sampler_state(struct pipe_context *pctx,
       if (result != VK_SUCCESS) {
          mesa_loge("ZINK: vkCreateSampler failed (%s)", vk_Result_to_str(result));
          VKSCR(DestroySampler)(screen->dev, sampler->sampler, NULL);
+         if (uses_custom_border_color)
+            release_custom_border_color_sampler(screen);
          FREE(sampler);
          return NULL;
       }
    }
-   sampler->custom_border_color = need_custom;
+   sampler->custom_border_color = uses_custom_border_color;
    if (!screen->info.have_EXT_non_seamless_cube_map)
       sampler->emulate_nonseamless = !state->seamless_cube_map;
 
@@ -941,6 +961,7 @@ zink_delete_sampler_state(struct pipe_context *pctx,
                           void *sampler_state)
 {
    struct zink_sampler_state *sampler = sampler_state;
+   struct zink_screen *screen = zink_screen(pctx->screen);
    struct zink_batch_state *bs = zink_context(pctx)->bs;
    /* may be called if context_create fails */
    if (bs) {
@@ -949,7 +970,7 @@ zink_delete_sampler_state(struct pipe_context *pctx,
          util_dynarray_append(&bs->zombie_samplers, sampler->sampler_clamped);
    }
    if (sampler->custom_border_color)
-      p_atomic_dec(&zink_screen(pctx->screen)->cur_custom_border_color_samplers);
+      release_custom_border_color_sampler(screen);
    FREE(sampler);
 }
 

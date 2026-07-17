@@ -399,7 +399,20 @@ stw_st_flush(struct st_context_iface *stctx,
    args.stwfb = stwfb;
    args.flags = flags;
 
-   if (flags & ST_FLUSH_END_OF_FRAME && !stwfb->fb->winsys_framebuffer)
+   /* JUICE: upstream Mesa turns every end-of-frame flush without a winsys
+    * framebuffer into a full CPU drain (ST_FLUSH_WAIT -> vkWaitSemaphores,
+    * INFINITE). That is the primary SwapBuffers throttle and, over Juice's
+    * remote vkWaitSemaphores, a per-frame synchronous network round-trip that
+    * caps queue depth at one frame in flight. It is only needed for the
+    * software-present path (softpipe/llvmpipe gdi_sw_display), which reads the
+    * rendered pixels back on the CPU. Zink presents via kopper:
+    * zink_kopper_present_queue submits a VkPresentInfoKHR that waits on the
+    * render-complete semaphore GPU-side and runs async on the flush queue, so
+    * the CPU drain is redundant. Skip it for zink and let swapchain-image
+    * acquisition (vkAcquireNextImageKHR) provide back-pressure, which is what
+    * enables frame queue-ahead. */
+   if (flags & ST_FLUSH_END_OF_FRAME && !stwfb->fb->winsys_framebuffer &&
+       !stw_dev->zink)
       flags |= ST_FLUSH_WAIT;
 
    if (flags & ST_FLUSH_WAIT)

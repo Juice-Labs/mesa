@@ -450,13 +450,20 @@ stw_make_current(struct stw_framebuffer *fb, struct stw_framebuffer *fbRead, str
             /* Using a winsys framebuffer effectively means that there's sharing since another
              * context might end up using the same resources. */
             (old_ctx->current_framebuffer && old_ctx->current_framebuffer->winsys_framebuffer)) {
+            /* JUICE: dropped ST_FLUSH_WAIT here. Upstream Mesa fully drains the
+             * GPU (vkWaitSemaphores, INFINITE) on every switch away from a
+             * shared context to retire shared-resource work before another
+             * context uses it. That CPU stall is a hard CPU<->GPU barrier and,
+             * over Juice's remote vkWaitSemaphores, a synchronous network
+             * round-trip on the render thread's critical path — it defeats
+             * frame queue-ahead. Flush (still needed so the work is submitted)
+             * but do not block; rely on zink's per-batch timeline semaphores to
+             * order cross-context resource access GPU-side. */
             if (old_ctx->current_framebuffer) {
                stw_st_flush(old_ctx->st, old_ctx->current_framebuffer->drawable,
-                            ST_FLUSH_FRONT | ST_FLUSH_WAIT);
+                            ST_FLUSH_FRONT);
             } else {
-               struct pipe_fence_handle *fence = NULL;
-               st_context_flush(old_ctx->st,
-                                ST_FLUSH_FRONT | ST_FLUSH_WAIT, &fence,
+               st_context_flush(old_ctx->st, ST_FLUSH_FRONT, NULL,
                                 NULL, NULL);
             }
          } else {

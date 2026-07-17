@@ -442,13 +442,20 @@ stw_make_current(struct stw_framebuffer *fb, struct stw_framebuffer *fbRead, str
          }
       } else {
          if (old_ctx->shared) {
+            /* JUICE: dropped ST_FLUSH_WAIT here. Upstream Mesa fully drains the
+             * GPU (vkWaitSemaphores, INFINITE) on every switch away from a
+             * shared context to retire shared-resource work before another
+             * context uses it. That CPU stall is a hard CPU<->GPU barrier and,
+             * over Juice's remote vkWaitSemaphores, a synchronous network
+             * round-trip on the render thread's critical path — it defeats
+             * frame queue-ahead. Flush (still needed so the work is submitted)
+             * but do not block; rely on zink's per-batch timeline semaphores to
+             * order cross-context resource access GPU-side. */
             if (old_ctx->current_framebuffer) {
                stw_st_flush(old_ctx->st, old_ctx->current_framebuffer->stfb,
-                            ST_FLUSH_FRONT | ST_FLUSH_WAIT);
+                            ST_FLUSH_FRONT);
             } else {
-               struct pipe_fence_handle *fence = NULL;
-               old_ctx->st->flush(old_ctx->st,
-                                  ST_FLUSH_FRONT | ST_FLUSH_WAIT, &fence,
+               old_ctx->st->flush(old_ctx->st, ST_FLUSH_FRONT, NULL,
                                   NULL, NULL);
             }
          } else {

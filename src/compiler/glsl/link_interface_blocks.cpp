@@ -42,25 +42,54 @@ namespace {
  */
 static bool
 interstage_member_mismatch(struct gl_shader_program *prog,
-                           const glsl_type *c, const glsl_type *p) {
+                           const glsl_type *c, const glsl_type *p,
+                           bool allow_subset) {
 
-   if (c->length != p->length)
+   /* Compatibility relaxation: across a stage boundary, let a built-in block
+    * (gl_PerVertex) be redeclared with a subset of its members, matching by
+    * name and allowing the producer extras. Whether the spec requires an exact
+    * match here is unsettled -- GLSL 7.1 permits subset redeclaration, GL 7.4.1
+    * interface matching is read as forbidding it, and glslang has the same
+    * argument open (KhronosGroup/glslang#2578). NVIDIA and AMD accept it and
+    * real content depends on it, so prefer the permissive reading.
+    *
+    * Interstage callers only; intrastage matching stays exact, as the GL 4.6
+    * rule quoted below does unambiguously require.
+    */
+   const bool builtin_block =
+      allow_subset && c->name && strncmp(c->name, "gl_", 3) == 0;
+
+   if (!builtin_block && c->length != p->length)
       return true;
 
    for (unsigned i = 0; i < c->length; i++) {
-      if (c->fields.structure[i].type != p->fields.structure[i].type)
-         return true;
-      if (strcmp(c->fields.structure[i].name,
-                 p->fields.structure[i].name) != 0)
+      /* Matching producer member: same index, or by name for built-ins. */
+      unsigned j = i;
+
+      if (builtin_block) {
+         for (j = 0; j < p->length; j++) {
+            if (strcmp(c->fields.structure[i].name,
+                       p->fields.structure[j].name) == 0)
+               break;
+         }
+         if (j == p->length)
+            return true;
+      } else {
+         if (strcmp(c->fields.structure[i].name,
+                    p->fields.structure[j].name) != 0)
+            return true;
+      }
+
+      if (c->fields.structure[i].type != p->fields.structure[j].type)
          return true;
       if (c->fields.structure[i].location !=
-          p->fields.structure[i].location)
+          p->fields.structure[j].location)
          return true;
       if (c->fields.structure[i].component !=
-          p->fields.structure[i].component)
+          p->fields.structure[j].component)
          return true;
       if (c->fields.structure[i].patch !=
-          p->fields.structure[i].patch)
+          p->fields.structure[j].patch)
          return true;
 
       /* From Section 4.5 (Interpolation Qualifiers) of the GLSL 4.40 spec:
@@ -71,7 +100,7 @@ interstage_member_mismatch(struct gl_shader_program *prog,
        */
       if (prog->IsES || prog->data->Version < 440)
          if (c->fields.structure[i].interpolation !=
-             p->fields.structure[i].interpolation)
+             p->fields.structure[j].interpolation)
             return true;
 
       /* From Section 4.3.4 (Input Variables) of the GLSL ES 3.0 spec:
@@ -90,11 +119,11 @@ interstage_member_mismatch(struct gl_shader_program *prog,
        */
       if (!prog->IsES || prog->data->Version < 310)
          if (c->fields.structure[i].centroid !=
-             p->fields.structure[i].centroid)
+             p->fields.structure[j].centroid)
             return true;
       if (!prog->IsES)
          if (c->fields.structure[i].sample !=
-             p->fields.structure[i].sample)
+             p->fields.structure[j].sample)
             return true;
    }
 
@@ -133,7 +162,7 @@ intrastage_match(ir_variable *a,
            b->data.how_declared != ir_var_declared_implicitly) &&
           (!prog->IsES ||
            interstage_member_mismatch(prog, a->get_interface_type(),
-                                      b->get_interface_type())))
+                                      b->get_interface_type(), false)))
          return false;
    }
 
@@ -192,7 +221,7 @@ interstage_match(struct gl_shader_program *prog, ir_variable *producer,
       if ((consumer->data.how_declared != ir_var_declared_implicitly ||
            producer->data.how_declared != ir_var_declared_implicitly) &&
           interstage_member_mismatch(prog, consumer->get_interface_type(),
-                                     producer->get_interface_type()))
+                                     producer->get_interface_type(), true))
          return false;
    }
 
@@ -409,7 +438,7 @@ validate_interstage_inout_blocks(struct gl_shader_program *prog,
                                        ir_var_shader_out);
 
    if (producer_iface && consumer_iface &&
-       interstage_member_mismatch(prog, consumer_iface, producer_iface)) {
+       interstage_member_mismatch(prog, consumer_iface, producer_iface, true)) {
       linker_error(prog, "Incompatible or missing gl_PerVertex re-declaration "
                    "in consecutive shaders");
       return;

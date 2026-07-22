@@ -1125,6 +1125,8 @@ struct zink_resource {
    bool swapchain;
    bool dmabuf_acquire;
    bool dmabuf;
+   /* imported via ZINK_EXTERNAL_MEMORY_HANDLE (opaque Win32 external memory) */
+   bool external_mem;
    unsigned dt_stride;
 
    uint8_t modifiers_count;

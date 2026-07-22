@@ -1967,6 +1967,7 @@ resource_create(struct pipe_screen *pscreen,
       res->dmabuf = whandle && whandle->type == WINSYS_HANDLE_TYPE_FD;
       if (res->dmabuf)
          res->queue = VK_QUEUE_FAMILY_FOREIGN_EXT;
+      res->external_mem = whandle && whandle->type == ZINK_EXTERNAL_MEMORY_HANDLE;
       res->layout = res->dmabuf ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
       res->linear = linear;
       res->aspect = aspect_from_format(templ->format);

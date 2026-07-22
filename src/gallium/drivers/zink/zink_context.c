@@ -4968,6 +4968,13 @@ zink_flush_resource(struct pipe_context *pctx,
       ctx->swapchain = res;
    } else if (res->dmabuf)
       res->queue = VK_QUEUE_FAMILY_FOREIGN_EXT;
+   else if (res->external_mem) {
+      /* st calls flush_resource() after fence_server_sync() for each glWaitSemaphoreEXT texture
+       * barrier. Take a batch ref so the resource outlives the batch carrying that wait; without
+       * it nothing references the resource and glDeleteMemoryObjectsEXT frees it while the
+       * exporting API may still be writing. */
+      zink_batch_reference_resource_rw(ctx, res, false);
+   }
 }
 
 static struct pipe_stream_output_target *

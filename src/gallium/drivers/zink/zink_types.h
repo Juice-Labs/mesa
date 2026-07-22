@@ -1342,6 +1342,8 @@ struct zink_resource {
    bool dmabuf;
    bool unflushed_transient; //format view transient has newer data than parent
    bool subdata; //doing subdata call
+   /* imported via ZINK_EXTERNAL_MEMORY_HANDLE (opaque Win32 external memory) */
+   bool external_mem;
    unsigned dt_stride;
 
    uint8_t modifiers_count;

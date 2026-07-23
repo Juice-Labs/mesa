@@ -2005,6 +2005,25 @@ zink_set_sampler_views(struct pipe_context *pctx,
    }
 }
 
+/*
+ * util_idalloc_alloc grows past the initial size. Bindless CPU/GPU tables are
+ * fixed at ZINK_MAX_BINDLESS_HANDLES — refuse overflow so we never OOB-write
+ * img_handle_bindings[] (VRED export smash).
+ */
+static bool
+juice_bindless_alloc_slot(struct util_idalloc *slots, unsigned *out_slot)
+{
+   unsigned slot = util_idalloc_alloc(slots);
+   if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
+      util_idalloc_free(slots, slot);
+      mesa_loge("ZINK BINDLESS: handle table full (max=%u); rejecting create",
+                ZINK_MAX_BINDLESS_HANDLES);
+      return false;
+   }
+   *out_slot = slot;
+   return true;
+}
+
 /* CIS tuple binding (dim, is_array, is_shadow) for a sampler-view bindless
  * handle; recorded at create time as the primary binding for its descriptor
  * write (which still fans out to every tuple binding, see update_bindless). */
@@ -2054,7 +2073,19 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
       zink_buffer_view_reference(zink_screen(pctx->screen), &bd->ds.bufferview, sv->buffer_view);
    else
       zink_surface_reference(zink_screen(pctx->screen), &bd->ds.surface, sv->image_view);
-   uint64_t handle = util_idalloc_alloc(&ctx->di.bindless[bd->ds.is_buffer].tex_slots);
+
+   unsigned slot;
+   if (!juice_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].tex_slots, &slot)) {
+      if (bd->ds.is_buffer)
+         zink_buffer_view_reference(zink_screen(pctx->screen), &bd->ds.bufferview, NULL);
+      else
+         zink_surface_reference(zink_screen(pctx->screen), &bd->ds.surface, NULL);
+      pctx->delete_sampler_state(pctx, bd->sampler);
+      free(bd);
+      return 0;
+   }
+
+   uint64_t handle = slot;
    if (bd->ds.is_buffer)
       handle += ZINK_MAX_BINDLESS_HANDLES;
    bd->handle = handle;
@@ -2066,10 +2097,9 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
     * looks up buf_handle_bindings on the same side, so both branches write
     * the bindless[0] arrays. */
    if (!bd->ds.is_buffer) {
-      ctx->di.bindless[0].img_handle_bindings[handle] =
+      ctx->di.bindless[0].img_handle_bindings[slot] =
          juice_tex_handle_tuple_binding(view, state);
    } else {
-      uint64_t slot = handle - ZINK_MAX_BINDLESS_HANDLES;
       ctx->di.bindless[0].buf_handle_bindings[slot] =
          ZINK_BINDLESS_UTEX_BINDING;
    }
@@ -2253,7 +2283,18 @@ zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view
       bd->ds.bufferview = create_image_bufferview(ctx, view);
    else
       bd->ds.surface = create_image_surface(ctx, view, false);
-   uint64_t handle = util_idalloc_alloc(&ctx->di.bindless[bd->ds.is_buffer].img_slots);
+
+   unsigned slot;
+   if (!juice_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].img_slots, &slot)) {
+      if (bd->ds.is_buffer)
+         zink_buffer_view_reference(zink_screen(pctx->screen), &bd->ds.bufferview, NULL);
+      else
+         zink_surface_reference(zink_screen(pctx->screen), &bd->ds.surface, NULL);
+      free(bd);
+      return 0;
+   }
+
+   uint64_t handle = slot;
    if (bd->ds.is_buffer)
       handle += ZINK_MAX_BINDLESS_HANDLES;
    bd->handle = handle;
@@ -2264,10 +2305,9 @@ zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view
     * zink_make_image_handle_resident), so both branches write the
     * bindless[1] arrays. */
    if (!bd->ds.is_buffer) {
-      ctx->di.bindless[1].img_handle_bindings[handle] =
+      ctx->di.bindless[1].img_handle_bindings[slot] =
          juice_img_handle_tuple_binding(view);
    } else {
-      uint64_t slot = handle - ZINK_MAX_BINDLESS_HANDLES;
       ctx->di.bindless[1].buf_handle_bindings[slot] =
          ZINK_BINDLESS_STEX_BINDING;
    }

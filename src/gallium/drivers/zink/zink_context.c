@@ -2615,7 +2615,7 @@ zink_set_sampler_views(struct pipe_context *pctx,
  * img_handle_bindings[] (VRED export smash).
  */
 static bool
-juice_bindless_alloc_slot(struct util_idalloc *slots, unsigned *out_slot)
+zink_bindless_alloc_slot(struct util_idalloc *slots, unsigned *out_slot)
 {
    unsigned slot = util_idalloc_alloc(slots);
    if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
@@ -2687,7 +2687,7 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
    }
 
    unsigned slot;
-   if (!juice_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].tex_slots, &slot)) {
+   if (!zink_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].tex_slots, &slot)) {
       pipe_resource_reference(&bd->pres, NULL);
       pctx->delete_sampler_state(pctx, bd->sampler);
       free(bd);
@@ -2919,7 +2919,7 @@ zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view
    }
 
    unsigned slot;
-   if (!juice_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].img_slots, &slot)) {
+   if (!zink_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].img_slots, &slot)) {
       pipe_resource_reference(&bd->pres, NULL);
       free(bd);
       return 0;

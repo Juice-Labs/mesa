@@ -265,6 +265,13 @@ zink_context_destroy(struct pipe_context *pctx)
       _mesa_hash_table_clear(&ctx->mesh_cache[i], NULL);
    for (unsigned i = 0; i < ARRAY_SIZE(ctx->mesh_lock); i++)
       simple_mtx_destroy(&ctx->mesh_lock[i]);
+   /* handles are gone by now, so only the entries themselves need freeing */
+   if (ctx->bindless_sampler_cache) {
+      hash_table_foreach(ctx->bindless_sampler_cache, he)
+         free(he->data);
+      _mesa_hash_table_destroy(ctx->bindless_sampler_cache, NULL);
+      ctx->bindless_sampler_cache = NULL;
+   }
    slab_destroy_child(&ctx->transfer_pool_unsync);
 
    zink_descriptors_deinit(ctx);
@@ -2655,6 +2662,95 @@ juice_tex_handle_tuple_binding(struct pipe_sampler_view *view,
                                     dim, is_array, is_shadow);
 }
 
+/* bindless handles are destroyed and recreated wholesale by
+ * st_make_bound_samplers_resident() on every update, so cache the sampler states
+ * they use instead of creating a new one each time. this path never goes through
+ * the cso cache.
+ *
+ * border_color_format is only used by PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_FREEDRENO,
+ * so key on the same bytes cso_context.c does
+ */
+#define BINDLESS_SAMPLER_KEY_SIZE offsetof(struct pipe_sampler_state, border_color_format)
+
+static uint32_t
+bindless_sampler_hash(const void *key)
+{
+   return _mesa_hash_data(key, BINDLESS_SAMPLER_KEY_SIZE);
+}
+
+static bool
+bindless_sampler_equals(const void *a, const void *b)
+{
+   return !memcmp(a, b, BINDLESS_SAMPLER_KEY_SIZE);
+}
+
+static struct zink_sampler_state *
+bindless_sampler_get(struct zink_context *ctx, const struct pipe_sampler_state *state,
+                     struct zink_bindless_sampler_entry **entry)
+{
+   *entry = NULL;
+
+   if (!ctx->bindless_sampler_cache)
+      return ctx->base.create_sampler_state(&ctx->base, state);
+
+   struct hash_entry *he = _mesa_hash_table_search(ctx->bindless_sampler_cache, state);
+   if (he) {
+      struct zink_bindless_sampler_entry *e = he->data;
+      e->refcount++;
+      *entry = e;
+      return e->sampler;
+   }
+
+   /* unreferenced entries are kept for reuse, so prune them here to avoid
+    * ballooning: each one holds up to two live VkSamplers
+    */
+   if (_mesa_hash_table_num_entries(ctx->bindless_sampler_cache) >= ZINK_MAX_BINDLESS_SAMPLER_CACHE) {
+      hash_table_foreach(ctx->bindless_sampler_cache, he2) {
+         struct zink_bindless_sampler_entry *e = he2->data;
+         if (e->refcount)
+            continue;
+         _mesa_hash_table_remove(ctx->bindless_sampler_cache, he2);
+         ctx->base.delete_sampler_state(&ctx->base, e->sampler);
+         free(e);
+      }
+   }
+
+   struct zink_bindless_sampler_entry *e = CALLOC_STRUCT(zink_bindless_sampler_entry);
+   if (!e)
+      return ctx->base.create_sampler_state(&ctx->base, state);
+
+   e->sampler = ctx->base.create_sampler_state(&ctx->base, state);
+   if (!e->sampler) {
+      free(e);
+      return NULL;
+   }
+   e->state = *state;
+   e->refcount = 1;
+   /* the key is the entry's own copy so it outlives the caller */
+   _mesa_hash_table_insert(ctx->bindless_sampler_cache, &e->state, e);
+   *entry = e;
+   return e->sampler;
+}
+
+static void
+bindless_sampler_put(struct zink_context *ctx, struct zink_bindless_descriptor *bd)
+{
+   struct zink_bindless_sampler_entry *e = bd->sampler_entry;
+
+   if (!e) {
+      /* not cached: no table, or the entry alloc failed */
+      if (bd->sampler)
+         ctx->base.delete_sampler_state(&ctx->base, bd->sampler);
+      return;
+   }
+
+   /* deliberately not destroyed at zero: the handle is usually recreated
+    * immediately afterwards and would otherwise miss
+    */
+   assert(e->refcount);
+   e->refcount--;
+}
+
 static uint64_t
 zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *view, const struct pipe_sampler_state *state)
 {
@@ -2666,7 +2762,7 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
    if (!bd)
       return 0;
 
-   bd->sampler = pctx->create_sampler_state(pctx, state);
+   bd->sampler = bindless_sampler_get(ctx, state, &bd->sampler_entry);
    if (!bd->sampler) {
       free(bd);
       return 0;
@@ -2689,7 +2785,7 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
    unsigned slot;
    if (!zink_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].tex_slots, &slot)) {
       pipe_resource_reference(&bd->pres, NULL);
-      pctx->delete_sampler_state(pctx, bd->sampler);
+      bindless_sampler_put(ctx, bd);
       free(bd);
       return 0;
    }
@@ -2738,7 +2834,7 @@ zink_delete_texture_handle(struct pipe_context *pctx, uint64_t handle)
    util_dynarray_append(&ctx->bs->bindless_releases[0], h);
 
    pipe_resource_reference(&bd->pres, NULL);
-   pctx->delete_sampler_state(pctx, bd->sampler);
+      bindless_sampler_put(ctx, bd);
    free(ds);
 }
 
@@ -6408,6 +6504,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    if (!is_copy_only && !is_compute_only) {
       ctx->base.create_texture_handle = zink_create_texture_handle;
       ctx->base.delete_texture_handle = zink_delete_texture_handle;
+      ctx->bindless_sampler_cache = _mesa_hash_table_create(NULL, bindless_sampler_hash,
+                                                            bindless_sampler_equals);
       ctx->base.make_texture_handle_resident = zink_make_texture_handle_resident;
       ctx->base.create_image_handle = zink_create_image_handle;
       ctx->base.delete_image_handle = zink_delete_image_handle;

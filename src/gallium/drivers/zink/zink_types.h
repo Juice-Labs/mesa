@@ -100,6 +100,9 @@
 #define ZINK_BINDLESS_STEX_BINDING  37
 #define ZINK_BINDLESS_NUM_BINDINGS  38
 
+/* unreferenced bindless sampler cache entries are pruned past this */
+#define ZINK_MAX_BINDLESS_SAMPLER_CACHE 1024
+
 /* enum zink_descriptor_type */
 #define ZINK_MAX_DESCRIPTOR_SETS 6
 #define ZINK_MAX_DESCRIPTORS_PER_TYPE (32 * ZINK_GFX_SHADER_COUNT)
@@ -1704,10 +1707,18 @@ struct zink_descriptor_surface {
    bool is_buffer;
 };
 
+/* cached sampler state for bindless handles, refcounted by the handles using it */
+struct zink_bindless_sampler_entry {
+   struct pipe_sampler_state state;
+   struct zink_sampler_state *sampler;
+   unsigned refcount;
+};
+
 struct zink_bindless_descriptor {
    struct zink_descriptor_surface ds;
    struct pipe_resource *pres;
    struct zink_sampler_state *sampler;
+   struct zink_bindless_sampler_entry *sampler_entry; //null if not cached
    uint32_t handle;
    uint32_t access; //PIPE_ACCESS_...
    uint16_t first_layer;
@@ -1844,6 +1855,7 @@ struct zink_context {
    uint32_t fb_layer_mismatch; //bitmask
    struct set rendering_state_cache[6]; //[util_logbase2_ceil(msrtss samplecount)]
    struct zink_resource *swapchain;
+   struct hash_table *bindless_sampler_cache; //pipe_sampler_state -> zink_bindless_sampler_entry
    VkExtent2D swapchain_size;
    bool awaiting_resolve; //from tc info
    bool in_rp; //renderpass is currently active

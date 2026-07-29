@@ -76,6 +76,8 @@
  * paths must reject slot >= ZINK_MAX_BINDLESS_HANDLES to avoid OOB writes
  * into img_handle_bindings / related arrays. */
 #define ZINK_MAX_BINDLESS_HANDLES 32768
+/* unreferenced bindless sampler cache entries are pruned past this */
+#define ZINK_MAX_BINDLESS_SAMPLER_CACHE 1024
 
 /* enum zink_descriptor_type */
 #define ZINK_MAX_DESCRIPTOR_SETS 6
@@ -1435,9 +1437,17 @@ struct zink_descriptor_surface {
    bool is_buffer;
 };
 
+/* cached sampler state for bindless handles, refcounted by the handles using it */
+struct zink_bindless_sampler_entry {
+   struct pipe_sampler_state state;
+   struct zink_sampler_state *sampler;
+   unsigned refcount;
+};
+
 struct zink_bindless_descriptor {
    struct zink_descriptor_surface ds;
    struct zink_sampler_state *sampler;
+   struct zink_bindless_sampler_entry *sampler_entry; //null if not cached
    uint32_t handle;
    uint32_t access; //PIPE_ACCESS_...
 };
@@ -1539,6 +1549,7 @@ struct zink_context {
    struct set rendering_state_cache;
    struct set render_pass_state_cache;
    struct hash_table *render_pass_cache;
+   struct hash_table *bindless_sampler_cache; //pipe_sampler_state -> zink_bindless_sampler_entry
    VkExtent2D swapchain_size;
    bool fb_changed;
    bool rp_changed; //force renderpass restart

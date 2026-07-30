@@ -2018,12 +2018,32 @@ zink_set_sampler_views(struct pipe_context *pctx,
  * img_handle_bindings[] (VRED export smash).
  */
 static bool
-zink_bindless_alloc_slot(struct util_idalloc *slots, unsigned *out_slot)
+zink_bindless_alloc_slot(struct zink_context *ctx, struct util_idalloc *slots, unsigned *out_slot)
 {
    unsigned slot = util_idalloc_alloc(slots);
+   if (slot < ZINK_MAX_BINDLESS_HANDLES) {
+      *out_slot = slot;
+      return true;
+   }
+   util_idalloc_free(slots, slot);
+
+   /* deleted handles only return their slot id when the owning batch state is reset, so a table
+    * that looks full is usually mostly free ids awaiting reclamation. reclaim before giving up:
+    * rejecting the create returns handle 0 to the app, which then samples an unbound slot - and
+    * because the shortfall grows with the number of batches in flight, it degrades run over run
+    */
+   zink_reclaim_finished_batch_states(ctx, false);
+   slot = util_idalloc_alloc(slots);
    if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
       util_idalloc_free(slots, slot);
-      mesa_loge("ZINK BINDLESS: handle table full (max=%u); rejecting create",
+      /* stalling on the oldest submitted batch beats handing back a broken handle */
+      zink_reclaim_finished_batch_states(ctx, true);
+      slot = util_idalloc_alloc(slots);
+   }
+
+   if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
+      util_idalloc_free(slots, slot);
+      mesa_loge("ZINK BINDLESS: handle table full (max=%u) after reclaim; rejecting create",
                 ZINK_MAX_BINDLESS_HANDLES);
       return false;
    }
@@ -2171,7 +2191,7 @@ zink_create_texture_handle(struct pipe_context *pctx, struct pipe_sampler_view *
       zink_surface_reference(zink_screen(pctx->screen), &bd->ds.surface, sv->image_view);
 
    unsigned slot;
-   if (!zink_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].tex_slots, &slot)) {
+   if (!zink_bindless_alloc_slot(ctx, &ctx->di.bindless[bd->ds.is_buffer].tex_slots, &slot)) {
       if (bd->ds.is_buffer)
          zink_buffer_view_reference(zink_screen(pctx->screen), &bd->ds.bufferview, NULL);
       else
@@ -2381,7 +2401,7 @@ zink_create_image_handle(struct pipe_context *pctx, const struct pipe_image_view
       bd->ds.surface = create_image_surface(ctx, view, false);
 
    unsigned slot;
-   if (!zink_bindless_alloc_slot(&ctx->di.bindless[bd->ds.is_buffer].img_slots, &slot)) {
+   if (!zink_bindless_alloc_slot(ctx, &ctx->di.bindless[bd->ds.is_buffer].img_slots, &slot)) {
       if (bd->ds.is_buffer)
          zink_buffer_view_reference(zink_screen(pctx->screen), &bd->ds.bufferview, NULL);
       else

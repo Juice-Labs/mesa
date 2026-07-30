@@ -42,11 +42,33 @@
 
 // Wine/Juice logging support - similar to vkd3d and dxvk
 typedef int (*PFN_juice_log)(const char *);
+/* Exported by RemoteGPUVlk.dll next to __wine_dbg_output, which can only log at
+ * Debug. Both initialize the client, so either is safe as the first call in. */
+typedef int (*PFN_juice_get_log_level)(void);
+typedef int (*PFN_juice_log_output)(int level, const char *);
 static PFN_juice_log juice_log_output = NULL;
+static PFN_juice_get_log_level juice_get_log_level = NULL;
+static PFN_juice_log_output juice_log_level_output = NULL;
 static int juice_log_initialized = 0;
 
+/* Cached because the client sets it once at startup and never changes it, which
+ * keeps the per-message filter an integer compare - zink calls mesa_logi() on
+ * per-draw paths. -1 means no Juice client, in which case nothing is filtered. */
+static int juice_log_level = -1;
+
+/* Levels as Juice_GetLogLevel() reports them and Juice_LogOutput() takes them.
+ * A level is enabled when it is <= the configured one. */
+#define JUICE_LOG_LEVEL_FATAL   0
+#define JUICE_LOG_LEVEL_NOTIFY  1
+#define JUICE_LOG_LEVEL_ERROR   2
+#define JUICE_LOG_LEVEL_WARNING 3
+#define JUICE_LOG_LEVEL_INFO    4
+#define JUICE_LOG_LEVEL_DEBUG   5
+#define JUICE_LOG_LEVEL_TRACE   9
+
 #if defined(_WIN32)
-/* Load RemoteGPUVlk.dll the same way as KnownPaths (shim dir / graphics / DLL). */
+/* Load RemoteGPUVlk.dll: already loaded, then the default search path, then the
+ * graphics/ directory of the install root this DLL sits under. */
 HMODULE
 mesa_juice_load_remote_gpu_vlk(void)
 {
@@ -146,19 +168,187 @@ level_to_str(enum mesa_log_level l)
 }
 #endif
 
+/* MESA_LOG_INFO is deliberately mapped to Debug, not Info: mesa_logi() is not
+ * informational in this tree, zink uses it for per-draw tracing at tens of
+ * thousands of lines a frame. */
+static int
+level_to_juice_level(enum mesa_log_level l)
+{
+   switch (l) {
+   case MESA_LOG_ERROR: return JUICE_LOG_LEVEL_ERROR;
+   case MESA_LOG_WARN:  return JUICE_LOG_LEVEL_WARNING;
+   case MESA_LOG_INFO:  return JUICE_LOG_LEVEL_DEBUG;
+   case MESA_LOG_DEBUG: return JUICE_LOG_LEVEL_DEBUG;
+   }
+   return JUICE_LOG_LEVEL_DEBUG;
+}
+
+static const char *
+juice_level_name(int level)
+{
+   switch (level) {
+   case JUICE_LOG_LEVEL_FATAL:   return "Fatal";
+   case JUICE_LOG_LEVEL_NOTIFY:  return "Notify";
+   case JUICE_LOG_LEVEL_ERROR:   return "Error";
+   case JUICE_LOG_LEVEL_WARNING: return "Warning";
+   case JUICE_LOG_LEVEL_INFO:    return "Info";
+   case JUICE_LOG_LEVEL_DEBUG:   return "Debug";
+   case 6:                       return "Debug1";
+   case 7:                       return "Debug2";
+   case 8:                       return "Debug3";
+   case JUICE_LOG_LEVEL_TRACE:   return "Trace";
+   default:                      return "unknown";
+   }
+}
+
+static bool
+juice_sink_active(void)
+{
+   return juice_log_level_output != NULL || juice_log_output != NULL;
+}
+
+/* Juice_LogOutput records the level itself, so text going there must not
+ * repeat it. */
+static bool
+juice_leveled_sink_active(void)
+{
+   return juice_log_level_output != NULL;
+}
+
+/* Announce the level mesa is filtering against, so a missing message can be
+ * told apart from a suppressed one. */
+static void
+report_juice_log_level(void)
+{
+   if (juice_log_level < 0) {
+      /* Logged as an error precisely because that is the only thing
+       * mesa_log_level_enabled() still lets through in this case. */
+      if (juice_sink_active())
+         mesa_log(MESA_LOG_ERROR, MESA_LOG_TAG,
+                  "JUICE logging: Juice_GetLogLevel unavailable, "
+                  "limiting mesa logging to errors");
+      return;
+   }
+
+   /* Probed rather than derived, so it stays right as level_to_juice_level()
+    * changes - MESA_LOG_INFO does not map to Info. */
+   enum mesa_log_level banner = MESA_LOG_ERROR;
+   if (mesa_log_level_enabled(MESA_LOG_DEBUG))
+      banner = MESA_LOG_DEBUG;
+   else if (mesa_log_level_enabled(MESA_LOG_INFO))
+      banner = MESA_LOG_INFO;
+   else if (mesa_log_level_enabled(MESA_LOG_WARN))
+      banner = MESA_LOG_WARN;
+
+   mesa_log(banner, MESA_LOG_TAG,
+            "logging enabled: client level=%s(%d), sink=%s"
+            " -> mesa error=%s warn=%s info=%s debug=%s",
+            juice_level_name(juice_log_level), juice_log_level,
+            juice_log_level_output ? "Juice_LogOutput"
+                                   : "__wine_dbg_output (all messages filed as Debug)",
+            mesa_log_level_enabled(MESA_LOG_ERROR) ? "on" : "off",
+            mesa_log_level_enabled(MESA_LOG_WARN)  ? "on" : "off",
+            mesa_log_level_enabled(MESA_LOG_INFO)  ? "on" : "off",
+            mesa_log_level_enabled(MESA_LOG_DEBUG) ? "on" : "off");
+}
+
+/* Stock mesa's log destination (docs/envvars.rst). When set it takes over
+ * completely: no Juice routing and no level filtering. */
+static FILE *
+mesa_log_file_override(void)
+{
+   static FILE *file;
+   static bool checked;
+
+   if (!checked) {
+      const char *path = getenv("MESA_LOG_FILE");
+      if (path && *path)
+         file = fopen(path, "w");
+      checked = true;
+   }
+   return file;
+}
+
 static void
 init_juice_logging(void)
 {
    if (juice_log_initialized)
       return;
-      
+
+   /* Leaving every juice_* pointer NULL is what disables the routing. */
+   if (mesa_log_file_override()) {
+      juice_log_initialized = 1;
+      return;
+   }
+
 #if defined(_WIN32)
    HMODULE juicevlk = mesa_juice_load_remote_gpu_vlk();
-   if (juicevlk)
+   if (juicevlk) {
       juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
+      juice_get_log_level = (PFN_juice_get_log_level)
+         GetProcAddress(juicevlk, "Juice_GetLogLevel");
+      juice_log_level_output = (PFN_juice_log_output)
+         GetProcAddress(juicevlk, "Juice_LogOutput");
+   }
+
+   /* Must be called even when the level is not wanted: it is what brings the
+    * client up. Until it has been, the level reads back as the lowest one and
+    * everything mesa logs is filtered out. */
+   if (juice_get_log_level)
+      juice_log_level = juice_get_log_level();
 #endif
-   
+
+   /* Set before reporting: the report logs, and every log re-enters here. */
    juice_log_initialized = 1;
+
+   report_juice_log_level();
+}
+
+bool
+mesa_log_level_enabled(enum mesa_log_level level)
+{
+   init_juice_logging();
+
+   if (juice_log_level >= 0)
+      return level_to_juice_level(level) <= juice_log_level;
+
+   /* Level unknown, ie an ICD too old to export Juice_GetLogLevel. Keep errors
+    * so real failures still surface, but not zink's per-draw spew. With no
+    * Juice sink there is nothing to flood and stock mesa never filtered. */
+   if (juice_sink_active())
+      return level == MESA_LOG_ERROR;
+
+   return true;
+}
+
+static void
+mesa_log_emit(enum mesa_log_level level, const char *text)
+{
+   if (juice_log_level_output) {
+      juice_log_level_output(level_to_juice_level(level), text);
+      return;
+   }
+
+   /* Older ICD without Juice_LogOutput: everything lands at Debug. */
+   if (juice_log_output) {
+      juice_log_output(text);
+      return;
+   }
+
+   FILE *out = mesa_log_file_override();
+   if (!out)
+      out = stderr;
+   fputs(text, out);
+   fflush(out);
+}
+
+void
+mesa_log_write(enum mesa_log_level level, const char *text)
+{
+   if (!mesa_log_level_enabled(level))
+      return;
+
+   mesa_log_emit(level, text);
 }
 
 void
@@ -177,38 +367,39 @@ mesa_log_v(enum mesa_log_level level, const char *tag, const char *format,
 {
    char buf[4096];  // Buffer for the complete log message
    char msg[4096];  // Buffer for the formatted message part
-   
-   // Initialize juice logging if not already done
-   init_juice_logging();
-   
-   // If juice logging is not available, don't output anything
-   if (!juice_log_output)
+
+   /* Filtered before formatting: zink calls mesa_logi() per draw, and the two
+    * formatting passes below are not worth paying to then discard. */
+   if (!mesa_log_level_enabled(level))
       return;
-   
+
    // Format the message part first
    vsnprintf(msg, sizeof(msg), format, va);
-   
-   // Create the complete log message with tag and level
+
+   /* Only the non-leveled sinks need the level spelled out in the text. */
+   if (juice_leveled_sink_active()) {
+      snprintf(buf, sizeof(buf), "%s: %s", tag, msg);
+   } else {
 #ifdef ANDROID
-   snprintf(buf, sizeof(buf), "%s: %s: %s", tag, 
-           level == MESA_LOG_ERROR ? "error" :
-           level == MESA_LOG_WARN ? "warning" :
-           level == MESA_LOG_INFO ? "info" : "debug", msg);
+      snprintf(buf, sizeof(buf), "%s: %s: %s", tag,
+              level == MESA_LOG_ERROR ? "error" :
+              level == MESA_LOG_WARN ? "warning" :
+              level == MESA_LOG_INFO ? "info" : "debug", msg);
 #else
-   snprintf(buf, sizeof(buf), "%s: %s: %s", tag, level_to_str(level), msg);
+      snprintf(buf, sizeof(buf), "%s: %s: %s", tag, level_to_str(level), msg);
 #endif
-   
-   // Ensure newline at end if not present
-   size_t len = strlen(buf);
-   if (len > 0 && buf[len - 1] != '\n') {
-      if (len < sizeof(buf) - 1) {
-         buf[len] = '\n';
-         buf[len + 1] = '\0';
+
+      // Ensure newline at end if not present
+      size_t len = strlen(buf);
+      if (len > 0 && buf[len - 1] != '\n') {
+         if (len < sizeof(buf) - 1) {
+            buf[len] = '\n';
+            buf[len + 1] = '\0';
+         }
       }
    }
-   
-   // Output through juice logging
-   juice_log_output(buf);
+
+   mesa_log_emit(level, buf);
 }
 
 struct log_stream *

@@ -233,6 +233,41 @@ pop_batch_state(struct zink_context *ctx)
       ctx->last_fence = NULL;
 }
 
+/* reclaim completed batch states on demand and append them to the free list. bindless slot ids are
+ * only returned to the allocator by zink_reset_batch_state (via bs->bindless_releases), which
+ * normally happens whenever a batch happens to be recycled - so with enough batches in flight the
+ * freed ids pile up and the handle table can run dry while most of it is really free. wait=true
+ * stalls on the oldest submitted state, which beats failing a handle create. returns the count.
+ */
+unsigned
+zink_reclaim_finished_batch_states(struct zink_context *ctx, bool wait)
+{
+   struct zink_screen *screen = zink_screen(ctx->base.screen);
+   unsigned reclaimed = 0;
+
+   while (ctx->batch_states) {
+      struct zink_batch_state *bs = ctx->batch_states;
+
+      if (!zink_check_batch_completion(ctx, bs->fence.batch_id)) {
+         if (!wait)
+            break;
+         if (!zink_screen_timeline_wait(screen, bs->fence.batch_id, UINT64_MAX))
+            break;
+      }
+
+      pop_batch_state(ctx);
+      zink_reset_batch_state(ctx, bs);
+      if (ctx->last_free_batch_state)
+         ctx->last_free_batch_state->next = bs;
+      else
+         ctx->free_batch_states = bs;
+      ctx->last_free_batch_state = bs;
+      reclaimed++;
+   }
+
+   return reclaimed;
+}
+
 /* reset all batch states and append to the free state list
  * only usable after a full stall
  */

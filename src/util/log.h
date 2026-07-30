@@ -25,6 +25,7 @@
 #define MESA_LOG_H
 
 #include <stdarg.h>
+#include <stdbool.h>
 
 #include "util/macros.h"
 
@@ -42,6 +43,19 @@ enum mesa_log_level {
    MESA_LOG_INFO,
    MESA_LOG_DEBUG,
 };
+
+/* JUICE: true when the client's configured log level admits `level`. mesa_log()
+ * and mesa_log_v() already apply this; call it directly to avoid building a
+ * message that would only be thrown away. Always true when MESA_LOG_FILE is
+ * set, which turns off the client routing and its filtering alike. */
+bool
+mesa_log_level_enabled(enum mesa_log_level level);
+
+/* JUICE: send an already-formatted message to the same sink mesa_log() uses,
+ * without the "tag: level: " prefixing. For callers that do their own
+ * formatting. Applies the level filter. */
+void
+mesa_log_write(enum mesa_log_level level, const char *text);
 
 void PRINTFLIKE(3, 4)
 mesa_log(enum mesa_log_level, const char *tag, const char *format, ...);

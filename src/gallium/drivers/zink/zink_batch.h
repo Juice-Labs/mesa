@@ -47,6 +47,9 @@ zink_clear_batch_state(struct zink_context *ctx, struct zink_batch_state *bs);
 void
 zink_batch_reset_all(struct zink_context *ctx);
 
+unsigned
+zink_reclaim_finished_batch_states(struct zink_context *ctx, bool wait);
+
 void
 zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs);
 

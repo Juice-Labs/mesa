@@ -440,6 +440,12 @@ EXT(NV_representative_fragment_test         , NV_representative_fragment_test   
 EXT(NV_sample_locations                     , ARB_sample_locations                   , GLL, GLC,  x , ES2, 2015)
 EXT(NV_shader_atomic_float                  , NV_shader_atomic_float                 , GLL, GLC,  x ,  x , 2012)
 EXT(NV_shader_atomic_int64                  , NV_shader_atomic_int64                 , GLL, GLC,  x ,  x , 2014)
+/* Juice: advertised only so that loaders which gate per-extension (glad) will
+ * actually resolve these entry points instead of leaving them NULL. The
+ * entry points are no-op stubs in stw_getprocaddress.c -- nothing here is
+ * functional, and the GLSL half of the extension does not exist at all.
+ */
+EXT(NV_shader_buffer_load                   , dummy_true                             , GLL, GLC,  x ,  x , 2009)
 EXT(NV_shader_noperspective_interpolation   , EXT_gpu_shader4                        ,  x ,  x ,  x ,  30, 2014)
 EXT(NV_texgen_reflection                    , dummy_true                             , GLL,  x ,  x ,  x , 1999)
 EXT(NV_texture_barrier                      , NV_texture_barrier                     , GLL, GLC,  x , ES2, 2009)
@@ -449,7 +455,6 @@ EXT(NV_timeline_semaphore                   , NV_timeline_semaphore             
 EXT(NV_viewport_array2                      , NV_viewport_array2                     , GLL, GLC,  x ,  31, 2015)
 EXT(NV_viewport_swizzle                     , NV_viewport_swizzle                    , GLL, GLC,  x ,  31, 2015)
 EXT(NV_bindless_texture                     , NV_bindless_texture                    , GLL, GLC,  x ,  x , 2014)
-EXT(NV_timeline_semaphore                   , NV_timeline_semaphore                  , GLL, GLC,  x ,  x , 2014)
 
 EXT(OES_EGL_image                           , OES_EGL_image                          , GLL, GLC, ES1, ES2, 2006) /* FIXME: Mesa expects GL_OES_EGL_image to be available in OpenGL contexts. */
 EXT(OES_EGL_image_external                  , OES_EGL_image_external                 ,  x ,  x , ES1, ES2, 2010)

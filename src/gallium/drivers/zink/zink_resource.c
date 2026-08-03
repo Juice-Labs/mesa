@@ -2072,6 +2072,19 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
    assert((res->base.b.bind & bind) == 0);
+
+   /* Reallocating swaps res->obj for a fresh VkImage/VkDeviceMemory, so anything
+    * holding an external import of the old one (CUDA via
+    * zink_resource_recreate_for_cuda_export, or any dmabuf/Win32 consumer) is left
+    * mapping the previous allocation while GL renders into the new one.  Nothing
+    * notifies them.  The CUDA path pre-arms the binds that would land us here, so
+    * this is a warning for a path that was missed, not an expected event.
+    */
+   if (res->obj && res->obj->exportable)
+      mesa_loge("zink: reallocating exportable resource (bind=0x%x remove_bind=0x%x) -- any external import is now stale",
+                bind, remove_bind);
+
+
    res->base.b.bind |= bind;
    res->base.b.bind &= ~remove_bind;
    struct zink_resource_object *old_obj = res->obj;
@@ -2095,10 +2108,10 @@ add_resource_bind(struct zink_context *ctx, struct zink_resource *res, unsigned 
       return false;
    }
 
-   // Ensure the new object is marked as exportable if CUDA export was requested
-   if (force_export) {
-      new_obj->exportable = true;
-   }
+   // Mark exportable if CUDA export was requested, and keep it across a plain
+   // rebind: dropping it makes the next cuGraphicsGLRegisterImage recreate the
+   // resource again and hand out another Win32 handle while CUDA holds the previous.
+   new_obj->exportable = force_export || old_obj->exportable;
 
    assert(mod == DRM_FORMAT_MOD_INVALID || new_obj->modifier == DRM_FORMAT_MOD_LINEAR);
    struct zink_resource staging = *res;
@@ -3744,11 +3757,27 @@ zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
       ctx->base.flush(&ctx->base, NULL, 0);
    }
 
-   // Add CUDA export bind flag and recreate with export capabilities
-   unsigned bind = ZINK_BIND_CUDA_EXPORT | PIPE_BIND_SHARED; // | PIPE_BIND_LINEAR;
+   // Add CUDA export bind flag and recreate with export capabilities.
+   //
+   // Also request every bind that would otherwise force a *later* reallocation of
+   // res->obj, which would leave CUDA mapping the old allocation.  The paths that
+   // do so -- zink_set_shader_images, zink_create_image_handle and
+   // zink_resource_object_init_mutable -- are gated purely on whether the bind is
+   // already present, so asking for them now makes those all early-out.
+   unsigned required = ZINK_BIND_CUDA_EXPORT | PIPE_BIND_SHARED;
+   unsigned bind = required | PIPE_BIND_SHADER_IMAGE | ZINK_BIND_MUTABLE; // | PIPE_BIND_LINEAR;
    unsigned remove_bind = 0; // PIPE_BIND_RENDER_TARGET;
-   if (!add_resource_bind(ctx, res, bind, remove_bind)) {
-      return false;
+
+   bind &= ~res->base.b.bind; // add_resource_bind asserts these are all clear
+   if (bind) {
+      if (!add_resource_bind(ctx, res, bind, remove_bind)) {
+         // Not every format can take STORAGE usage / a mutable format list.  Fall
+         // back to the binds the export actually needs rather than failing outright;
+         // such a resource stays vulnerable to a later reallocation.
+         unsigned fallback = required & ~res->base.b.bind;
+         if (!fallback || !add_resource_bind(ctx, res, fallback, remove_bind))
+            return false;
+      }
    }
 
    // Flush to ensure recreation is complete

@@ -431,10 +431,56 @@ glDepthRangedNV(GLdouble zNear, GLdouble zFar)
 }
 
 VOID WINAPI
+glGetBufferParameterui64vNV(GLenum target, GLenum pname, GLuint64EXT *params)
+{
+   (void)target;
+   (void)pname;
+   if (params)
+      *params = 0;
+}
+
+VOID WINAPI
 glGetNamedBufferParameterui64vNV(GLuint buffer, GLenum pname, GLuint64EXT *params)
 {
-   debug_printf("glGetNamedBufferParameterui64vNV: Not implemented\n");
-   //assert(0);
+   (void)buffer;
+   (void)pname;
+   if (params)
+      *params = 0;
+}
+
+VOID WINAPI
+glGetIntegerui64vNV(GLenum value, GLuint64EXT *result)
+{
+   (void)value;
+   if (result)
+      *result = 0;
+}
+
+VOID WINAPI
+glGetUniformui64vNV(GLuint program, GLint location, GLuint64EXT *params)
+{
+   (void)program;
+   (void)location;
+   if (params)
+      *params = 0;
+}
+
+VOID WINAPI
+glProgramUniformui64NV(GLuint program, GLint location, GLuint64EXT value)
+{
+   (void)program;
+   (void)location;
+   (void)value;
+}
+
+VOID WINAPI
+glProgramUniformui64vNV(GLuint program, GLint location, GLsizei count,
+                        const GLuint64EXT *value)
+{
+   (void)program;
+   (void)location;
+   (void)count;
+   (void)value;
 }
 
 GLuint64 WINAPI
@@ -446,25 +492,43 @@ glGetTextureSamplerHandleNV(GLuint texture, GLuint sampler)
 }
 
 GLboolean WINAPI
+glIsBufferResidentNV(GLenum target)
+{
+   (void)target;
+   return FALSE;
+}
+
+GLboolean WINAPI
 glIsNamedBufferResidentNV(GLuint buffer)
 {
-   debug_printf("glIsNamedBufferResidentNV: Not implemented\n");
-   //assert(0);
+   (void)buffer;
    return FALSE;
+}
+
+VOID WINAPI
+glMakeBufferResidentNV(GLenum target, GLenum access)
+{
+   (void)target;
+   (void)access;
+}
+
+VOID WINAPI
+glMakeBufferNonResidentNV(GLenum target)
+{
+   (void)target;
 }
 
 VOID WINAPI
 glMakeNamedBufferResidentNV(GLuint buffer, GLenum access)
 {
-   debug_printf("glMakeNamedBufferResidentNV: Not implemented\n");
-   //assert(0);
+   (void)buffer;
+   (void)access;
 }
 
 VOID WINAPI
 glMakeNamedBufferNonResidentNV(GLuint buffer)
 {
-   debug_printf("glMakeNamedBufferNonResidentNV: Not implemented\n");
-   //assert(0);
+   (void)buffer;
 }
 
 VOID WINAPI
@@ -602,11 +666,19 @@ static const struct stw_extension_entry stw_gl_extension_entries[] = {
    STW_EXTENSION_ENTRY( glBufferAddressRangeNV ),
    STW_EXTENSION_ENTRY( glCreateSemaphoresNV ),
    STW_EXTENSION_ENTRY( glDepthRangedNV ),
+   STW_EXTENSION_ENTRY( glGetBufferParameterui64vNV ),
    STW_EXTENSION_ENTRY( glGetNamedBufferParameterui64vNV ),
-   STW_EXTENSION_ENTRY( glGetTextureSamplerHandleNV ),
+   STW_EXTENSION_ENTRY( glGetIntegerui64vNV ),
+   STW_EXTENSION_ENTRY( glGetUniformui64vNV ),
+   STW_EXTENSION_ENTRY( glIsBufferResidentNV ),
    STW_EXTENSION_ENTRY( glIsNamedBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeBufferNonResidentNV ),
    STW_EXTENSION_ENTRY( glMakeNamedBufferResidentNV ),
    STW_EXTENSION_ENTRY( glMakeNamedBufferNonResidentNV ),
+   STW_EXTENSION_ENTRY( glProgramUniformui64NV ),
+   STW_EXTENSION_ENTRY( glProgramUniformui64vNV ),
+   STW_EXTENSION_ENTRY( glGetTextureSamplerHandleNV ),
    STW_EXTENSION_ENTRY( glMakeTextureHandleNonResidentNV ),
    STW_EXTENSION_ENTRY( glMakeTextureHandleResidentNV ),
    STW_EXTENSION_ENTRY( glSemaphoreParameterivNV ),

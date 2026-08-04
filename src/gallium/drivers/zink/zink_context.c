@@ -2043,6 +2043,23 @@ zink_bindless_alloc_slot(struct zink_context *ctx, struct util_idalloc *slots, u
 
    if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
       util_idalloc_free(slots, slot);
+      /* zink_reclaim_finished_batch_states() only walks already-submitted batch
+       * states. Deletes recorded into the still-open current batch - e.g. an
+       * app deleting and recreating handles within one frame, without an
+       * intervening flush - are invisible to it no matter how long it waits,
+       * so a table that is genuinely mostly-free can still be reported full.
+       * Force the current batch to submit and complete so its own
+       * bindless_releases become reclaimable too, then retry once more before
+       * finally giving up. zink_fence_wait() is a no-op wait if there is no
+       * pending work, so this is safe even when the table really is exhausted.
+       */
+      zink_fence_wait(&ctx->base);
+      zink_reclaim_finished_batch_states(ctx, true);
+      slot = util_idalloc_alloc(slots);
+   }
+
+   if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
+      util_idalloc_free(slots, slot);
       mesa_loge("ZINK BINDLESS: handle table full (max=%u) after reclaim; rejecting create",
                 ZINK_MAX_BINDLESS_HANDLES);
       return false;

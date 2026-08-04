@@ -82,6 +82,17 @@ struct st_bound_handles
 {
    unsigned num_handles;
    uint64_t *handles;
+   /* JUICE: parallel arrays recording the (view, sampler) that produced each
+    * handle, so a later call with an unchanged binding can reuse it instead
+    * of destroying and recreating it (see st_make_bound_samplers_resident).
+    * Texture-handle path only; unused (NULL) for bound_image_handles. */
+   struct pipe_sampler_view **cache_views;
+   struct pipe_sampler_state *cache_samplers;
+   /* JUICE: same idea, for the image-handle path (see
+    * st_make_bound_images_resident). pipe_image_view has no separate view
+    * object to key on, so the whole zero-initialized struct is the key.
+    * Texture-handle path leaves this NULL. */
+   struct pipe_image_view *cache_images;
 };
 
 

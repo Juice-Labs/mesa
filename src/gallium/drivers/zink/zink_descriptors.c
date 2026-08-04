@@ -558,7 +558,7 @@ zink_descriptor_program_init(struct zink_context *ctx, struct zink_program *pg)
             binding->pImmutableSamplers = NULL;
             
             mesa_logi("VULKAN DESC SET LAYOUT: desc_set=%u, vulkan_binding=%u, desc_type=%d, desc_count=%u, stage_flags=%u", 
-                      desc_set, binding->binding, binding->descriptorType, binding->descriptorCount, binding->stageFlags);
+                      screen->desc_set_id[j], binding->binding, binding->descriptorType, binding->descriptorCount, binding->stageFlags);
 
             unsigned idx = screen->compact_descriptors ? zink_vktype_to_size_idx_comp(shader->bindings[j][k].type) :
                                                          zink_vktype_to_size_idx(shader->bindings[j][k].type);
@@ -1992,18 +1992,34 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
             if (!is_buffer) {
                unsigned fan_first, fan_last;
                if (i == 0) {
-                  fan_first = ZINK_BINDLESS_SAMPLER_FIRST;
+                  /* JUICE FIX: a CIS descriptor's VkSampler has one fixed compareEnable
+                   * state, set at handle-create time from the real compare_mode. Vulkan
+                   * requires compareEnable==true for Dref (shadow) sampling and ==false
+                   * otherwise; feeding the same sampler into the opposite polarity's
+                   * tuple binding is invalid and can sample as black. Restrict the
+                   * dim/array fanout to bindings sharing the handle's own shadow
+                   * polarity -- bit 0 of the tuple encoding (see zink_bindless_get_binding) --
+                   * instead of every sampler binding. */
+                  bool is_shadow = (wd.dstBinding & 1) != 0;
+                  fan_first = ZINK_BINDLESS_SAMPLER_FIRST + (is_shadow ? 1 : 0);
                   fan_last  = ZINK_BINDLESS_SAMPLER_LAST;
+                  for (unsigned b = fan_first; b <= fan_last; b += 2) {
+                     if (b == wd.dstBinding) continue;
+                     VkWriteDescriptorSet wd2 = wd;
+                     wd2.dstBinding = b;
+                     wd2.descriptorType = zink_bindless_binding_type(b);
+                     VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd2, 0, NULL);
+                  }
                } else {
                   fan_first = ZINK_BINDLESS_IMAGE_FIRST;
                   fan_last  = ZINK_BINDLESS_IMAGE_LAST;
-               }
-               for (unsigned b = fan_first; b <= fan_last; b++) {
-                  if (b == wd.dstBinding) continue;
-                  VkWriteDescriptorSet wd2 = wd;
-                  wd2.dstBinding = b;
-                  wd2.descriptorType = zink_bindless_binding_type(b);
-                  VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd2, 0, NULL);
+                  for (unsigned b = fan_first; b <= fan_last; b++) {
+                     if (b == wd.dstBinding) continue;
+                     VkWriteDescriptorSet wd2 = wd;
+                     wd2.dstBinding = b;
+                     wd2.descriptorType = zink_bindless_binding_type(b);
+                     VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd2, 0, NULL);
+                  }
                }
             }
          }

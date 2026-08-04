@@ -474,7 +474,11 @@ st_destroy_bound_texture_handles_per_stage(struct st_context *st,
       pipe->delete_texture_handle(pipe, handle);
    }
    free(bound_handles->handles);
+   free(bound_handles->cache_views);
+   free(bound_handles->cache_samplers);
    bound_handles->handles = NULL;
+   bound_handles->cache_views = NULL;
+   bound_handles->cache_samplers = NULL;
    bound_handles->num_handles = 0;
 }
 
@@ -514,7 +518,9 @@ st_destroy_bound_image_handles_per_stage(struct st_context *st,
       pipe->delete_image_handle(pipe, handle);
    }
    free(bound_handles->handles);
+   free(bound_handles->cache_images);
    bound_handles->handles = NULL;
+   bound_handles->cache_images = NULL;
    bound_handles->num_handles = 0;
 }
 
@@ -534,45 +540,32 @@ st_destroy_bound_image_handles(struct st_context *st)
 
 
 /**
- * Create a texture handle from a texture unit.
+ * Resolve the sampler view and sampler state a bindless texture unit would
+ * use. Split out from handle creation so callers can check for a cache hit
+ * (unchanged view + sampler content since the last call) before deciding
+ * whether a new driver handle is actually needed.
  */
-static GLuint64
-st_create_texture_handle_from_unit(struct st_context *st,
-                                   struct gl_program *prog, GLuint texUnit)
+static struct pipe_sampler_view *
+st_resolve_bindless_texture_unit(struct st_context *st,
+                                 struct gl_program *prog, GLuint texUnit,
+                                 struct pipe_sampler_state *out_sampler)
 {
-   struct pipe_context *pipe = st->pipe;
    struct pipe_sampler_view *view;
-   struct pipe_sampler_state sampler = {0};
    const bool glsl130 =
       (prog->shader_program ? prog->shader_program->GLSL_Version : 0) >= 130;
 
    /* TODO: Clarify the interaction of ARB_bindless_texture and EXT_texture_sRGB_decode */
    view = st_update_single_texture(st, texUnit, glsl130, true, 0, NULL);
    if (!view)
-      return 0;
+      return NULL;
 
+   memset(out_sampler, 0, sizeof(*out_sampler));
    if (view->target != PIPE_BUFFER)
-      st_convert_sampler_from_unit(st, &sampler, texUnit, glsl130);
+      st_convert_sampler_from_unit(st, out_sampler, texUnit, glsl130);
 
    assert(st->ctx->Texture.Unit[texUnit]._Current);
 
-   return pipe->create_texture_handle(pipe, view, &sampler);
-}
-
-
-/**
- * Create an image handle from an image unit.
- */
-static GLuint64
-st_create_image_handle_from_unit(struct st_context *st,
-                                 struct gl_program *prog, GLuint imgUnit)
-{
-   struct pipe_context *pipe = st->pipe;
-   struct pipe_image_view img;
-
-   st_convert_image_from_unit(st, &img, imgUnit, 0);
-
-   return pipe->create_image_handle(pipe, &img);
+   return view;
 }
 
 
@@ -589,75 +582,138 @@ st_make_bound_samplers_resident(struct st_context *st,
    GLuint64 handle;
    int i;
 
-   /* Remove previous bound texture handles for this stage. */
-   st_destroy_bound_texture_handles_per_stage(st, shader);
+   /* JUICE: snapshot the previous call's (handle, view, sampler) triples
+    * instead of eagerly destroying them. A handle whose view/sampler are
+    * byte-identical to last time is reused as-is below; only genuinely
+    * stale entries (unit no longer bound, or its view/sampler changed) are
+    * destroyed at the end. Under GPU-over-IP, a deleted handle's slot isn't
+    * actually freed until the owning batch completes on the server, so
+    * needless per-draw destroy+recreate churn (this function runs on every
+    * constant-buffer upload, i.e. nearly every draw) can exhaust the
+    * bindless table long before the real number of distinct textures/
+    * samplers in a scene ever would. */
+   unsigned old_num = bound_handles->num_handles;
+   uint64_t *old_handles = bound_handles->handles;
+   struct pipe_sampler_view **old_views = bound_handles->cache_views;
+   struct pipe_sampler_state *old_samplers = bound_handles->cache_samplers;
+   bool *old_reused = old_num ? calloc(old_num, sizeof(bool)) : NULL;
 
-   if (likely(!prog->sh.HasBoundBindlessSampler))
-      return;
+   bound_handles->handles = NULL;
+   bound_handles->cache_views = NULL;
+   bound_handles->cache_samplers = NULL;
+   bound_handles->num_handles = 0;
 
-   for (i = 0; i < prog->sh.NumBindlessSamplers; i++) {
-      struct gl_bindless_sampler *sampler = &prog->sh.BindlessSamplers[i];
+   if (likely(prog->sh.HasBoundBindlessSampler)) {
+      for (i = 0; i < prog->sh.NumBindlessSamplers; i++) {
+         struct gl_bindless_sampler *sampler = &prog->sh.BindlessSamplers[i];
 
-      uint64_t prev_data = 0;
-      if (sampler->data)
-         memcpy(&prev_data, sampler->data, sizeof(prev_data));
+         uint64_t prev_data = 0;
+         if (sampler->data)
+            memcpy(&prev_data, sampler->data, sizeof(prev_data));
 
-      if (!sampler->bound) {
-         /* JUICE: a skipped sampler leaves whatever happens to be in
-          * sampler->data alone, which then gets uploaded to the GPU as a
-          * bindless handle. That's almost certainly wrong for any sampler
-          * whose unit isn't currently bound (e.g. the app uploaded a tagged
-          * handle via glUniform1ui64vARB but didn't also call glUniform1i
-          * to bind a unit, leaving sampler->bound=0). The result is a
-          * stale/garbage 64-bit "handle" in the FS default UBO that the
-          * shader will use to index the bindless container, hanging the
-          * GPU on strict drivers. */
-         juice_diag_logf("BSR_SKIP",
+         if (!sampler->bound) {
+            /* JUICE: a skipped sampler leaves whatever happens to be in
+             * sampler->data alone, which then gets uploaded to the GPU as a
+             * bindless handle. That's almost certainly wrong for any sampler
+             * whose unit isn't currently bound (e.g. the app uploaded a tagged
+             * handle via glUniform1ui64vARB but didn't also call glUniform1i
+             * to bind a unit, leaving sampler->bound=0). The result is a
+             * stale/garbage 64-bit "handle" in the FS default UBO that the
+             * shader will use to index the bindless container, hanging the
+             * GPU on strict drivers. */
+            juice_diag_logf("BSR_SKIP",
+                            "prog=%u stage=%d idx=%d sampler_unit=%u "
+                            "bound=0 prev_data=0x%llx data_ptr=%p",
+                            prog ? prog->Id : 0u, (int)prog->info.stage, i,
+                            (unsigned)sampler->unit,
+                            (unsigned long long)prev_data,
+                            (void *)sampler->data);
+            continue;
+         }
+
+         struct pipe_sampler_state samp;
+         struct pipe_sampler_view *view =
+            st_resolve_bindless_texture_unit(st, prog, sampler->unit, &samp);
+         if (!view) {
+            juice_diag_logf("BSR_NOHANDLE",
+                            "prog=%u stage=%d idx=%d sampler_unit=%u "
+                            "bound=1 prev_data=0x%llx data_ptr=%p",
+                            prog ? prog->Id : 0u, (int)prog->info.stage, i,
+                            (unsigned)sampler->unit,
+                            (unsigned long long)prev_data,
+                            (void *)sampler->data);
+            continue;
+         }
+
+         handle = 0;
+         for (unsigned j = 0; old_reused && j < old_num; j++) {
+            if (old_reused[j] || old_views[j] != view)
+               continue;
+            if (memcmp(&old_samplers[j], &samp, sizeof(samp)) != 0)
+               continue;
+            handle = old_handles[j];
+            old_reused[j] = true;
+            break;
+         }
+
+         if (!handle) {
+            /* Request a new texture handle from the driver and make it resident. */
+            handle = pipe->create_texture_handle(pipe, view, &samp);
+            if (!handle) {
+               juice_diag_logf("BSR_NOHANDLE",
+                               "prog=%u stage=%d idx=%d sampler_unit=%u "
+                               "bound=1 prev_data=0x%llx data_ptr=%p",
+                               prog ? prog->Id : 0u, (int)prog->info.stage, i,
+                               (unsigned)sampler->unit,
+                               (unsigned long long)prev_data,
+                               (void *)sampler->data);
+               continue;
+            }
+            pipe->make_texture_handle_resident(st->pipe, handle, true);
+         }
+
+         /* Overwrite the texture unit value by the resident handle before
+          * uploading the constant buffer.
+          */
+         *(uint64_t *)sampler->data = handle;
+
+         juice_diag_logf("BSR_OK",
                          "prog=%u stage=%d idx=%d sampler_unit=%u "
-                         "bound=0 prev_data=0x%llx data_ptr=%p",
+                         "prev_data=0x%llx new_handle=0x%llx data_ptr=%p",
                          prog ? prog->Id : 0u, (int)prog->info.stage, i,
                          (unsigned)sampler->unit,
                          (unsigned long long)prev_data,
+                         (unsigned long long)handle,
                          (void *)sampler->data);
-         continue;
+
+         /* Store the handle in the context. */
+         bound_handles->handles = (uint64_t *)
+            realloc(bound_handles->handles,
+                    (bound_handles->num_handles + 1) * sizeof(uint64_t));
+         bound_handles->cache_views = (struct pipe_sampler_view **)
+            realloc(bound_handles->cache_views,
+                    (bound_handles->num_handles + 1) * sizeof(struct pipe_sampler_view *));
+         bound_handles->cache_samplers = (struct pipe_sampler_state *)
+            realloc(bound_handles->cache_samplers,
+                    (bound_handles->num_handles + 1) * sizeof(struct pipe_sampler_state));
+         bound_handles->handles[bound_handles->num_handles] = handle;
+         bound_handles->cache_views[bound_handles->num_handles] = view;
+         bound_handles->cache_samplers[bound_handles->num_handles] = samp;
+         bound_handles->num_handles++;
       }
-
-      /* Request a new texture handle from the driver and make it resident. */
-      handle = st_create_texture_handle_from_unit(st, prog, sampler->unit);
-      if (!handle) {
-         juice_diag_logf("BSR_NOHANDLE",
-                         "prog=%u stage=%d idx=%d sampler_unit=%u "
-                         "bound=1 prev_data=0x%llx data_ptr=%p",
-                         prog ? prog->Id : 0u, (int)prog->info.stage, i,
-                         (unsigned)sampler->unit,
-                         (unsigned long long)prev_data,
-                         (void *)sampler->data);
-         continue;
-      }
-
-      pipe->make_texture_handle_resident(st->pipe, handle, true);
-
-      /* Overwrite the texture unit value by the resident handle before
-       * uploading the constant buffer.
-       */
-      *(uint64_t *)sampler->data = handle;
-
-      juice_diag_logf("BSR_OK",
-                      "prog=%u stage=%d idx=%d sampler_unit=%u "
-                      "prev_data=0x%llx new_handle=0x%llx data_ptr=%p",
-                      prog ? prog->Id : 0u, (int)prog->info.stage, i,
-                      (unsigned)sampler->unit,
-                      (unsigned long long)prev_data,
-                      (unsigned long long)handle,
-                      (void *)sampler->data);
-
-      /* Store the handle in the context. */
-      bound_handles->handles = (uint64_t *)
-         realloc(bound_handles->handles,
-                 (bound_handles->num_handles + 1) * sizeof(uint64_t));
-      bound_handles->handles[bound_handles->num_handles] = handle;
-      bound_handles->num_handles++;
    }
+
+   /* Release only the entries that weren't reused above. */
+   for (unsigned j = 0; j < old_num; j++) {
+      if (old_reused && old_reused[j])
+         continue;
+      pipe->make_texture_handle_resident(pipe, old_handles[j], false);
+      pipe->delete_texture_handle(pipe, old_handles[j]);
+   }
+   free(old_handles);
+   free(old_views);
+   free(old_samplers);
+   free(old_reused);
 }
 
 
@@ -674,35 +730,75 @@ st_make_bound_images_resident(struct st_context *st,
    GLuint64 handle;
    int i;
 
-   /* Remove previous bound image handles for this stage. */
-   st_destroy_bound_image_handles_per_stage(st, shader);
+   /* JUICE: reuse a handle whose pipe_image_view is byte-identical to last
+    * call instead of destroying and recreating it -- see
+    * st_make_bound_samplers_resident for why unconditional per-draw churn
+    * matters under GPU-over-IP. */
+   unsigned old_num = bound_handles->num_handles;
+   uint64_t *old_handles = bound_handles->handles;
+   struct pipe_image_view *old_images = bound_handles->cache_images;
+   bool *old_reused = old_num ? calloc(old_num, sizeof(bool)) : NULL;
 
-   if (likely(!prog->sh.HasBoundBindlessImage))
-      return;
+   bound_handles->handles = NULL;
+   bound_handles->cache_images = NULL;
+   bound_handles->num_handles = 0;
 
-   for (i = 0; i < prog->sh.NumBindlessImages; i++) {
-      struct gl_bindless_image *image = &prog->sh.BindlessImages[i];
+   if (likely(prog->sh.HasBoundBindlessImage)) {
+      for (i = 0; i < prog->sh.NumBindlessImages; i++) {
+         struct gl_bindless_image *image = &prog->sh.BindlessImages[i];
 
-      if (!image->bound)
-         continue;
+         if (!image->bound)
+            continue;
 
-      /* Request a new image handle from the driver and make it resident. */
-      handle = st_create_image_handle_from_unit(st, prog, image->unit);
-      if (!handle)
-         continue;
+         struct pipe_image_view img;
+         memset(&img, 0, sizeof(img));
+         st_convert_image_from_unit(st, &img, image->unit, 0);
 
-      pipe->make_image_handle_resident(st->pipe, handle, GL_READ_WRITE, true);
+         handle = 0;
+         for (unsigned j = 0; old_reused && j < old_num; j++) {
+            if (old_reused[j])
+               continue;
+            if (memcmp(&old_images[j], &img, sizeof(img)) != 0)
+               continue;
+            handle = old_handles[j];
+            old_reused[j] = true;
+            break;
+         }
 
-      /* Overwrite the image unit value by the resident handle before uploading
-       * the constant buffer.
-       */
-      *(uint64_t *)image->data = handle;
+         if (!handle) {
+            /* Request a new image handle from the driver and make it resident. */
+            handle = pipe->create_image_handle(pipe, &img);
+            if (!handle)
+               continue;
+            pipe->make_image_handle_resident(st->pipe, handle, GL_READ_WRITE, true);
+         }
 
-      /* Store the handle in the context. */
-      bound_handles->handles = (uint64_t *)
-         realloc(bound_handles->handles,
-                 (bound_handles->num_handles + 1) * sizeof(uint64_t));
-      bound_handles->handles[bound_handles->num_handles] = handle;
-      bound_handles->num_handles++;
+         /* Overwrite the image unit value by the resident handle before uploading
+          * the constant buffer.
+          */
+         *(uint64_t *)image->data = handle;
+
+         /* Store the handle in the context. */
+         bound_handles->handles = (uint64_t *)
+            realloc(bound_handles->handles,
+                    (bound_handles->num_handles + 1) * sizeof(uint64_t));
+         bound_handles->cache_images = (struct pipe_image_view *)
+            realloc(bound_handles->cache_images,
+                    (bound_handles->num_handles + 1) * sizeof(struct pipe_image_view));
+         bound_handles->handles[bound_handles->num_handles] = handle;
+         bound_handles->cache_images[bound_handles->num_handles] = img;
+         bound_handles->num_handles++;
+      }
    }
+
+   /* Release only the entries that weren't reused above. */
+   for (unsigned j = 0; j < old_num; j++) {
+      if (old_reused && old_reused[j])
+         continue;
+      pipe->make_image_handle_resident(pipe, old_handles[j], GL_READ_WRITE, false);
+      pipe->delete_image_handle(pipe, old_handles[j]);
+   }
+   free(old_handles);
+   free(old_images);
+   free(old_reused);
 }

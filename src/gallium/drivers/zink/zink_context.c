@@ -21,7 +21,14 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "main/context.h"
+#include "main/texobj.h"
+#include "main/format_utils.h"
+#include "state_tracker/st_context.h"
+#include "state_tracker/st_texture.h"
+
 #include "zink_clear.h"
+
 #include "zink_context.h"
 #include "zink_descriptors.h"
 #include "zink_fence.h"
@@ -36,12 +43,6 @@
 #include "zink_screen.h"
 #include "zink_state.h"
 #include "zink_surface.h"
-
-#include "main/context.h"
-#include "main/texobj.h"
-#include "main/format_utils.h"
-#include "state_tracker/st_context.h"
-#include "state_tracker/st_texture.h"
 
 #include "nir/pipe_nir.h"
 #include "util/u_blitter.h"
@@ -2647,6 +2648,23 @@ zink_bindless_alloc_slot(struct zink_context *ctx, struct util_idalloc *slots, u
 
    if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
       util_idalloc_free(slots, slot);
+      /* zink_reclaim_finished_batch_states() only walks already-submitted batch
+       * states. Deletes recorded into the still-open current batch - e.g. an
+       * app deleting and recreating handles within one frame, without an
+       * intervening flush - are invisible to it no matter how long it waits,
+       * so a table that is genuinely mostly-free can still be reported full.
+       * Force the current batch to submit and complete so its own
+       * bindless_releases become reclaimable too, then retry once more before
+       * finally giving up. zink_fence_wait() is a no-op wait if there is no
+       * pending work, so this is safe even when the table really is exhausted.
+       */
+      zink_fence_wait(&ctx->base);
+      zink_reclaim_finished_batch_states(ctx, true);
+      slot = util_idalloc_alloc(slots);
+   }
+
+   if (slot >= ZINK_MAX_BINDLESS_HANDLES) {
+      util_idalloc_free(slots, slot);
       mesa_loge("ZINK BINDLESS: handle table full (max=%u) after reclaim; rejecting create",
                 ZINK_MAX_BINDLESS_HANDLES);
       return false;
@@ -5226,7 +5244,6 @@ ALWAYS_INLINE static struct zink_resource *
 rebind_ubo(struct zink_context *ctx, mesa_shader_stage shader, unsigned slot)
 {
    mesa_logi("ZINK UBO REBIND: shader=%d, slot=%d", shader, slot);
-   mesa_logi("ZINK UBO REBIND RESULT: res=%p", res);
    struct zink_resource *res;
    if (zink_descriptor_mode == ZINK_DESCRIPTOR_MODE_DB) {
       res = update_descriptor_state_ubo_db(ctx, shader, slot, ctx->di.descriptor_res[ZINK_DESCRIPTOR_TYPE_UBO][shader][slot]);
@@ -5239,6 +5256,7 @@ rebind_ubo(struct zink_context *ctx, mesa_shader_stage shader, unsigned slot)
       res->obj->access_stage |= mesa_to_vk_shader_stage(shader);
    }
    ctx->invalidate_descriptor_state(ctx, shader, ZINK_DESCRIPTOR_TYPE_UBO, slot, 1);
+   mesa_logi("ZINK UBO REBIND RESULT: res=%p", res);
    return res;
 }
 
@@ -5453,7 +5471,6 @@ zink_copy_buffer(struct zink_context *ctx, struct zink_resource *dst, struct zin
    mesa_logi("ZINK COPY BUFFER: REGION - srcOffset=%u, dstOffset=%u, size=%u", 
              (unsigned)region.srcOffset, (unsigned)region.dstOffset, (unsigned)region.size);
    mesa_logi("ZINK COPY BUFFER: BARRIERS - setting up transfer barriers");
-   mesa_logi("ZINK COPY BUFFER: CMDBUF - got command buffer %p", cmdbuf);
    mesa_logi("ZINK COPY BUFFER: VULKAN CALL - vkCmdCopyBuffer src=%p -> dst=%p", 
              src->obj->buffer, dst->obj->buffer);
    mesa_logi("ZINK COPY BUFFER: COMPLETE");
@@ -5946,7 +5963,7 @@ zink_copy_image_subdata_nv_cross_context(struct gl_context *src_ctx,
 
       /* Unwrap to the real zink_context to ensure we have a valid, recording batch */
       struct st_context *use_st = (struct st_context*)use_ctx->st;
-      struct zink_context *zctx_unwrapped = zink_tc_context_unwrap(use_st->pipe, true);
+      struct zink_context *zctx_unwrapped = zink_tc_context_unwrap(use_st->pipe);
       struct pipe_context *pipe_ctx = &zctx_unwrapped->base;
 
       /* Look up source texture object */

@@ -27,6 +27,7 @@
 #include "gl_nir_linker.h"
 #include "compiler/glsl/ir_uniform.h" /* for gl_uniform_storage */
 #include "linker_util.h"
+#include "util/juice_diag_log.h"
 #include "util/u_dynarray.h"
 #include "main/consts_exts.h"
 #include "main/shader_types.h"
@@ -791,15 +792,24 @@ update_uniforms_shader_info(struct gl_shader_program *prog,
                          struct gl_bindless_sampler,
                          sh->Program->sh.NumBindlessSamplers,
                          state->next_bindless_sampler_index);
-
-            for (unsigned j = sh->Program->sh.NumBindlessSamplers;
-                 j < state->next_bindless_sampler_index; j++) {
-               sh->Program->sh.BindlessSamplers[j].target =
-                  glsl_get_sampler_target(type_no_array);
-            }
-
             sh->Program->sh.NumBindlessSamplers =
                state->next_bindless_sampler_index;
+         }
+
+         const unsigned sampler_count = MAX2(1, uniform->array_elements);
+         for (unsigned j = sampler_index;
+              j < sampler_index + sampler_count; j++) {
+            sh->Program->sh.BindlessSamplers[j].target =
+               glsl_get_sampler_target(type_no_array);
+            sh->Program->sh.BindlessSamplers[j].shadow =
+               glsl_sampler_type_is_shadow(type_no_array);
+            juice_diag_logf("BINDLESS_LINK",
+                            "prog=%u stage=%u storage=%u name=%s idx=%u target=%u shadow=%u",
+                            sh->Program->Id, stage,
+                            (unsigned)(uniform - prog->data->UniformStorage),
+                            uniform->name.string ? uniform->name.string : "?", j,
+                            (unsigned)sh->Program->sh.BindlessSamplers[j].target,
+                            (unsigned)sh->Program->sh.BindlessSamplers[j].shadow);
          }
 
          if (!state->var_is_in_block)

@@ -453,6 +453,8 @@ st_destroy_bound_texture_handles_per_stage(struct st_context *st,
 
       pipe->make_texture_handle_resident(pipe, handle, false);
       pipe->delete_texture_handle(pipe, handle);
+      if (bound_handles->cache_views)
+         pipe_sampler_view_reference(&bound_handles->cache_views[i], NULL);
    }
    free(bound_handles->handles);
    free(bound_handles->cache_views);
@@ -529,6 +531,7 @@ st_destroy_bound_image_handles(struct st_context *st)
 static struct pipe_sampler_view *
 st_resolve_bindless_texture_unit(struct st_context *st,
                                  struct gl_program *prog, GLuint texUnit,
+                                 bool shadow,
                                  struct pipe_sampler_state *out_sampler)
 {
    struct pipe_sampler_view *view;
@@ -543,6 +546,14 @@ st_resolve_bindless_texture_unit(struct st_context *st,
    if (view->target != PIPE_BUFFER)
       st_convert_sampler_from_unit(st, out_sampler, texUnit,
                                    prog->sh.data && prog->sh.data->Version >= 130);
+
+   if (shadow && out_sampler->compare_mode == PIPE_TEX_COMPARE_NONE) {
+      out_sampler->compare_mode = PIPE_TEX_COMPARE_R_TO_TEXTURE;
+      juice_diag_logf("BSR_SHADOW_COMPARE",
+                      "prog=%u sampler_unit=%u target=%u compare_func=%u",
+                      prog ? prog->Id : 0u, (unsigned)texUnit,
+                      (unsigned)view->target, (unsigned)out_sampler->compare_func);
+   }
 
    assert(st->ctx->Texture.Unit[texUnit]._Current);
 
@@ -562,27 +573,26 @@ st_make_bound_samplers_resident(struct st_context *st,
    struct pipe_context *pipe = st->pipe;
    GLuint64 handle;
    int i;
+   unsigned bound_shadow = 0;
 
-   /* JUICE: snapshot the previous call's (handle, view, sampler) triples
-    * instead of eagerly destroying them. A handle whose view/sampler are
-    * byte-identical to last time is reused as-is below; only genuinely
-    * stale entries (unit no longer bound, or its view/sampler changed) are
-    * destroyed at the end. Under GPU-over-IP, a deleted handle's slot isn't
-    * actually freed until the owning batch completes on the server, so
-    * needless per-draw destroy+recreate churn (this function runs on every
-    * constant-buffer upload, i.e. nearly every draw) can exhaust the
-    * bindless table long before the real number of distinct textures/
-    * samplers in a scene ever would. */
-   unsigned old_num = bound_handles->num_handles;
-   uint64_t *old_handles = bound_handles->handles;
-   struct pipe_sampler_view **old_views = bound_handles->cache_views;
-   struct pipe_sampler_state *old_samplers = bound_handles->cache_samplers;
-   bool *old_reused = old_num ? calloc(old_num, sizeof(bool)) : NULL;
+   if (prog->sh.HasBoundBindlessSampler) {
+      for (i = 0; i < prog->sh.NumBindlessSamplers; i++) {
+         const struct gl_bindless_sampler *sampler =
+            &prog->sh.BindlessSamplers[i];
+         bound_shadow += sampler->bound && sampler->shadow;
+      }
+   }
+   juice_diag_logf("BSR_PROGRAM_SUMMARY",
+                   "prog=%u stage=%d has_bindless=%u num=%u bound_shadow=%u",
+                   prog->Id, (int)prog->info.stage,
+                   (unsigned)prog->sh.HasBoundBindlessSampler,
+                   prog->sh.NumBindlessSamplers, bound_shadow);
 
-   bound_handles->handles = NULL;
-   bound_handles->cache_views = NULL;
-   bound_handles->cache_samplers = NULL;
-   bound_handles->num_handles = 0;
+   /* JUICE: retain every unique (view, sampler) pair for this stage until
+    * context teardown. VRED rotates through many programs whose texture
+    * sets overlap, so a previous-call-only cache destroys and recreates the
+    * same handles every program switch. Under GPU-over-IP, the resulting
+    * descriptor and slot churn can make a live draw sample a stale slot. */
 
    if (likely(prog->sh.HasBoundBindlessSampler)) {
       for (i = 0; i < prog->sh.NumBindlessSamplers; i++) {
@@ -603,10 +613,10 @@ st_make_bound_samplers_resident(struct st_context *st,
              * shader will use to index the bindless container, hanging the
              * GPU on strict drivers. */
             juice_diag_logf("BSR_SKIP",
-                            "prog=%u stage=%d idx=%d sampler_unit=%u "
+                            "prog=%u stage=%d idx=%d sampler_unit=%u shadow=%u "
                             "bound=0 prev_data=0x%llx data_ptr=%p",
                             prog ? prog->Id : 0u, (int)prog->info.stage, i,
-                            (unsigned)sampler->unit,
+                            (unsigned)sampler->unit, (unsigned)sampler->shadow,
                             (unsigned long long)prev_data,
                             (void *)sampler->data);
             continue;
@@ -614,26 +624,45 @@ st_make_bound_samplers_resident(struct st_context *st,
 
          struct pipe_sampler_state samp;
          struct pipe_sampler_view *view =
-            st_resolve_bindless_texture_unit(st, prog, sampler->unit, &samp);
+            st_resolve_bindless_texture_unit(st, prog, sampler->unit,
+                                             sampler->shadow, &samp);
          if (!view) {
             juice_diag_logf("BSR_NOHANDLE",
-                            "prog=%u stage=%d idx=%d sampler_unit=%u "
+                            "prog=%u stage=%d idx=%d sampler_unit=%u shadow=%u "
                             "bound=1 prev_data=0x%llx data_ptr=%p",
                             prog ? prog->Id : 0u, (int)prog->info.stage, i,
-                            (unsigned)sampler->unit,
+                            (unsigned)sampler->unit, (unsigned)sampler->shadow,
                             (unsigned long long)prev_data,
                             (void *)sampler->data);
             continue;
          }
 
+         if (st->ctx->Texture.Unit[sampler->unit]._Current->TargetIndex !=
+             sampler->target) {
+            juice_diag_logf("BSR_TARGET_MISMATCH",
+                            "prog=%u stage=%d idx=%d sampler_unit=%u "
+                            "declared_target=%u current_target=%u view_target=%u "
+                            "compare_mode=%u",
+                            prog ? prog->Id : 0u, (int)prog->info.stage, i,
+                            (unsigned)sampler->unit, (unsigned)sampler->target,
+                            (unsigned)st->ctx->Texture.Unit[sampler->unit]._Current->TargetIndex,
+                            (unsigned)view->target, (unsigned)samp.compare_mode);
+         }
+
+         bool cache_view_match = false;
+         bool cache_sampler_match = false;
+         bool handle_created = false;
          handle = 0;
-         for (unsigned j = 0; old_reused && j < old_num; j++) {
-            if (old_reused[j] || old_views[j] != view)
+         for (unsigned j = 0;
+              bound_handles->cache_views && bound_handles->cache_samplers &&
+              j < bound_handles->num_handles; j++) {
+            if (bound_handles->cache_views[j] != view)
                continue;
-            if (memcmp(&old_samplers[j], &samp, sizeof(samp)) != 0)
+            cache_view_match = true;
+            if (memcmp(&bound_handles->cache_samplers[j], &samp, sizeof(samp)) != 0)
                continue;
-            handle = old_handles[j];
-            old_reused[j] = true;
+            cache_sampler_match = true;
+            handle = bound_handles->handles[j];
             break;
          }
 
@@ -642,16 +671,20 @@ st_make_bound_samplers_resident(struct st_context *st,
             handle = pipe->create_texture_handle(pipe, view, &samp);
             if (!handle) {
                juice_diag_logf("BSR_NOHANDLE",
-                               "prog=%u stage=%d idx=%d sampler_unit=%u "
+                               "prog=%u stage=%d idx=%d sampler_unit=%u shadow=%u "
                                "bound=1 prev_data=0x%llx data_ptr=%p",
                                prog ? prog->Id : 0u, (int)prog->info.stage, i,
-                               (unsigned)sampler->unit,
+                               (unsigned)sampler->unit, (unsigned)sampler->shadow,
                                (unsigned long long)prev_data,
                                (void *)sampler->data);
                continue;
             }
-            pipe->make_texture_handle_resident(st->pipe, handle, true);
+            handle_created = true;
          }
+
+         /* Re-establish resource usage and image layout tracking for cached
+          * handles in the current batch. Zink makes this idempotent. */
+         pipe->make_texture_handle_resident(st->pipe, handle, true);
 
          /* Overwrite the texture unit value by the resident handle before
           * uploading the constant buffer.
@@ -659,42 +692,40 @@ st_make_bound_samplers_resident(struct st_context *st,
          *(uint64_t *)sampler->data = handle;
 
          juice_diag_logf("BSR_OK",
-                         "prog=%u stage=%d idx=%d sampler_unit=%u "
-                         "prev_data=0x%llx new_handle=0x%llx data_ptr=%p",
+                         "prog=%u stage=%d idx=%d sampler_unit=%u shadow=%u "
+                         "prev_data=0x%llx new_handle=0x%llx cache_view=%d "
+                         "cache_sampler=%d view=%p texture=%p target=%u "
+                         "compare_mode=%u compare_func=%u data_ptr=%p",
                          prog ? prog->Id : 0u, (int)prog->info.stage, i,
-                         (unsigned)sampler->unit,
+                         (unsigned)sampler->unit, (unsigned)sampler->shadow,
                          (unsigned long long)prev_data,
                          (unsigned long long)handle,
+                         (int)cache_view_match, (int)cache_sampler_match,
+                         (void *)view, (void *)view->texture,
+                         (unsigned)view->target, (unsigned)samp.compare_mode,
+                         (unsigned)samp.compare_func,
                          (void *)sampler->data);
 
-         /* Store the handle in the context. */
-         bound_handles->handles = (uint64_t *)
-            realloc(bound_handles->handles,
-                    (bound_handles->num_handles + 1) * sizeof(uint64_t));
-         bound_handles->cache_views = (struct pipe_sampler_view **)
-            realloc(bound_handles->cache_views,
-                    (bound_handles->num_handles + 1) * sizeof(struct pipe_sampler_view *));
-         bound_handles->cache_samplers = (struct pipe_sampler_state *)
-            realloc(bound_handles->cache_samplers,
-                    (bound_handles->num_handles + 1) * sizeof(struct pipe_sampler_state));
-         bound_handles->handles[bound_handles->num_handles] = handle;
-         bound_handles->cache_views[bound_handles->num_handles] = view;
-         bound_handles->cache_samplers[bound_handles->num_handles] = samp;
-         bound_handles->num_handles++;
+         if (handle_created) {
+            /* Keep the referenced view alive with its resident handle. */
+            bound_handles->handles = (uint64_t *)
+               realloc(bound_handles->handles,
+                       (bound_handles->num_handles + 1) * sizeof(uint64_t));
+            bound_handles->cache_views = (struct pipe_sampler_view **)
+               realloc(bound_handles->cache_views,
+                       (bound_handles->num_handles + 1) * sizeof(struct pipe_sampler_view *));
+            bound_handles->cache_samplers = (struct pipe_sampler_state *)
+               realloc(bound_handles->cache_samplers,
+                       (bound_handles->num_handles + 1) * sizeof(struct pipe_sampler_state));
+            bound_handles->handles[bound_handles->num_handles] = handle;
+            bound_handles->cache_views[bound_handles->num_handles] = NULL;
+            pipe_sampler_view_reference(
+               &bound_handles->cache_views[bound_handles->num_handles], view);
+            bound_handles->cache_samplers[bound_handles->num_handles] = samp;
+            bound_handles->num_handles++;
+         }
       }
    }
-
-   /* Release only the entries that weren't reused above. */
-   for (unsigned j = 0; j < old_num; j++) {
-      if (old_reused && old_reused[j])
-         continue;
-      pipe->make_texture_handle_resident(pipe, old_handles[j], false);
-      pipe->delete_texture_handle(pipe, old_handles[j]);
-   }
-   free(old_handles);
-   free(old_views);
-   free(old_samplers);
-   free(old_reused);
 }
 
 

@@ -908,6 +908,9 @@ struct gl_bindless_sampler
    /** Texture Target (TEXTURE_1D/2D/3D/etc_INDEX). */
    gl_texture_index target;
 
+   /** Whether this sampler's declared GLSL type performs depth comparison. */
+   GLboolean shadow;
+
    /** Pointer to the base of the data. */
    GLvoid *data;
 };

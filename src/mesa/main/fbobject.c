@@ -4123,6 +4123,13 @@ void GLAPIENTRY
 _mesa_FramebufferTexture2D(GLenum target, GLenum attachment,
                            GLenum textarget, GLuint texture, GLint level)
 {
+   if (textarget == GL_TEXTURE_3D) {
+      framebuffer_texture_with_dims(3, target, 0, attachment, textarget,
+                                    texture, level, 0, 0,
+                                    "glFramebufferTexture2D", false);
+      return;
+   }
+
    framebuffer_texture_with_dims(2, target, 0, attachment, textarget, texture,
                                  level, 0, 0, "glFramebufferTexture2D", false);
 }

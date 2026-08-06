@@ -84,7 +84,7 @@
  * util_idalloc can grow past this — create paths must reject
  * slot >= ZINK_MAX_BINDLESS_HANDLES to avoid OOB writes into
  * img_handle_bindings / related arrays. */
-#define ZINK_MAX_BINDLESS_HANDLES 65536
+#define ZINK_MAX_BINDLESS_HANDLES 32768
 /* unreferenced bindless sampler cache entries are pruned past this */
 #define ZINK_MAX_BINDLESS_SAMPLER_CACHE 1024
 
@@ -1457,8 +1457,11 @@ struct zink_bindless_descriptor {
    struct zink_descriptor_surface ds;
    struct zink_sampler_state *sampler;
    struct zink_bindless_sampler_entry *sampler_entry; //null if not cached
+   struct zink_sampler_state *shadow_sampler;
+   struct zink_bindless_sampler_entry *shadow_sampler_entry; //null if not cached
    uint32_t handle;
    uint32_t access; //PIPE_ACCESS_...
+   bool resident;
 };
 
 struct zink_rendering_info {

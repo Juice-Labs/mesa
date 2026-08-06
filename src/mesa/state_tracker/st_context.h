@@ -80,9 +80,9 @@ struct st_bound_handles
 {
    unsigned num_handles;
    uint64_t *handles;
-   /* JUICE: parallel arrays recording the (view, sampler) that produced each
-    * handle, so a later call with an unchanged binding can reuse it instead
-    * of destroying and recreating it (see st_make_bound_samplers_resident).
+   /* JUICE: parallel arrays recording the referenced (view, sampler) that
+    * produced each handle, so a later call with an unchanged binding can reuse
+    * it instead of destroying and recreating it (see st_make_bound_samplers_resident).
     * Texture-handle path only; unused (NULL) for bound_image_handles. */
    struct pipe_sampler_view **cache_views;
    struct pipe_sampler_state *cache_samplers;

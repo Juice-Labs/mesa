@@ -159,7 +159,7 @@ shader_cache_read_program_metadata(struct gl_context *ctx,
    /* Include bindings when creating sha1. These bindings change the resulting
     * binary so they are just as important as the shader source.
     */
-   char *buf = ralloc_strdup(NULL, "vb: ");
+   char *buf = ralloc_strdup(NULL, "bindless-shadow-metadata: 1\nvb: ");
    prog->AttributeBindings->iterate(create_binding_str, &buf);
    ralloc_strcat(&buf, "fb: ");
    prog->FragDataBindings->iterate(create_binding_str, &buf);

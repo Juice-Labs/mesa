@@ -42,6 +42,7 @@
 #include "tgsi/tgsi_dump.h"
 #include "tgsi/tgsi_from_mesa.h"
 
+#include "util/juice_diag_log.h"
 #include "util/u_memory.h"
 
 #include "compiler/spirv/nir_spirv.h"
@@ -2578,6 +2579,8 @@ struct zink_bindless_info {
    unsigned container_count[ZINK_BINDLESS_NUM_BINDINGS];
    /* Convenience: first container registered at each tuple binding. */
    nir_variable *bindless[ZINK_BINDLESS_NUM_BINDINGS];
+   uint32_t sampler_bindings;
+   uint32_t shadow_bindings;
    unsigned bindless_set;
 };
 
@@ -2738,6 +2741,15 @@ lower_bindless_instr(nir_builder *b, nir_instr *in, void *data)
          juice_bindless_tuple_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                       tex->sampler_dim, tex->is_array,
                                       tex->is_shadow);
+      bindless->sampler_bindings |= BITFIELD_BIT(tuple_binding);
+      if (tex->is_shadow) {
+         bindless->shadow_bindings |= BITFIELD_BIT(tuple_binding);
+         juice_diag_logf("ZINK_BINDLESS_SHADOW_USE",
+                         "stage=%u dim=%u array=%u binding=%u",
+                         (unsigned)b->shader->info.stage,
+                         (unsigned)tex->sampler_dim, (unsigned)tex->is_array,
+                         tuple_binding);
+      }
       enum glsl_base_type result_base;
       switch (nir_alu_type_get_base_type(tex->dest_type)) {
       case nir_type_float: result_base = GLSL_TYPE_FLOAT; break;
@@ -3534,6 +3546,14 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
    bool bindless_lowered = false;
    NIR_PASS(bindless_lowered, nir, lower_bindless, &bindless);
    ret->bindless |= bindless_lowered;
+   if (bindless.sampler_bindings) {
+      juice_diag_logf("ZINK_BINDLESS_SHADER",
+                      "hash=0x%08x stage=%u sampler_bindings=0x%08x "
+                      "shadow_bindings=0x%08x",
+                      ret->hash, (unsigned)nir->info.stage,
+                      bindless.sampler_bindings,
+                      bindless.shadow_bindings);
+   }
 
    if (!screen->info.feats.features.shaderInt64 || !screen->info.feats.features.shaderFloat64)
       NIR_PASS_V(nir, lower_64bit_vars, screen->info.feats.features.shaderInt64);

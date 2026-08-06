@@ -47,6 +47,7 @@
 #include "varray.h"
 #include "util/u_atomic.h"
 #include "util/u_memory.h"
+#include "util/juice_diag_log.h"
 #include "util/log.h"
 #include "util/u_process.h"
 #include "api_exec_decl.h"
@@ -70,6 +71,85 @@ dump_buffer_data_hex(const GLvoid *data, GLsizeiptr size, const char *func, GLen
    }
    
    mesa_logi("%s(%s, %ld, %s)", func, _mesa_enum_to_string(target), (long int)size, hex_str);
+}
+
+static void
+juice_diag_vred_environment_ubo_write(const struct gl_buffer_object *bufObj,
+                                      GLintptr offset, GLsizeiptr size,
+                                      const GLvoid *data, const char *source)
+{
+   static unsigned log_count;
+   uint64_t first_values[4] = { 0 };
+   GLsizeiptr first_offsets[4] = { 0 };
+   unsigned first_count = 0;
+   unsigned nonzero_words = 0;
+
+   if (!data || log_count >= 64 ||
+       (size != 33040 && bufObj->Size != 33040))
+      return;
+
+   for (GLsizeiptr data_offset = 0;
+        data_offset + (GLsizeiptr)sizeof(uint64_t) <= size;
+        data_offset += sizeof(uint64_t)) {
+      uint64_t value;
+      memcpy(&value, (const uint8_t *)data + data_offset, sizeof(value));
+      if (!value)
+         continue;
+      nonzero_words++;
+      if (first_count < ARRAY_SIZE(first_values)) {
+         first_offsets[first_count] = offset + data_offset;
+         first_values[first_count] = value;
+         first_count++;
+      }
+   }
+
+   juice_diag_logf("ZINK_VRED_ENV_UBO_WRITE",
+                   "source=%s buffer_name=%u offset=%lld size=%lld "
+                   "nonzero_words=%u first_offsets=%lld,%lld,%lld,%lld "
+                   "first_values=0x%llx,0x%llx,0x%llx,0x%llx",
+                   source, bufObj->Name, (long long)offset, (long long)size,
+                   nonzero_words, (long long)first_offsets[0],
+                   (long long)first_offsets[1], (long long)first_offsets[2],
+                   (long long)first_offsets[3],
+                   (unsigned long long)first_values[0],
+                   (unsigned long long)first_values[1],
+                   (unsigned long long)first_values[2],
+                   (unsigned long long)first_values[3]);
+   log_count++;
+}
+
+static void
+juice_diag_vred_environment_ubo_event(const struct gl_buffer_object *bufObj,
+                                      const char *source, GLintptr offset,
+                                      GLsizeiptr size, GLuint source_buffer)
+{
+   static unsigned log_count;
+
+   if (!bufObj || log_count >= 128 || bufObj->Size != 33040)
+      return;
+
+   juice_diag_logf("ZINK_VRED_ENV_UBO_EVENT",
+                   "source=%s buffer_name=%u offset=%lld size=%lld source_buffer=%u",
+                   source, bufObj->Name, (long long)offset,
+                   (long long)size, source_buffer);
+   log_count++;
+}
+
+static void
+juice_diag_vred_environment_ubo_bind(const struct gl_buffer_object *bufObj,
+                                     const char *source, GLuint index,
+                                     GLintptr offset, GLsizeiptr size)
+{
+   static unsigned log_count;
+
+   if (!bufObj || log_count >= 128 || bufObj->Size != 33040)
+      return;
+
+   juice_diag_logf("ZINK_VRED_ENV_UBO_BIND_API",
+                   "source=%s buffer_name=%u index=%u offset=%lld size=%lld",
+                   source, bufObj->Name, index, (long long)offset,
+                   (long long)size);
+   log_count++;
 }
 
 #include "util/set.h"
@@ -253,11 +333,11 @@ buffer_usage(GLenum target, GLboolean immutable,
       else
          return PIPE_USAGE_DEFAULT;
    }
-   else {
-      /* These are often read by the CPU, so enable CPU caches. */
-      if (target == GL_PIXEL_PACK_BUFFER ||
-          target == GL_PIXEL_UNPACK_BUFFER)
-         return PIPE_USAGE_STAGING;
+
+   /* These are often read by the CPU, so enable CPU caches. */
+   if (target == GL_PIXEL_PACK_BUFFER ||
+       target == GL_PIXEL_UNPACK_BUFFER)
+      return PIPE_USAGE_STAGING;
 
       /* BufferData */
       switch (usage) {
@@ -276,7 +356,6 @@ buffer_usage(GLenum target, GLboolean immutable,
       default:
          return PIPE_USAGE_DEFAULT;
       }
-   }
 }
 
 
@@ -554,6 +633,14 @@ _mesa_bufferobj_flush_mapped_range(struct gl_context *ctx,
 
    if (!length)
       return;
+
+   if (index == MAP_USER &&
+       (obj->Mappings[index].AccessFlags & GL_MAP_WRITE_BIT)) {
+      juice_diag_vred_environment_ubo_write(
+         obj, obj->Mappings[index].Offset + offset, length,
+         (const uint8_t *)obj->Mappings[index].Pointer + offset,
+         "glFlushMappedBufferRange");
+   }
 
    pipe_buffer_flush_mapped_range(pipe, obj->transfer[index],
                                   obj->Mappings[index].Offset + offset,
@@ -2303,6 +2390,9 @@ buffer_storage(struct gl_context *ctx, struct gl_buffer_object *bufObj,
       else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "%s", func);
       }
+   } else {
+      juice_diag_vred_environment_ubo_event(bufObj, func, 0, size, 0);
+      juice_diag_vred_environment_ubo_write(bufObj, 0, size, data, func);
    }
 }
 
@@ -2576,6 +2666,8 @@ buffer_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
       } else {
          _mesa_error(ctx, GL_OUT_OF_MEMORY, "%s", func);
       }
+   } else {
+      juice_diag_vred_environment_ubo_write(bufObj, 0, size, data, func);
    }
 }
 
@@ -2737,6 +2829,10 @@ _mesa_buffer_sub_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
    bufObj->MinMaxCacheDirty = true;
 
    _mesa_bufferobj_subdata(ctx, offset, size, data, bufObj);
+   juice_diag_vred_environment_ubo_event(bufObj, "glBufferSubData", offset,
+                                         size, 0);
+   juice_diag_vred_environment_ubo_write(bufObj, offset, size, data,
+                                         "glBufferSubData");
 }
 
 
@@ -2942,6 +3038,7 @@ clear_buffer_sub_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
    bufObj->MinMaxCacheDirty = true;
 
    if (!ctx->pipe->clear_buffer) {
+      juice_diag_vred_environment_ubo_event(bufObj, func, offset, size, 0);
       clear_buffer_subdata_sw(ctx, offset, size,
                               data, clearValueSize, bufObj);
       return;
@@ -2956,6 +3053,7 @@ clear_buffer_sub_data(struct gl_context *ctx, struct gl_buffer_object *bufObj,
 
    ctx->pipe->clear_buffer(ctx->pipe, bufObj->buffer, offset, size,
                            clearValue, clearValueSize);
+   juice_diag_vred_environment_ubo_event(bufObj, func, offset, size, 0);
 }
 
 static void
@@ -3147,6 +3245,12 @@ _mesa_ClearNamedBufferSubDataEXT(GLuint buffer, GLenum internalformat,
 static GLboolean
 unmap_buffer(struct gl_context *ctx, struct gl_buffer_object *bufObj)
 {
+   if (bufObj->Mappings[MAP_USER].AccessFlags & GL_MAP_WRITE_BIT) {
+      juice_diag_vred_environment_ubo_write(
+         bufObj, bufObj->Mappings[MAP_USER].Offset,
+         bufObj->Mappings[MAP_USER].Length,
+         bufObj->Mappings[MAP_USER].Pointer, "glUnmapBuffer");
+   }
    GLboolean status = _mesa_bufferobj_unmap(ctx, bufObj, MAP_USER);
    bufObj->Mappings[MAP_USER].AccessFlags = 0;
    assert(bufObj->Mappings[MAP_USER].Pointer == NULL);
@@ -3549,6 +3653,8 @@ copy_buffer_sub_data(struct gl_context *ctx, struct gl_buffer_object *src,
    }
 
    bufferobj_copy_subdata(ctx, src, dst, readOffset, writeOffset, size);
+   juice_diag_vred_environment_ubo_event(dst, func, writeOffset, size,
+                                         src->Name);
 }
 
 void GLAPIENTRY
@@ -3850,6 +3956,12 @@ map_buffer_range(struct gl_context *ctx, struct gl_buffer_object *bufObj,
       assert(bufObj->Mappings[MAP_USER].Length == length);
       assert(bufObj->Mappings[MAP_USER].Offset == offset);
       assert(bufObj->Mappings[MAP_USER].AccessFlags == access);
+      if (bufObj->Size == 33040) {
+         juice_diag_logf("ZINK_VRED_ENV_UBO_MAP",
+                         "source=%s buffer_name=%u offset=%lld length=%lld access=0x%x",
+                         func, bufObj->Name, (long long)offset,
+                         (long long)length, access);
+      }
    }
 
    if (access & GL_MAP_WRITE_BIT) {
@@ -4511,6 +4623,12 @@ bind_uniform_buffers(struct gl_context *ctx, GLuint first, GLsizei count,
        *     binding points are set to default values, ignoring
        *     <offsets> and <sizes>."
        */
+      for (int i = 0; i < count; i++) {
+         const struct gl_buffer_binding *binding =
+            &ctx->UniformBufferBindings[first + i];
+         juice_diag_vred_environment_ubo_bind(binding->BufferObject, caller,
+                                              first + i, 0, 0);
+      }
       unbind_uniform_buffers(ctx, first, count);
       return;
    }
@@ -4584,6 +4702,9 @@ bind_uniform_buffers(struct gl_context *ctx, GLuint first, GLsizei count,
       set_buffer_multi_binding(ctx, buffers, i, caller,
                                binding, offset, size, range,
                                USAGE_UNIFORM_BUFFER);
+      juice_diag_vred_environment_ubo_bind(
+         binding->BufferObject, caller, first + i, offset,
+         range ? size : (binding->BufferObject ? binding->BufferObject->Size : 0));
    }
 
    _mesa_HashUnlockMaybeLocked(ctx->Shared->BufferObjects,
@@ -5040,6 +5161,12 @@ bind_buffer_range(GLenum target, GLuint index, GLuint buffer, GLintptr offset,
          return;
    }
 
+   if (target == GL_UNIFORM_BUFFER) {
+      juice_diag_vred_environment_ubo_bind(
+         buffer ? bufObj : ctx->UniformBufferBindings[index].BufferObject,
+         "glBindBufferRange", index, offset, size);
+   }
+
    if (no_error) {
       switch (target) {
       case GL_TRANSFORM_FEEDBACK_BUFFER:
@@ -5130,6 +5257,12 @@ _mesa_BindBufferBase(GLenum target, GLuint index, GLuint buffer)
       if (!handle_bind_buffer_gen(ctx, buffer,
                                   &bufObj, "glBindBufferBase", false))
          return;
+   }
+
+   if (target == GL_UNIFORM_BUFFER) {
+      juice_diag_vred_environment_ubo_bind(
+         buffer ? bufObj : ctx->UniformBufferBindings[index].BufferObject,
+         "glBindBufferBase", index, 0, bufObj ? bufObj->Size : 0);
    }
 
    /* Note that there's some oddness in the GL 3.1-GL 3.3 specifications with

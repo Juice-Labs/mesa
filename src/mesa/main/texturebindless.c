@@ -33,6 +33,7 @@
 #include "texturebindless.h"
 
 #include "util/hash_table.h"
+#include "util/juice_diag_log.h"
 #include "util/u_memory.h"
 #include "api_exec_decl.h"
 
@@ -119,6 +120,24 @@ is_image_handle_resident(struct gl_context *ctx, GLuint64 handle)
                                       handle) != NULL;
 }
 
+static void
+juice_diag_bindless_texture_handle(const char *event, GLuint64 handle,
+                                  const struct gl_texture_handle_object *handle_obj)
+{
+   static unsigned log_count;
+
+   if (log_count >= 256)
+      return;
+
+   juice_diag_logf("ZINK_VRED_APP_TEXTURE_HANDLE",
+                   "event=%s handle=0x%llx texture=%u target=0x%x sampler=%u",
+                   event, (unsigned long long)handle,
+                   handle_obj->texObj ? handle_obj->texObj->Name : 0,
+                   handle_obj->texObj ? handle_obj->texObj->Target : 0,
+                   handle_obj->sampObj ? handle_obj->sampObj->Name : 0);
+   log_count++;
+}
+
 /**
  * Make a texture handle resident/non-resident in the current context.
  */
@@ -130,6 +149,9 @@ make_texture_handle_resident(struct gl_context *ctx,
    struct gl_sampler_object *sampObj = NULL;
    struct gl_texture_object *texObj = NULL;
    GLuint64 handle = texHandleObj->handle;
+
+   juice_diag_bindless_texture_handle(resident ? "resident" : "nonresident",
+                                      handle, texHandleObj);
 
    if (resident) {
       assert(!is_texture_handle_resident(ctx, handle));
@@ -265,6 +287,8 @@ get_texture_handle(struct gl_context *ctx, struct gl_texture_object *texObj,
    texHandleObj = find_texhandleobj(texObj, separate_sampler ? sampObj : NULL);
    if (texHandleObj) {
       mtx_unlock(&ctx->Shared->HandlesMutex);
+      juice_diag_bindless_texture_handle("reuse", texHandleObj->handle,
+                          texHandleObj);
       return texHandleObj->handle;
    }
 
@@ -306,6 +330,8 @@ get_texture_handle(struct gl_context *ctx, struct gl_texture_object *texObj,
    _mesa_hash_table_u64_insert(ctx->Shared->TextureHandles, handle,
                                texHandleObj);
    mtx_unlock(&ctx->Shared->HandlesMutex);
+
+   juice_diag_bindless_texture_handle("create", handle, texHandleObj);
 
    return handle;
 }

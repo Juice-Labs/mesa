@@ -39,6 +39,7 @@
 #include "pipe/p_defines.h"
 #include "util/u_inlines.h"
 #include "util/u_upload_mgr.h"
+#include "util/juice_diag_log.h"
 #include "util/log.h"
 #include "cso_cache/cso_context.h"
 
@@ -263,6 +264,10 @@ static void
 st_bind_ubos(struct st_context *st, struct gl_program *prog,
              enum pipe_shader_type shader_type)
 {
+   static uint32_t juice_vred_material_ubo_mask;
+   static bool juice_vred_shadow_handles_logged;
+   static unsigned juice_vred_environment_shadow_buffer_name;
+   static bool juice_vred_environment_shadow_buffer_initialized;
    unsigned i;
    struct pipe_constant_buffer cb = { 0 };
 
@@ -303,6 +308,153 @@ st_bind_ubos(struct st_context *st, struct gl_program *prog,
       else {
          cb.buffer_offset = 0;
          cb.buffer_size = 0;
+      }
+
+      if (shader_type == PIPE_SHADER_FRAGMENT && prog->Id == 120 && i < 32 &&
+          !(juice_vred_material_ubo_mask & BITFIELD_BIT(i))) {
+         juice_vred_material_ubo_mask |= BITFIELD_BIT(i);
+         juice_diag_logf("ZINK_VRED_UBO_BIND",
+                         "prog=%u block=%u name=%s binding=%u gallium_index=%u "
+                         "buffer_name=%u offset=%lld size=%u",
+                         prog->Id, i,
+                         block->name.string ? block->name.string : "?",
+                         block->Binding, 1 + i,
+                         binding->BufferObject ? binding->BufferObject->Name : 0,
+                         (long long)cb.buffer_offset, cb.buffer_size);
+      }
+
+      if (shader_type == PIPE_SHADER_FRAGMENT && prog->Id == 120 && i == 12 &&
+          cb.buffer && !juice_vred_shadow_handles_logged) {
+         const char *shadow_names[] = { "OSGShadowMaps", "OSGShadowCubeMaps" };
+         const struct gl_shader_program *shader_program =
+            prog->shader_program;
+         struct pipe_transfer *transfer = NULL;
+         uint64_t handles[ARRAY_SIZE(shadow_names)] = { 0 };
+         int offsets[ARRAY_SIZE(shadow_names)] = { -1, -1 };
+         int block_indices[ARRAY_SIZE(shadow_names)] = { -1, -1 };
+
+         if (shader_program && shader_program->data) {
+            for (unsigned uniform_index = 0;
+                 uniform_index < shader_program->data->NumUniformStorage;
+                 uniform_index++) {
+               const struct gl_uniform_storage *uniform =
+                  &shader_program->data->UniformStorage[uniform_index];
+               if (!uniform->name.string)
+                  continue;
+               for (unsigned handle_index = 0;
+                    handle_index < ARRAY_SIZE(shadow_names); handle_index++) {
+                  if (!strcmp(uniform->name.string, shadow_names[handle_index])) {
+                     offsets[handle_index] = uniform->offset;
+                     block_indices[handle_index] = uniform->block_index;
+                  }
+               }
+            }
+         }
+
+         for (unsigned handle_index = 0;
+              handle_index < ARRAY_SIZE(shadow_names); handle_index++) {
+            if (offsets[handle_index] < 0 ||
+                (uint64_t)offsets[handle_index] + sizeof(handles[handle_index]) >
+                   cb.buffer_size)
+               continue;
+            void *mapped = pipe_buffer_map_range(
+               pipe, cb.buffer, cb.buffer_offset + offsets[handle_index],
+               sizeof(handles[handle_index]), PIPE_MAP_READ | PIPE_MAP_ONCE,
+               &transfer);
+            if (mapped) {
+               memcpy(&handles[handle_index], mapped, sizeof(handles[handle_index]));
+               pipe_buffer_unmap(pipe, transfer);
+               transfer = NULL;
+            }
+         }
+
+         juice_diag_logf("ZINK_VRED_SHADOW_HANDLES",
+                         "linked_program=%u buffer_name=%u map_offset=%lld "
+                         "shadow_maps_block=%d "
+                         "shadow_maps_offset=%d shadow_maps=0x%llx "
+                         "shadow_cube_maps_block=%d shadow_cube_maps_offset=%d "
+                         "shadow_cube_maps=0x%llx",
+                         shader_program ? shader_program->Name : 0,
+                         binding->BufferObject ? binding->BufferObject->Name : 0,
+                         (long long)cb.buffer_offset, block_indices[0], offsets[0],
+                         (unsigned long long)handles[0], block_indices[1],
+                         offsets[1],
+                         (unsigned long long)handles[1]);
+         juice_vred_shadow_handles_logged = true;
+      }
+
+        if (shader_type == PIPE_SHADER_FRAGMENT &&
+           block->name.string && !strcmp(block->name.string, "OSGEnvironment") &&
+           cb.buffer && binding->BufferObject &&
+           (!juice_vred_environment_shadow_buffer_initialized ||
+            binding->BufferObject->Name != juice_vred_environment_shadow_buffer_name)) {
+         const struct gl_shader_program *shader_program = prog->shader_program;
+         struct pipe_transfer *transfer = NULL;
+         unsigned shadow_member_count = 0;
+         unsigned nonzero_handle_count = 0;
+         int environment_block_index = -1;
+
+         if (shader_program && shader_program->data) {
+            for (unsigned block_index = 0;
+                 block_index < shader_program->data->NumUniformBlocks;
+                 block_index++) {
+               const struct gl_uniform_block *linked_block =
+                  &shader_program->data->UniformBlocks[block_index];
+               if (linked_block->name.string &&
+                   !strcmp(linked_block->name.string, block->name.string)) {
+                  environment_block_index = block_index;
+                  break;
+               }
+            }
+
+            for (unsigned uniform_index = 0;
+                 uniform_index < shader_program->data->NumUniformStorage;
+                 uniform_index++) {
+               const struct gl_uniform_storage *uniform =
+                  &shader_program->data->UniformStorage[uniform_index];
+               const char *name = uniform->name.string;
+               if (uniform->block_index != environment_block_index || !name ||
+                   strncmp(name, "OSGEnvironment.lights[", 22) ||
+                   (!strstr(name, ".shadowTexture") &&
+                    !strstr(name, ".shadowCubeTexture")))
+                  continue;
+
+               shadow_member_count++;
+               if (uniform->offset < 0 ||
+                   (uint64_t)uniform->offset + sizeof(uint64_t) > cb.buffer_size)
+                  continue;
+
+               uint64_t handle = 0;
+               void *mapped = pipe_buffer_map_range(
+                  pipe, cb.buffer, cb.buffer_offset + uniform->offset,
+                  sizeof(handle), PIPE_MAP_READ | PIPE_MAP_ONCE, &transfer);
+               if (mapped) {
+                  memcpy(&handle, mapped, sizeof(handle));
+                  pipe_buffer_unmap(pipe, transfer);
+                  transfer = NULL;
+               }
+               if (!handle)
+                  continue;
+
+               nonzero_handle_count++;
+               juice_diag_logf("ZINK_VRED_ENV_SHADOW_HANDLE",
+                               "linked_program=%u buffer_name=%u name=%s block=%d "
+                               "offset=%d handle=0x%llx",
+                               shader_program->Name,
+                               binding->BufferObject ? binding->BufferObject->Name : 0,
+                               name, uniform->block_index, uniform->offset,
+                               (unsigned long long)handle);
+            }
+         }
+
+         juice_diag_logf("ZINK_VRED_ENV_SHADOW_SUMMARY",
+                         "linked_program=%u buffer_name=%u block=%d members=%u nonzero=%u",
+                         shader_program ? shader_program->Name : 0,
+                         binding->BufferObject ? binding->BufferObject->Name : 0,
+                         environment_block_index,
+                         shadow_member_count, nonzero_handle_count);
+         juice_vred_environment_shadow_buffer_name = binding->BufferObject->Name;
+         juice_vred_environment_shadow_buffer_initialized = true;
       }
 
       mesa_logi("MESA UBO BIND: shader=%d, block[%d]='%s', Binding=%u, gallium_index=%u, cb.buffer=%p, cb.buffer_size=%u", 

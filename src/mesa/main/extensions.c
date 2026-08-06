@@ -302,7 +302,6 @@ _mesa_init_extensions(struct gl_extensions *extensions)
    extensions->OES_EGL_image_external = GL_TRUE;
    extensions->OES_draw_texture = GL_TRUE;
 
-   extensions->NV_bindless_texture = GL_TRUE;
    extensions->NV_timeline_semaphore = GL_TRUE;
 }
 

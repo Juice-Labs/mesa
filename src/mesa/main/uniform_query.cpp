@@ -1515,12 +1515,19 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
       if (uni->is_bindless ||
           basicType == GLSL_TYPE_UINT64 ||
           basicType == GLSL_TYPE_INT64) {
-         const uint64_t *u64 = (const uint64_t *)values;
+         uint64_t value = 0;
+         if (count > 0 && values) {
+            if (basicType == GLSL_TYPE_UINT64 ||
+                basicType == GLSL_TYPE_INT64)
+               value = ((const uint64_t *)values)[0];
+            else
+               value = ((const uint32_t *)values)[0];
+         }
          const char *uname = uni->name.string ? uni->name.string : "?";
          juice_diag_logf("U_RESOLVED",
                          "prog=%u name=%s loc=%d offset=%u count=%d "
                          "is_bindless=%d is_samp=%d is_img=%d "
-                         "type_base=%d components=%u array_elems=%u "
+                         "type_base=%d src_type=%d components=%u array_elems=%u "
                          "remap_loc=%u v0=0x%llx",
                          shProg ? shProg->Name : 0u,
                          uname,
@@ -1528,12 +1535,11 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                          (int)uni->is_bindless,
                          (int)uni->type->is_sampler(),
                          (int)uni->type->is_image(),
-                         (int)uni->type->base_type,
+                         (int)uni->type->base_type, (int)basicType,
                          (unsigned)uni->type->vector_elements,
                          (unsigned)uni->array_elements,
                          (unsigned)uni->remap_location,
-                         (count > 0 && values) ?
-                            (unsigned long long)u64[0] : 0ull);
+                         (unsigned long long)value);
       }
    }
 
@@ -1636,10 +1642,26 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                   const glsl_type *stype = uni->type->without_array();
                   if (stype->is_sampler()) {
                      int decl_target = stype->sampler_index();
+                     GLboolean decl_shadow = stype->sampler_shadow;
                      if (sampler->target != (unsigned)decl_target) {
                         sampler->target = (gl_texture_index)decl_target;
                         changed = true;
                      }
+                     if (sampler->shadow != decl_shadow) {
+                        sampler->shadow = decl_shadow;
+                        changed = true;
+                     }
+                     juice_diag_logf("BINDLESS_UNIT",
+                                     "prog=%u stage_prog=%u stage=%d storage=%u name=%s idx=%u sampler_unit=%u "
+                                     "target=%u shadow=%u src_type=%d",
+                                     shProg ? shProg->Name : 0u,
+                                     sh->Program ? sh->Program->Id : 0u,
+                                     i,
+                                     shProg && shProg->data ?
+                                     (unsigned)(uni - shProg->data->UniformStorage) : 0u,
+                                     uni->name.string ? uni->name.string : "?",
+                                     unit, value, (unsigned)sampler->target,
+                                     (unsigned)sampler->shadow, (int)basicType);
                   }
                }
             } else {

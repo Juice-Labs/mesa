@@ -32,6 +32,8 @@
 #include "zink_resource.h"
 #include "zink_screen.h"
 
+#include "util/juice_diag_log.h"
+
 #define XXH_INLINE_ALL
 #include "util/xxhash.h"
 
@@ -896,6 +898,13 @@ zink_descriptors_update(struct zink_context *ctx, bool is_compute)
    }
 
    if (pg != bs->dd.pg[is_compute]) {
+      if (!is_compute && pg->dd.bindless) {
+         struct zink_gfx_program *gfx = (struct zink_gfx_program *)pg;
+         struct zink_shader *fs = gfx->shaders[MESA_SHADER_FRAGMENT];
+         juice_diag_logf("ZINK_BINDLESS_DRAW",
+                         "program=%p fs_hash=0x%08x",
+                         (void *)pg, fs ? fs->hash : 0u);
+      }
       /* if we don't already know that we have to update all sets,
        * check to see if any dsls changed
        *
@@ -926,7 +935,9 @@ zink_descriptors_update(struct zink_context *ctx, bool is_compute)
     * descriptor sets which were bound with compatible pipeline layouts
     * VK 14.2.2
     */
-   uint8_t bind_sets = bs->dd.pg[is_compute] && bs->dd.compat_id[is_compute] == pg->compat_id ? 0 : pg->dd.binding_usage;
+   bool layout_changed = !bs->dd.pg[is_compute] ||
+                         bs->dd.compat_id[is_compute] != pg->compat_id;
+   uint8_t bind_sets = layout_changed ? pg->dd.binding_usage : 0;
    if (pg->dd.push_usage && (ctx->dd.push_state_changed[is_compute] || bind_sets)) {
       if (have_KHR_push_descriptor) {
          if (ctx->dd.push_state_changed[is_compute])
@@ -955,8 +966,8 @@ zink_descriptors_update(struct zink_context *ctx, bool is_compute)
     *
     * Two pipeline layouts are "compatible for set N" only if their DSLs
     * for sets 0..N are identical. Zink's `pg->compat_id` is the hash of
-    * `pg->dsl[0..num_dsl)`, so when it changes between consecutive draws
-    * (signaled here by `bind_sets != 0`) the new pipeline's layout is not
+   * `pg->dsl[0..num_dsl)`, so when it changes between consecutive draws
+   * the new pipeline's layout is not
     * guaranteed compatible-for-set-ZINK_DESCRIPTOR_BINDLESS with the layout
     * the bindless set was bound under. The bindless set is therefore
     * "disturbed" and must be re-bound under the new layout before any
@@ -969,10 +980,11 @@ zink_descriptors_update(struct zink_context *ctx, bool is_compute)
     * (device-lost / cmdbuf-never-retires); lenient drivers keep the stale
     * binding alive and the FS reads garbage.
     *
-    * Fix: also rebind when `bind_sets` says compat changed. */
-   if (pg->dd.bindless && (unlikely(!ctx->dd.bindless_bound) || bind_sets)) {
+   * Fix: also rebind on every compatibility change. `bind_sets` cannot be
+   * used for this because it is zero for bindless-only programs. */
+   if (pg->dd.bindless && (unlikely(!ctx->dd.bindless_bound) || layout_changed)) {
       VKCTX(CmdBindDescriptorSets)(ctx->batch.state->cmdbuf, is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                   pg->layout, ZINK_DESCRIPTOR_BINDLESS, 1, &ctx->dd.bindless_set,
+                                   pg->layout, screen->desc_set_id[ZINK_DESCRIPTOR_BINDLESS], 1, &ctx->dd.bindless_set,
                                    0, NULL);
       ctx->dd.bindless_bound = true;
    }
@@ -1268,6 +1280,18 @@ zink_descriptors_deinit_bindless(struct zink_context *ctx)
       VKSCR(DestroyDescriptorPool)(screen->dev, ctx->dd.bindless_pool, NULL);
 }
 
+static unsigned
+zink_bindless_sampler_compatible_binding(unsigned binding)
+{
+   switch (binding) {
+   case 4:  return 16;
+   case 5:  return 17;
+   case 16: return 4;
+   case 17: return 5;
+   default: return ZINK_BINDLESS_NUM_BINDINGS;
+   }
+}
+
 void
 zink_descriptors_update_bindless(struct zink_context *ctx)
 {
@@ -1303,50 +1327,48 @@ zink_descriptors_update_bindless(struct zink_context *ctx)
          else
             wd.pImageInfo = &ctx->di.bindless[i].img_infos[handle];
          VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd, 0, NULL);
+         if (!is_buffer && i == 0) {
+            juice_diag_logf("ZINK_BINDLESS_DESCRIPTOR_WRITE",
+                            "handle=%u slot=%u binding=%u view=%p sampler=%p layout=%u",
+                            handle, slot, wd.dstBinding,
+                            (void *)wd.pImageInfo->imageView,
+                            (void *)wd.pImageInfo->sampler,
+                            (unsigned)wd.pImageInfo->imageLayout);
+         }
 
-         /* JUICE Step A.7/A.12 (write-side fanout): GL bindless permits a
-          * single handle to be sampled as more than one SPIR-V image type
-          * across shaders, so each handle's descriptor has to be available
-          * at every tuple binding within its descriptor type. Fan the
-          * write to all bindings of the matching type (24 CIS bindings on
-          * side 0; 12 STORAGE_IMAGE bindings on side 1). UTEX/STEX are
-          * single-binding by construction and need no fanout. Legacy
-          * binding (already written above by `wd`) is skipped. The pool
-          * was sized for the full descriptor count of each type so this
-          * is within capacity, and unread bindings are harmless. Fanout is
-          * required: the shader-side tuple binding doesn't always match the
-          * create-time one, so writing only the primary regressed VRED to
-          * black. */
-         if (!is_buffer) {
-            unsigned fan_first, fan_last;
-            /* JUICE FIX: a CIS descriptor's VkSampler has one fixed compareEnable
-             * state, set at handle-create time from the real compare_mode. Vulkan
-             * requires compareEnable==true for Dref (shadow) sampling and ==false
-             * otherwise; feeding the same sampler into the opposite polarity's
-             * tuple binding is invalid and can sample as black. Restrict the
-             * dim/array fanout to bindings sharing the handle's own shadow
-             * polarity -- bit 0 of the tuple encoding (see zink_bindless_get_binding) --
-             * instead of every sampler binding. */
-            if (i == 0) {
-               bool is_shadow = (wd.dstBinding & 1) != 0;
-               fan_first = ZINK_BINDLESS_SAMPLER_FIRST + (is_shadow ? 1 : 0);
-               fan_last  = ZINK_BINDLESS_SAMPLER_LAST;
-               for (unsigned b = fan_first; b <= fan_last; b += 2) {
-                  if (b == wd.dstBinding) continue;
-                  VkWriteDescriptorSet wd2 = wd;
-                  wd2.dstBinding = b;
-                  wd2.descriptorType = zink_bindless_binding_type(b);
-                  VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd2, 0, NULL);
-               }
-            } else {
-               fan_first = ZINK_BINDLESS_IMAGE_FIRST;
-               fan_last  = ZINK_BINDLESS_IMAGE_LAST;
-               for (unsigned b = fan_first; b <= fan_last; b++) {
-                  if (b == wd.dstBinding) continue;
-                  VkWriteDescriptorSet wd2 = wd;
-                  wd2.dstBinding = b;
-                  wd2.descriptorType = zink_bindless_binding_type(b);
-                  VKSCR(UpdateDescriptorSets)(screen->dev, 1, &wd2, 0, NULL);
+         if (!is_buffer && i == 0) {
+            unsigned compatible_binding =
+               zink_bindless_sampler_compatible_binding(wd.dstBinding);
+            if (compatible_binding < ZINK_BINDLESS_NUM_BINDINGS) {
+               VkWriteDescriptorSet fan_write = wd;
+               fan_write.dstBinding = compatible_binding;
+               VKSCR(UpdateDescriptorSets)(screen->dev, 1, &fan_write, 0, NULL);
+            }
+            struct hash_entry *he =
+               _mesa_hash_table_search(&ctx->di.bindless[0].tex_handles,
+                                       (void *)(uintptr_t)handle);
+            struct zink_bindless_descriptor *bd = he ? he->data : NULL;
+            if (bd && bd->shadow_sampler && !(wd.dstBinding & 1)) {
+               VkDescriptorImageInfo shadow_info = *wd.pImageInfo;
+               shadow_info.sampler = bd->shadow_sampler->sampler;
+               VkWriteDescriptorSet shadow_write = wd;
+               shadow_write.pImageInfo = &shadow_info;
+               shadow_write.dstBinding = wd.dstBinding + 1;
+               juice_diag_logf("ZINK_SHADOW_DESCRIPTOR_PAIR",
+                               "handle=%u slot=%u primary_binding=%u shadow_binding=%u "
+                               "view_type=%u base_layer=%u layer_count=%u shadow_sampler=%p",
+                               handle, slot, wd.dstBinding,
+                               shadow_write.dstBinding,
+                               (unsigned)bd->ds.surface->ivci.viewType,
+                               bd->ds.surface->ivci.subresourceRange.baseArrayLayer,
+                               bd->ds.surface->ivci.subresourceRange.layerCount,
+                               (void *)bd->shadow_sampler->sampler);
+               VKSCR(UpdateDescriptorSets)(screen->dev, 1, &shadow_write, 0, NULL);
+               compatible_binding =
+                  zink_bindless_sampler_compatible_binding(shadow_write.dstBinding);
+               if (compatible_binding < ZINK_BINDLESS_NUM_BINDINGS) {
+                  shadow_write.dstBinding = compatible_binding;
+                  VKSCR(UpdateDescriptorSets)(screen->dev, 1, &shadow_write, 0, NULL);
                }
             }
          }

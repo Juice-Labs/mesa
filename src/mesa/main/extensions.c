@@ -295,6 +295,7 @@ _mesa_init_extensions(struct gl_extensions *extensions)
 
    extensions->NV_copy_image = GL_TRUE;
    extensions->NV_fog_distance = GL_TRUE;
+   extensions->NV_shader_buffer_load = GL_TRUE;
    extensions->NV_texture_env_combine4 = GL_TRUE;
    extensions->NV_texture_rectangle = GL_TRUE;
 

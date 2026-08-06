@@ -47,6 +47,29 @@ static struct {
    const char *names[MAX_UNRECOGNIZED_EXTENSIONS];
 } unrecognized_extensions;
 
+static void
+mesa_advertise_nv_shader_buffer_load(void)
+{
+   unsigned i;
+
+   if (!os_get_option("REMOTE_GPU_NATIVE_NAME"))
+      return;
+
+   for (i = 0; i < MAX_UNRECOGNIZED_EXTENSIONS; i++) {
+      if (unrecognized_extensions.names[i] &&
+          strcmp(unrecognized_extensions.names[i],
+                 "GL_NV_shader_buffer_load") == 0)
+         return;
+   }
+
+   for (i = 0; i < MAX_UNRECOGNIZED_EXTENSIONS; i++) {
+      if (!unrecognized_extensions.names[i]) {
+         unrecognized_extensions.names[i] = "GL_NV_shader_buffer_load";
+         return;
+      }
+   }
+}
+
 /**
  * Given a member \c x of struct gl_extensions, return offset of
  * \c x in bytes.
@@ -169,71 +192,73 @@ _mesa_one_time_init_extension_overrides(const char *override)
    memset(&_mesa_extension_override_enables, 0, sizeof(struct gl_extensions));
    memset(&_mesa_extension_override_disables, 0, sizeof(struct gl_extensions));
 
-   if (override == NULL || override[0] == '\0') {
-      return;
-   }
+   if (override != NULL && override[0] != '\0') {
+      /* Copy 'override' because strtok() is destructive. */
+      env = strdup(override);
 
-   /* Copy 'override' because strtok() is destructive. */
-   env = strdup(override);
-
-   if (env == NULL)
-      return;
-
-   for (ext = strtok(env, " "); ext != NULL; ext = strtok(NULL, " ")) {
-      int enable;
-      int i;
-      bool recognized;
-      switch (ext[0]) {
-      case '+':
-         enable = 1;
-         ++ext;
-         break;
-      case '-':
-         enable = 0;
-         ++ext;
-         break;
-      default:
-         enable = 1;
-         break;
+      if (env == NULL) {
+         mesa_advertise_nv_shader_buffer_load();
+         return;
       }
 
-      i = name_to_index(ext);
-      offset = set_extension(&_mesa_extension_override_enables, i, enable);
-      offset = set_extension(&_mesa_extension_override_disables, i, !enable);
-      if (offset != 0)
-         recognized = true;
-      else
-         recognized = false;
+      for (ext = strtok(env, " "); ext != NULL; ext = strtok(NULL, " ")) {
+         int enable;
+         int i;
+         bool recognized;
+         switch (ext[0]) {
+         case '+':
+            enable = 1;
+            ++ext;
+            break;
+         case '-':
+            enable = 0;
+            ++ext;
+            break;
+         default:
+            enable = 1;
+            break;
+         }
 
-      if (!enable && recognized && offset <= 1) {
-         printf("Warning: extension '%s' cannot be disabled\n", ext);
-         offset = set_extension(&_mesa_extension_override_disables, i, 0);
-      }
+         i = name_to_index(ext);
+         offset = set_extension(&_mesa_extension_override_enables, i, enable);
+         offset = set_extension(&_mesa_extension_override_disables, i, !enable);
+         if (offset != 0)
+            recognized = true;
+         else
+            recognized = false;
 
-      if (!recognized && enable) {
-         if (unknown_ext >= MAX_UNRECOGNIZED_EXTENSIONS) {
-            static bool warned;
+         if (!enable && recognized && offset <= 1) {
+            printf("Warning: extension '%s' cannot be disabled\n", ext);
+            offset = set_extension(&_mesa_extension_override_disables, i, 0);
+         }
 
-            if (!warned) {
-               warned = true;
-               _mesa_problem(NULL, "Trying to enable too many unknown extension. "
-                                   "Only the first %d will be honoured",
-                                   MAX_UNRECOGNIZED_EXTENSIONS);
+         if (!recognized && enable) {
+            if (unknown_ext >= MAX_UNRECOGNIZED_EXTENSIONS) {
+               static bool warned;
+
+               if (!warned) {
+                  warned = true;
+                  _mesa_problem(NULL, "Trying to enable too many unknown extension. "
+                                      "Only the first %d will be honoured",
+                                      MAX_UNRECOGNIZED_EXTENSIONS);
+               }
+            } else {
+               unrecognized_extensions.names[unknown_ext] = ext;
+               unknown_ext++;
+               _mesa_problem(NULL, "Trying to enable unknown extension: %s", ext);
             }
-         } else {
-            unrecognized_extensions.names[unknown_ext] = ext;
-            unknown_ext++;
-            _mesa_problem(NULL, "Trying to enable unknown extension: %s", ext);
          }
       }
+
+      if (!unknown_ext) {
+         free(env);
+      } else {
+         unrecognized_extensions.env = env;
+         atexit(free_unknown_extensions_strings);
+      }
    }
 
-   if (!unknown_ext) {
-      free(env);
-   } else {
-      unrecognized_extensions.env = env;
-      atexit(free_unknown_extensions_strings);
-   }
+   mesa_advertise_nv_shader_buffer_load();
 }
 
 

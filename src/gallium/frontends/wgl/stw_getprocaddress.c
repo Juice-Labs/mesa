@@ -53,6 +53,21 @@
 #define GL_TIMELINE_SEMAPHORE_VALUE_NV                  0x9595
 #define GL_MAX_TIMELINE_SEMAPHORE_VALUE_DIFFERENCE_NV   0x95B6
 
+#ifndef GL_BUFFER_GPU_ADDRESS_NV
+#define GL_BUFFER_GPU_ADDRESS_NV                        0x8F1D
+#endif
+#ifndef GL_MAX_SHADER_BUFFER_ADDRESS_NV
+#define GL_MAX_SHADER_BUFFER_ADDRESS_NV                 0x8F35
+#endif
+
+static GLuint64
+nv_sbl_fake_gpu_address(GLuint buffer)
+{
+   if (buffer == 0)
+      return 0;
+   return ((GLuint64)1 << 63) | (((GLuint64)buffer) << 4) | (GLuint64)0x1;
+}
+
 /* Helper function to get GL context from HGLRC handle */
 static struct gl_context* 
 stw_get_gl_context_from_hglrc(HGLRC hglrc)
@@ -430,11 +445,73 @@ glDepthRangedNV(GLdouble zNear, GLdouble zFar)
    assert(0);
 }
 
+// Soft GL_NV_shader_buffer_load entry points.
+VOID WINAPI
+glMakeBufferResidentNV(GLenum target, GLenum access)
+{
+   (void)target;
+   (void)access;
+}
+
+VOID WINAPI
+glMakeBufferNonResidentNV(GLenum target)
+{
+   (void)target;
+}
+
+GLboolean WINAPI
+glIsBufferResidentNV(GLenum target)
+{
+   (void)target;
+   return GL_FALSE;
+}
+
+VOID WINAPI
+glGetBufferParameterui64vNV(GLenum target, GLenum pname, GLuint64EXT *params)
+{
+   if (!params)
+      return;
+   *params = 0;
+   if (pname == GL_BUFFER_GPU_ADDRESS_NV)
+      *params = nv_sbl_fake_gpu_address(target);
+}
+
+VOID WINAPI
+glGetIntegerui64vNV(GLenum value, GLuint64EXT *result)
+{
+   if (!result)
+      return;
+   *result = 0;
+   if (value == GL_MAX_SHADER_BUFFER_ADDRESS_NV)
+      *result = ~(GLuint64EXT)0;
+}
+
+VOID WINAPI
+glProgramUniformui64NV(GLuint program, GLint location, GLuint64EXT value)
+{
+   (void)program;
+   (void)location;
+   (void)value;
+}
+
+VOID WINAPI
+glProgramUniformui64vNV(GLuint program, GLint location, GLsizei count,
+                        const GLuint64EXT *value)
+{
+   (void)program;
+   (void)location;
+   (void)count;
+   (void)value;
+}
+
 VOID WINAPI
 glGetNamedBufferParameterui64vNV(GLuint buffer, GLenum pname, GLuint64EXT *params)
 {
-   debug_printf("glGetNamedBufferParameterui64vNV: Not implemented\n");
-   //assert(0);
+   if (!params)
+      return;
+   *params = 0;
+   if (pname == GL_BUFFER_GPU_ADDRESS_NV)
+      *params = nv_sbl_fake_gpu_address(buffer);
 }
 
 GLuint64 WINAPI
@@ -448,23 +525,21 @@ glGetTextureSamplerHandleNV(GLuint texture, GLuint sampler)
 GLboolean WINAPI
 glIsNamedBufferResidentNV(GLuint buffer)
 {
-   debug_printf("glIsNamedBufferResidentNV: Not implemented\n");
-   //assert(0);
-   return FALSE;
+   (void)buffer;
+   return GL_FALSE;
 }
 
 VOID WINAPI
 glMakeNamedBufferResidentNV(GLuint buffer, GLenum access)
 {
-   debug_printf("glMakeNamedBufferResidentNV: Not implemented\n");
-   //assert(0);
+   (void)buffer;
+   (void)access;
 }
 
 VOID WINAPI
 glMakeNamedBufferNonResidentNV(GLuint buffer)
 {
-   debug_printf("glMakeNamedBufferNonResidentNV: Not implemented\n");
-   //assert(0);
+   (void)buffer;
 }
 
 VOID WINAPI
@@ -602,17 +677,24 @@ static const struct stw_extension_entry stw_gl_extension_entries[] = {
    STW_EXTENSION_ENTRY( glBufferAddressRangeNV ),
    STW_EXTENSION_ENTRY( glCreateSemaphoresNV ),
    STW_EXTENSION_ENTRY( glDepthRangedNV ),
-   STW_EXTENSION_ENTRY( glGetNamedBufferParameterui64vNV ),
    STW_EXTENSION_ENTRY( glGetTextureSamplerHandleNV ),
-   STW_EXTENSION_ENTRY( glIsNamedBufferResidentNV ),
-   STW_EXTENSION_ENTRY( glMakeNamedBufferResidentNV ),
-   STW_EXTENSION_ENTRY( glMakeNamedBufferNonResidentNV ),
    STW_EXTENSION_ENTRY( glMakeTextureHandleNonResidentNV ),
    STW_EXTENSION_ENTRY( glMakeTextureHandleResidentNV ),
    STW_EXTENSION_ENTRY( glSemaphoreParameterivNV ),
    STW_EXTENSION_ENTRY( glGetSemaphoreParameterivNV ),
+   STW_EXTENSION_ENTRY( glMakeBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeBufferNonResidentNV ),
+   STW_EXTENSION_ENTRY( glIsBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeNamedBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glMakeNamedBufferNonResidentNV ),
+   STW_EXTENSION_ENTRY( glIsNamedBufferResidentNV ),
+   STW_EXTENSION_ENTRY( glGetBufferParameterui64vNV ),
+   STW_EXTENSION_ENTRY( glGetNamedBufferParameterui64vNV ),
+   STW_EXTENSION_ENTRY( glGetIntegerui64vNV ),
    STW_EXTENSION_ENTRY( glUniformui64NV ),
    STW_EXTENSION_ENTRY( glUniformui64vNV ),
+   STW_EXTENSION_ENTRY( glProgramUniformui64NV ),
+   STW_EXTENSION_ENTRY( glProgramUniformui64vNV ),
    { NULL, NULL }
 };   
 

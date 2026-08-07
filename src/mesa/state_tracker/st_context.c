@@ -167,6 +167,36 @@ st_invalidate_state(struct gl_context *ctx)
             (!fp->shader_program && fp->ShadowSamplers))
             ST_SET_STATE(ctx->NewDriverState, ST_NEW_FS_STATE);
       }
+
+      /* Handles for bindless samplers bound with glUniform1i() live in the
+       * stage's constant buffer and are only rebuilt when those constants are
+       * re-uploaded, so a texture rebind refreshes the sampler view above but
+       * leaves the shader sampling the old texture - or an unrelated one, once
+       * the stale handle's slot is recycled. Stage granularity is the finest
+       * available: there is no per-unit dirty mask, and glTexParameter() lands
+       * here too, changing a handle's sampler but not its texture object. */
+      const struct {
+         const struct gl_program *prog;
+         enum st_state constants;
+      } bindless_stages[] = {
+         { ctx->VertexProgram._Current,   ST_NEW_VS_CONSTANTS  },
+         { ctx->TessCtrlProgram._Current, ST_NEW_TCS_CONSTANTS },
+         { ctx->TessEvalProgram._Current, ST_NEW_TES_CONSTANTS },
+         { ctx->GeometryProgram._Current, ST_NEW_GS_CONSTANTS  },
+         { ctx->FragmentProgram._Current, ST_NEW_FS_CONSTANTS  },
+      };
+
+      for (unsigned i = 0; i < ARRAY_SIZE(bindless_stages); i++) {
+         const struct gl_program *p = bindless_stages[i].prog;
+
+         if (p && (p->sh.HasBoundBindlessSampler ||
+                   p->sh.HasBoundBindlessImage)) {
+            st_state_bitset states = {0};
+            ST_SET_STATE(states, bindless_stages[i].constants);
+            BITSET_AND(states, states, st->active_states);
+            ST_SET_STATES(ctx->NewDriverState, states);
+         }
+      }
    }
 }
 

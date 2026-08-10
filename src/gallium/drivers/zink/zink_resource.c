@@ -1973,8 +1973,12 @@ zink_buffer_map(struct pipe_context *pctx,
          goto success;
       usage |= PIPE_MAP_UNSYNCHRONIZED;
    } else if (!(usage & PIPE_MAP_UNSYNCHRONIZED) &&
-              (((usage & PIPE_MAP_READ) && !(usage & PIPE_MAP_PERSISTENT) && res->base.b.usage != PIPE_USAGE_STAGING && (deviceOnlyHeap || res->obj->gpu_written)) || !res->obj->host_visible)) {
-      /* JUICE: also stage GPU-written host-visible READs so Juice ships the server copy back (stale otherwise, e.g. VRED's SSBO). */
+              (((usage & PIPE_MAP_READ) && !(usage & PIPE_MAP_PERSISTENT) && (deviceOnlyHeap || res->obj->gpu_written)) || !res->obj->host_visible)) {
+      /* JUICE: also stage GPU-written host-visible READs so Juice ships the server copy back (stale otherwise, e.g. VRED's SSBO).
+       * Juice only ships memory back for regions it sees in a copy command, so a shader writing host-visible memory directly is
+       * invisible to it; the staged copy is what makes the write observable. PIPE_USAGE_STAGING must not be excluded here: the PBO
+       * compute download target is STAGING and host-visible, which is how VRED's glGetTexImage read uninitialised client memory.
+       * gpu_written keeps CPU-written upload staging buffers on the direct-map path. */
       assert(!(usage & (TC_TRANSFER_MAP_THREADED_UNSYNC | PIPE_MAP_THREAD_SAFE)));
       if (!res->obj->host_visible || !(usage & PIPE_MAP_ONCE) || (usage & PIPE_MAP_READ)) {
          trans->offset = box->x % screen->info.props.limits.minMemoryMapAlignment;

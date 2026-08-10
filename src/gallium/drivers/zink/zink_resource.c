@@ -21,6 +21,13 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include "main/context.h"
+#include "main/texobj.h"
+#include "main/bufferobj.h"
+#include "main/format_utils.h"
+#include "state_tracker/st_context.h"
+#include "state_tracker/st_texture.h"
+
 #include "zink_resource.h"
 
 #include "zink_batch.h"
@@ -31,12 +38,6 @@
 #include "zink_program.h"
 #include "zink_screen.h"
 
-#include "main/context.h"
-#include "main/texobj.h"
-#include "main/bufferobj.h"
-#include "main/format_utils.h"
-#include "state_tracker/st_context.h"
-#include "state_tracker/st_texture.h"
 #include "zink_surface.h"
 #include "zink_kopper.h"
 
@@ -1121,7 +1122,7 @@ allocate_bo(struct zink_screen *screen, const struct pipe_resource *templ,
        * NT handle, so re-export from this VkDeviceMemory is unnecessary
        * in VRED's flow.
        */
-      if (!(whandle && whandle->handle)) {
+      if (!(alloc_info->whandle && alloc_info->whandle->handle)) {
          emai.pNext = mai.pNext;
          mai.pNext = &emai;
       }
@@ -2829,10 +2830,13 @@ zink_buffer_map(struct pipe_context *pctx,
          goto success;
       usage |= PIPE_MAP_UNSYNCHRONIZED;
    } else if (((usage & PIPE_MAP_READ) && !(usage & PIPE_MAP_PERSISTENT) &&
-               ((screen->info.mem_props.memoryTypes[res->obj->bo->base.placement].propertyFlags & VK_STAGING_RAM) != VK_STAGING_RAM) &&
                (deviceOnlyHeap || res->obj->gpu_written)) ||
               !res->obj->host_visible) {
-      /* JUICE: also stage GPU-written host-visible READs so Juice ships the server copy back (stale otherwise, e.g. VRED's SSBO). */
+      /* JUICE: also stage GPU-written host-visible READs so Juice ships the server copy back (stale otherwise, e.g. VRED's SSBO).
+       * Juice only ships memory back for regions it sees in a copy command, so a shader writing host-visible memory directly is
+       * invisible to it; the staged copy is what makes the write observable. PIPE_USAGE_STAGING must not be excluded here: the PBO
+       * compute download target is STAGING and host-visible, which is how VRED's glGetTexImage read uninitialised client memory.
+       * gpu_written keeps CPU-written upload staging buffers on the direct-map path. */
       /* any read, non-HV write, or unmappable that reaches this point needs staging */
       if ((usage & PIPE_MAP_READ) || !res->obj->host_visible || res->base.b.flags & PIPE_RESOURCE_FLAG_DONT_MAP_DIRECTLY) {
 overwrite:
@@ -3734,7 +3738,6 @@ zink_resource_recreate_for_cuda_export(struct pipe_screen *pscreen,
                                       struct winsys_handle *out_handle)
 {
    struct zink_resource *res = zink_resource(pres);
-   struct zink_screen *screen = zink_screen(pscreen);
    struct zink_context *ctx = zink_context(pctx);
    
    if (!res || !out_handle)
@@ -3939,7 +3942,6 @@ zink_cuda_signal_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
    }
 
    struct pipe_context *pipe_ctx = st_ctx->pipe;
-   struct zink_context *zink_ctx = zink_context(pipe_ctx);
    struct zink_screen *screen = zink_screen(pipe_ctx->screen);
    
    VkSemaphore vk_semaphore = (VkSemaphore)(uintptr_t)semaphore;
@@ -4012,7 +4014,6 @@ zink_cuda_wait_timeline_semaphore(uint64_t semaphore, uint64_t timeline_value,
    }
 
    struct pipe_context *pipe_ctx = st_ctx->pipe;
-   struct zink_context *zink_ctx = zink_context(pipe_ctx);
    struct zink_screen *screen = zink_screen(pipe_ctx->screen);
    
    VkSemaphore vk_semaphore = (VkSemaphore)(uintptr_t)semaphore;

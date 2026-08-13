@@ -928,9 +928,10 @@ generate_mipmap_compressed(struct gl_context *ctx, GLenum target,
    GLenum temp_base_format;
    GLubyte **temp_src_slices = NULL, **temp_dst_slices = NULL;
 
-   /* only two types of compressed textures at this time */
+   /* decompress, filter, then recompress; 3D needed for BC/RGTC/BPTC volumes */
    assert(texObj->Target == GL_TEXTURE_2D ||
           texObj->Target == GL_TEXTURE_2D_ARRAY ||
+          texObj->Target == GL_TEXTURE_3D ||
           texObj->Target == GL_TEXTURE_CUBE_MAP ||
           texObj->Target == GL_TEXTURE_CUBE_MAP_ARRAY);
 
@@ -1030,7 +1031,7 @@ generate_mipmap_compressed(struct gl_context *ctx, GLenum target,
          }
       }
 
-      /* for 2D arrays, setup array[depth] of slice pointers */
+      /* For 2D arrays and 3D volumes, set up per-slice pointers. */
       for (i = 0; i < srcDepth; i++) {
          temp_src_slices[i] = temp_src + temp_src_img_stride * i;
       }
@@ -1039,7 +1040,7 @@ generate_mipmap_compressed(struct gl_context *ctx, GLenum target,
       }
 
       /* Rescale src image to dest image.
-       * This will loop over the slices of a 2D array.
+       * 2D arrays filter each slice independently; 3D also filters in Z.
        */
       _mesa_generate_mipmap_level(target, temp_format, border,
                                   srcWidth, srcHeight, srcDepth,
@@ -1049,7 +1050,7 @@ generate_mipmap_compressed(struct gl_context *ctx, GLenum target,
                                   temp_dst_slices, temp_dst_row_stride);
 
       /* The image space was allocated above so use glTexSubImage now */
-      st_TexSubImage(ctx, 2, dstImage,
+      st_TexSubImage(ctx, texObj->Target == GL_TEXTURE_3D ? 3 : 2, dstImage,
                      0, 0, 0, dstWidth, dstHeight, dstDepth,
                      temp_base_format, temp_datatype,
                      temp_dst, &ctx->DefaultPacking);

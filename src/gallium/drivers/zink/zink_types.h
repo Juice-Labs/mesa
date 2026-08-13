@@ -70,12 +70,23 @@
 #define MAX_LAZY_DESCRIPTORS 500
 /* explicit clamping because descriptor caching used to exist */
 #define ZINK_MAX_SHADER_IMAGES 32
-/* total bindless ids per side; raised again because VRED export AA exceeds
- * 8192 (observed peak ~21k). Descriptor pool stays under ~1M UAB images
- * (24 sampler bindings * 32768). util_idalloc can grow past this — create
- * paths must reject slot >= ZINK_MAX_BINDLESS_HANDLES to avoid OOB writes
- * into img_handle_bindings / related arrays. */
-#define ZINK_MAX_BINDLESS_HANDLES 32768
+/* total bindless ids per side. The 32768 -> 131072 bump chased a genuine
+ * exhaustion, but the real cause was st_make_bound_samplers_resident() /
+ * st_make_bound_images_resident() destroying and recreating every bindless
+ * handle on ~every draw (a handle's slot isn't freed until its owning batch
+ * completes on the server, so that per-draw churn -- not real scene
+ * complexity -- was what exhausted the table). Both now reuse a handle
+ * whose view/sampler (or image_view) is unchanged since the last call, so
+ * this only needs to cover genuinely distinct concurrent handles plus some
+ * headroom; kept at 2x the original 32768 rather than reverting outright, as
+ * a margin against any create/reclaim edge case the cache doesn't catch.
+ * Descriptor pool stays proportional (24 sampler bindings * this value).
+ * util_idalloc can grow past this — create paths must reject
+ * slot >= ZINK_MAX_BINDLESS_HANDLES to avoid OOB writes into
+ * img_handle_bindings / related arrays. */
+#define ZINK_MAX_BINDLESS_HANDLES 65536
+/* unreferenced bindless sampler cache entries are pruned past this */
+#define ZINK_MAX_BINDLESS_SAMPLER_CACHE 1024
 
 /* enum zink_descriptor_type */
 #define ZINK_MAX_DESCRIPTOR_SETS 6
@@ -1435,9 +1446,17 @@ struct zink_descriptor_surface {
    bool is_buffer;
 };
 
+/* cached sampler state for bindless handles, refcounted by the handles using it */
+struct zink_bindless_sampler_entry {
+   struct pipe_sampler_state state;
+   struct zink_sampler_state *sampler;
+   unsigned refcount;
+};
+
 struct zink_bindless_descriptor {
    struct zink_descriptor_surface ds;
    struct zink_sampler_state *sampler;
+   struct zink_bindless_sampler_entry *sampler_entry; //null if not cached
    uint32_t handle;
    uint32_t access; //PIPE_ACCESS_...
 };
@@ -1539,6 +1558,7 @@ struct zink_context {
    struct set rendering_state_cache;
    struct set render_pass_state_cache;
    struct hash_table *render_pass_cache;
+   struct hash_table *bindless_sampler_cache; //pipe_sampler_state -> zink_bindless_sampler_entry
    VkExtent2D swapchain_size;
    bool fb_changed;
    bool rp_changed; //force renderpass restart

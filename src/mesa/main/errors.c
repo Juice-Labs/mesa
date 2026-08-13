@@ -38,54 +38,25 @@
 #include "detect_os.h"
 #include "api_exec_decl.h"
 #include "config.h"
+#include "util/log.h"
 
 #if DETECT_OS_ANDROID
 #  include <log/log.h>
 #endif
 
-#if defined(_WIN32)
-#include <windows.h>
-extern HMODULE mesa_juice_load_remote_gpu_vlk(void);
-#endif
-
-// Wine/Juice logging support - similar to vkd3d and dxvk
-typedef int (*PFN_juice_log)(const char *);
-static PFN_juice_log juice_log_output = NULL;
-static int juice_log_initialized = 0;
-
 static FILE *LogFile = NULL;
 
 
 static void
-init_juice_logging(void)
-{
-   if (juice_log_initialized)
-      return;
-      
-#if defined(_WIN32)
-   HMODULE juicevlk = mesa_juice_load_remote_gpu_vlk();
-   if (juicevlk)
-      juice_log_output = (PFN_juice_log)GetProcAddress(juicevlk, "__wine_dbg_output");
-#endif
-   
-   juice_log_initialized = 1;
-}
-
-
-static void
-output_if_debug(const char *prefixString, const char *outputString,
-                GLboolean newline)
+output_if_debug(enum mesa_log_level level, const char *prefixString,
+                const char *outputString, GLboolean newline)
 {
    static int debug = -1;
 
-   /* Init the local 'debug' var once.
-    * Note: the _mesa_init_debug() function should have been called
-    * by now so MESA_DEBUG_FLAGS will be initialized.
-    */
-   if (debug == -1) {
-      /* Initialize wine/juice logging */
-      init_juice_logging();
-   }
+   /* Checked before the formatting below, which heap-allocates for long
+    * messages such as shader source. */
+   if (!mesa_log_level_enabled(level))
+      return;
 
    /* Now only print the string if we're required to do so. */
    if (debug) {
@@ -116,9 +87,7 @@ output_if_debug(const char *prefixString, const char *outputString,
       else
          snprintf(useBuf, totalLen, "%s%s", outputString, newline ? "\n" : "");
 
-      if (juice_log_output) {
-          juice_log_output(useBuf);
-      }
+      mesa_log_write(level, useBuf);
 
       if (allocedBuf) {
          free(useBuf);
@@ -155,7 +124,7 @@ flush_delayed_errors( struct gl_context *ctx )
                      ctx->ErrorDebugCount,
                      _mesa_enum_to_string(ctx->ErrorValue));
 
-      output_if_debug("Mesa", s, GL_TRUE);
+      output_if_debug(MESA_LOG_ERROR, "Mesa", s, GL_TRUE);
 
       ctx->ErrorDebugCount = 0;
    }
@@ -181,7 +150,7 @@ _mesa_warning( struct gl_context *ctx, const char *fmtString, ... )
    if (ctx)
       flush_delayed_errors( ctx );
 
-   output_if_debug("Mesa warning", str, GL_TRUE);
+   output_if_debug(MESA_LOG_WARN, "Mesa warning", str, GL_TRUE);
 }
 
 
@@ -205,16 +174,13 @@ _mesa_problem( const struct gl_context *ctx, const char *fmtString, ... )
    if (numCalls < 50) {
       numCalls++;
 
-      /* Initialize wine/juice logging if not already done */
-      init_juice_logging();
-
       va_start( args, fmtString );
       vsnprintf( str, MAX_DEBUG_MESSAGE_LENGTH, fmtString, args );
       va_end( args );
-      
+
       snprintf(buf, sizeof(buf), "Mesa " PACKAGE_VERSION " implementation error: %s\nPlease report at " PACKAGE_BUGREPORT "\n", str);
-      
-      juice_log_output(buf);
+
+      mesa_log_write(MESA_LOG_ERROR, buf);
    }
 }
 
@@ -386,7 +352,7 @@ _mesa_error( struct gl_context *ctx, GLenum error, const char *fmtString, ... )
 
       /* Print the error to stderr if needed. */
       if (do_output) {
-         output_if_debug("Mesa: User error", s2, GL_TRUE);
+         output_if_debug(MESA_LOG_ERROR, "Mesa: User error", s2, GL_TRUE);
       }
 
       /* Log the error via ARB_debug_output if needed.*/
@@ -424,7 +390,7 @@ _mesa_debug( const struct gl_context *ctx, const char *fmtString, ... )
    va_start(args, fmtString);
    vsnprintf(s, MAX_DEBUG_MESSAGE_LENGTH, fmtString, args);
    va_end(args);
-   output_if_debug("Mesa", s, GL_FALSE);
+   output_if_debug(MESA_LOG_DEBUG, "Mesa", s, GL_FALSE);
 #endif /* DEBUG */
    (void) ctx;
    (void) fmtString;
@@ -439,13 +405,13 @@ _mesa_log(const char *fmtString, ...)
    va_start(args, fmtString);
    vsnprintf(s, MAX_DEBUG_MESSAGE_LENGTH, fmtString, args);
    va_end(args);
-   output_if_debug(NULL, s, GL_FALSE);
+   output_if_debug(MESA_LOG_INFO, NULL, s, GL_FALSE);
 }
 
 void
 _mesa_log_direct(const char *string)
 {
-   output_if_debug(NULL, string, GL_TRUE);
+   output_if_debug(MESA_LOG_INFO, NULL, string, GL_TRUE);
 }
 
 /**

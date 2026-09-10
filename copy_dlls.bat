@@ -11,9 +11,8 @@ set BASE_DIR=%~dp0..\..
 echo Copying Mesa DLLs from %BUILD_DIR%...
 
 :: Define source paths
-set ZLIB_DLL=%BUILD_DIR%\subprojects\zlib-1.2.13\z.dll
-set GLAPI_DLL=%BUILD_DIR%\src\mapi\shared-glapi\libglapi.dll
-set GLESV2_DLL=%BUILD_DIR%\src\mapi\es2api\libGLESv2.dll
+set ZLIB_DLL=%BUILD_DIR%\subprojects\zlib-1.3.1\z-1.dll
+set GLESV2_DLL=%BUILD_DIR%\src\mesa\glapi\es2api\libGLESv2.dll
 set GALLIUM_WGL_DLL=%BUILD_DIR%\src\gallium\targets\wgl\libgallium_wgl.dll
 set OPENGL32_DLL=%BUILD_DIR%\src\gallium\targets\libgl-gdi\opengl32.dll
 set EGL_DLL=%BUILD_DIR%\src\egl\libEGL.dll
@@ -22,7 +21,6 @@ set EGL_DLL=%BUILD_DIR%\src\egl\libEGL.dll
 if exist "%BASE_DIR%\build\Release" (
     echo Copying to Release directory...
     copy /Y "%ZLIB_DLL%" "%BASE_DIR%\build\Release\" 2>nul
-    copy /Y "%GLAPI_DLL%" "%BASE_DIR%\build\Release\" 2>nul
     copy /Y "%GLESV2_DLL%" "%BASE_DIR%\build\Release\" 2>nul
     copy /Y "%GALLIUM_WGL_DLL%" "%BASE_DIR%\build\Release\" 2>nul
     copy /Y "%EGL_DLL%" "%BASE_DIR%\build\Release\" 2>nul
@@ -40,7 +38,6 @@ if exist "%BASE_DIR%\build\Release" (
 if exist "%BASE_DIR%\build\Debug" (
     echo Copying to Debug directory...
     copy /Y "%ZLIB_DLL%" "%BASE_DIR%\build\Debug\" 2>nul
-    copy /Y "%GLAPI_DLL%" "%BASE_DIR%\build\Debug\" 2>nul
     copy /Y "%GLESV2_DLL%" "%BASE_DIR%\build\Debug\" 2>nul
     copy /Y "%GALLIUM_WGL_DLL%" "%BASE_DIR%\build\Debug\" 2>nul
     copy /Y "%EGL_DLL%" "%BASE_DIR%\build\Debug\" 2>nul
@@ -60,7 +57,6 @@ if not exist "%BASE_DIR%\driver\windows\third_party\mesa\bin64" (
     mkdir "%BASE_DIR%\driver\windows\third_party\mesa\bin64"
 )
 copy /Y "%ZLIB_DLL%" "%BASE_DIR%\driver\windows\third_party\mesa\bin64\" 2>nul
-copy /Y "%GLAPI_DLL%" "%BASE_DIR%\driver\windows\third_party\mesa\bin64\" 2>nul
 copy /Y "%GLESV2_DLL%" "%BASE_DIR%\driver\windows\third_party\mesa\bin64\" 2>nul
 copy /Y "%GALLIUM_WGL_DLL%" "%BASE_DIR%\driver\windows\third_party\mesa\bin64\" 2>nul
 copy /Y "%EGL_DLL%" "%BASE_DIR%\driver\windows\third_party\mesa\bin64\" 2>nul

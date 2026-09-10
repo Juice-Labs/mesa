@@ -1,1 +1,1 @@
-meson setup --prefix=%cd%\build\release\install --backend=ninja --buildtype=release -Dgallium-drivers=zink -Dgles2=enabled -Degl=enabled -Dshared-glapi=enabled build\release
+meson setup --prefix=%cd%\build\release\install --backend=ninja --buildtype=release -Dgallium-drivers=zink -Dgles2=enabled -Degl=enabled build\release

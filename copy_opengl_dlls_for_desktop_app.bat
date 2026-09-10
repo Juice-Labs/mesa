@@ -22,7 +22,6 @@ if not exist %APP_DIR% (
 echo Copying Mesa OpenGL DLLs from %BUILD_DIR% to %APP_DIR%
 
 @echo on
-copy /Y %BUILD_DIR%\subprojects\zlib-1.2.13\z.dll %APP_DIR%
+copy /Y %BUILD_DIR%\subprojects\zlib-1.3.1\z-1.dll %APP_DIR%
 copy /Y %BUILD_DIR%\src\gallium\targets\wgl\libgallium_wgl.dll %APP_DIR%
 copy /Y %BUILD_DIR%\src\gallium\targets\libgl-gdi\opengl32.dll %APP_DIR%
-copy /Y %BUILD_DIR%\src\mapi\shared-glapi\libglapi.dll %APP_DIR%

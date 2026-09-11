@@ -33,7 +33,12 @@
 #define ZINK_BIND_DMABUF (1u << 29)
 #define ZINK_BIND_TRANSIENT (1u << 30) //transient fb attachment
 #define ZINK_BIND_VIDEO (1u << 31)
-#define ZINK_BIND_CUDA_EXPORT (1u << 27) // Custom bind flag for CUDA export
+/* JUICE: request an externally-exportable allocation for CUDA interop.
+ * Zink-private and never set by a frontend, so it must not overlap the
+ * ZINK_BIND_* bits above (27-31) or any PIPE_BIND_* the GL frontend can send.
+ * PIPE_BIND_CUSTOM (1 << 12) is the gallium convention for driver-internal
+ * binds; this used to be (1u << 27), which collided with ZINK_BIND_DESCRIPTOR. */
+#define ZINK_BIND_CUDA_EXPORT PIPE_BIND_CUSTOM
 
 #ifdef __cplusplus
 extern "C" {

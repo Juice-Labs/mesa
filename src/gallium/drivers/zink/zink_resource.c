@@ -75,7 +75,6 @@
 #endif /* __APPLE__ */
 
 #define ZINK_EXTERNAL_MEMORY_HANDLE 999
-#define ZINK_BIND_CUDA_EXPORT (1 << 27) // Custom bind flag for CUDA export
 
 
 

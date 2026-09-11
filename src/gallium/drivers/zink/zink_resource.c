@@ -3445,14 +3445,17 @@ transfer_unmap(struct pipe_context *pctx, struct pipe_transfer *ptrans)
    struct zink_context *ctx = zink_context(pctx);
    struct zink_transfer *trans = (struct zink_transfer *)ptrans;
 
-   /* flush_region is relative to the mapped region: use only the extents */
-   struct pipe_box box = ptrans->box;
-   box.x = box.y = box.z = 0;
-   /* only subdata calls can potentially trigger an unmap directly from the frontend */
-   struct zink_resource *res = zink_resource(trans->base.b.resource);
-   if (!res->subdata)
-      trans->base.b.usage &= ~PIPE_MAP_UNSYNCHRONIZED;
-   zink_transfer_flush_region(pctx, ptrans, &box);
+   /* JUICE: Ignore flushing if pctx is NULL */
+   if (pctx) {
+      /* flush_region is relative to the mapped region: use only the extents */
+      struct pipe_box box = ptrans->box;
+      box.x = box.y = box.z = 0;
+      /* only subdata calls can potentially trigger an unmap directly from the frontend */
+      struct zink_resource *res = zink_resource(trans->base.b.resource);
+      if (!res->subdata)
+         trans->base.b.usage &= ~PIPE_MAP_UNSYNCHRONIZED;
+      zink_transfer_flush_region(pctx, ptrans, &box);
+   }
 
    if (trans->staging_res)
       pipe_resource_reference(&trans->staging_res, NULL);

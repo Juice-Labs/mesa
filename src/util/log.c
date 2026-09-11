@@ -29,6 +29,7 @@
 #include "util/detect_os.h"
 #include "util/log.h"
 #include "util/ralloc.h"
+#include "util/u_atomic.h"
 #include "util/u_debug.h"
 
 #if DETECT_OS_POSIX
@@ -142,7 +143,8 @@ mesa_juice_load_remote_gpu_vlk(void)
 /* Wine/Juice logging support - similar to vkd3d and dxvk */
 typedef int (*PFN_juice_log)(const char *);
 static PFN_juice_log juice_log_output = NULL;
-static int juice_log_initialized = 0;
+
+static void mesa_log_init(void);
 
 /* MESA_LOG_INFO is deliberately mapped to Debug, not Info: mesa_logi() is not
  * informational in this tree, zink uses it for per-draw tracing at tens of
@@ -248,14 +250,9 @@ mesa_log_file_override(void)
 static void
 init_juice_logging(void)
 {
-   if (juice_log_initialized)
-      return;
-
    /* Leaving every juice_* pointer NULL is what disables the routing. */
-   if (mesa_log_file_override()) {
-      juice_log_initialized = 1;
+   if (mesa_log_file_override())
       return;
-   }
 
 #if defined(_WIN32)
    HMODULE juicevlk = mesa_juice_load_remote_gpu_vlk();
@@ -273,17 +270,12 @@ init_juice_logging(void)
    if (juice_get_log_level)
       juice_log_level = juice_get_log_level();
 #endif
-
-   /* Set before reporting: the report logs, and every log re-enters here. */
-   juice_log_initialized = 1;
-
-   report_juice_log_level();
 }
 
 bool
 mesa_log_level_enabled(enum mesa_log_level level)
 {
-   init_juice_logging();
+   mesa_log_init();
 
    if (juice_log_level >= 0)
       return level_to_juice_level(level) <= juice_log_level;
@@ -464,6 +456,15 @@ mesa_log_init(void)
 {
    static once_flag once = ONCE_FLAG_INIT;
    call_once(&once, mesa_log_init_once);
+
+   /*
+    * Report the Juice log level, outside of the once_flag above because
+    * it calls mesa_log() which re-enters mesa_log_init() and deadlock.
+    */
+   static int juice_level_reported;
+   if (unlikely(!p_atomic_read(&juice_level_reported)) &&
+       p_atomic_cmpxchg(&juice_level_reported, 0, 1) == 0)
+      report_juice_log_level();
 }
 
 static void

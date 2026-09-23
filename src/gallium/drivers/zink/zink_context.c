@@ -5628,10 +5628,11 @@ zink_copy_image_subdata_nv_cross_context(struct pipe_screen *src_screen,
          return false;
       }
          
-      struct pipe_box src_box = {
-         srcX, srcY, srcZ,
-         width, height, depth
-      };
+      /* Use u_box_3d rather than a positional initializer: struct pipe_box is
+       * laid out {x, width, y, height, z, depth}, not {x, y, z, width, ...}.
+       */
+      struct pipe_box src_box;
+      u_box_3d(srcX, srcY, srcZ, width, height, depth, &src_box);
 
       zink_resource_copy_region(pipe_ctx, dst_pipe_res, dstLevel, dstX, dstY, dstZ, src_pipe_res, srcLevel, &src_box);
       return true;      

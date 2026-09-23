@@ -977,6 +977,18 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_INT64:
          result = new(linalloc) ir_expression(ir_unop_i642i, src);
          break;
+      case GLSL_TYPE_UINT8:
+         result = new(linalloc) ir_expression(ir_unop_u2i, src);
+         break;
+      case GLSL_TYPE_INT8:
+         result = new(linalloc) ir_expression(ir_unop_i82i, src);
+         break;
+      case GLSL_TYPE_UINT16:
+         result = new(linalloc) ir_expression(ir_unop_u2i, src);
+         break;
+      case GLSL_TYPE_INT16:
+         result = new(linalloc) ir_expression(ir_unop_i162i, src);
+         break;
       }
       break;
    case GLSL_TYPE_FLOAT16:
@@ -1003,16 +1015,16 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          result = new(linalloc) ir_expression(ir_unop_i642f16, desired_type, src, NULL);
          break;
       case GLSL_TYPE_UINT8:
-         result = new(linalloc) ir_expression(ir_unop_u2i, src);
+         result = new(linalloc) ir_expression(ir_unop_u2f, desired_type, src, NULL);
          break;
       case GLSL_TYPE_INT8:
-         result = new(linalloc) ir_expression(ir_unop_i82i, src);
+         result = new(linalloc) ir_expression(ir_unop_i2f, desired_type, src, NULL);
          break;
       case GLSL_TYPE_UINT16:
-         result = new(linalloc) ir_expression(ir_unop_u2i, src);
+         result = new(linalloc) ir_expression(ir_unop_u2f, desired_type, src, NULL);
          break;
       case GLSL_TYPE_INT16:
-         result = new(linalloc) ir_expression(ir_unop_i162i, src);
+         result = new(linalloc) ir_expression(ir_unop_i2f, desired_type, src, NULL);
          break;
       }
       break;
@@ -1253,6 +1265,10 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_INT16:
          result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
          break;
+      case GLSL_TYPE_FLOAT16:
+         result = new(linalloc) ir_expression(ir_unop_f2u, desired_type,
+                                        new(linalloc) ir_expression(ir_unop_f162f, src), NULL);
+         break;
       }
       break;
    
@@ -1278,6 +1294,10 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          break;
       case GLSL_TYPE_INT16:
          result = new(linalloc) ir_expression(ir_unop_i2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_FLOAT16:
+         result = new(linalloc) ir_expression(ir_unop_f2i, desired_type,
+                                        new(linalloc) ir_expression(ir_unop_f162f, src), NULL);
          break;
       }
       break;
@@ -1306,6 +1326,10 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
       case GLSL_TYPE_INT16:
          result = new(linalloc) ir_expression(ir_unop_i2u, desired_type, src, NULL);
          break;
+      case GLSL_TYPE_FLOAT16:
+         result = new(linalloc) ir_expression(ir_unop_f2u, desired_type,
+                                        new(linalloc) ir_expression(ir_unop_f162f, src), NULL);
+         break;
       }
       break;
    
@@ -1331,6 +1355,10 @@ convert_component(ir_rvalue *src, const glsl_type *desired_type)
          break;
       case GLSL_TYPE_UINT16:
          result = new(linalloc) ir_expression(ir_unop_u2i, desired_type, src, NULL);
+         break;
+      case GLSL_TYPE_FLOAT16:
+         result = new(linalloc) ir_expression(ir_unop_f2i, desired_type,
+                                        new(linalloc) ir_expression(ir_unop_f162f, src), NULL);
          break;
       }
       break;

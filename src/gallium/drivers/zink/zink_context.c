@@ -1405,7 +1405,14 @@ unbind_ubo(struct zink_context *ctx, struct zink_resource *res, gl_shader_stage 
 {
    if (!res)
       return;
-   res->ubo_bind_mask[pstage] &= ~BITFIELD_BIT(slot);
+   const uint32_t bit = BITFIELD_BIT(slot);
+   if (!(res->ubo_bind_mask[pstage] & bit))
+      return;
+   res->ubo_bind_mask[pstage] &= ~bit;
+   if (!res->ubo_bind_count[pstage == MESA_SHADER_COMPUTE]) {
+      unbind_buffer_descriptor_stage(res, pstage);
+      return;
+   }
    res->ubo_bind_count[pstage == MESA_SHADER_COMPUTE]--;
    unbind_buffer_descriptor_stage(res, pstage);
    if (!res->ubo_bind_count[pstage == MESA_SHADER_COMPUTE])
@@ -1463,10 +1470,12 @@ zink_set_constant_buffer(struct pipe_context *pctx,
       struct zink_resource *new_res = zink_resource(buffer);
       mesa_logi("ZINK UBO RESOURCE: old_res=%p, new_res=%p, buffer=%p", res, new_res, buffer);
       if (new_res) {
-         if (new_res != res) {
+         const uint32_t bit = BITFIELD_BIT(index);
+         if (new_res != res || !(new_res->ubo_bind_mask[shader] & bit) ||
+             !new_res->ubo_bind_count[shader == MESA_SHADER_COMPUTE]) {
             unbind_ubo(ctx, res, shader, index);
             new_res->ubo_bind_count[shader == MESA_SHADER_COMPUTE]++;
-            new_res->ubo_bind_mask[shader] |= BITFIELD_BIT(index);
+            new_res->ubo_bind_mask[shader] |= bit;
             new_res->gfx_barrier |= zink_pipeline_flags_from_pipe_stage(shader);
             new_res->barrier_access[shader == MESA_SHADER_COMPUTE] |= VK_ACCESS_UNIFORM_READ_BIT;
             update_res_bind_count(ctx, new_res, shader == MESA_SHADER_COMPUTE, false);

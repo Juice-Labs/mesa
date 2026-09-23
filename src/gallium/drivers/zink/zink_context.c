@@ -1316,8 +1316,8 @@ zink_set_vertex_buffers(struct pipe_context *pctx,
       }
    }
    for (unsigned i = 0; i < unbind_num_trailing_slots; i++) {
-      update_existing_vbo(ctx, start_slot + i);
-      pipe_resource_reference(&ctx->vertex_buffers[start_slot + i].buffer.resource, NULL);
+      update_existing_vbo(ctx, start_slot + num_buffers + i);
+      pipe_resource_reference(&ctx->vertex_buffers[start_slot + num_buffers + i].buffer.resource, NULL);
    }
    if (need_state_change)
       ctx->vertex_state_changed = true;

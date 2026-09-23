@@ -2251,6 +2251,24 @@ nir_visitor::visit(ir_expression *ir)
    case ir_unop_u82f16:
    case ir_unop_i162f16:
    case ir_unop_u162f16:
+   case ir_unop_i82f:
+   case ir_unop_u82f:
+   case ir_unop_i162f:
+   case ir_unop_u162f:
+   case ir_unop_i82u:
+   case ir_unop_u82u:
+   case ir_unop_i162u:
+   case ir_unop_u162u:
+   case ir_unop_i82d:
+   case ir_unop_u82d:
+   case ir_unop_i162d:
+   case ir_unop_u162d:
+   case ir_unop_i82u64:
+   case ir_unop_u82u64:
+   case ir_unop_i162u64:
+   case ir_unop_u162u64:
+   case ir_unop_i82i64:
+   case ir_unop_i162i64:
    case ir_unop_i642u64:
    case ir_unop_u642i64: {
       nir_alu_type src_type = nir_get_nir_type_for_glsl_base_type(types[0]);
